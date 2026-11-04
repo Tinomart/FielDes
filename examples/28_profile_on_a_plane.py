@@ -16,19 +16,19 @@
 from fieldes import *
 
 view.set_bounds([-15, -15, -10], [70, 70, 60], auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 # The corners of a slab, in a plane tilted 30 degrees about x: (s, t) in the plane is (s, 0.866 t, 0.5 t) in the world.
-s1 = point(0, 0, 0)
+s1 = point()
 s1
-s2 = point(40, 0, 0)
+s2 = point(position=(40, 0, 0))
 s2
-s3 = point(40, 21.65, 12.5)
+s3 = point(position=(40, 21.65, 12.5))
 s3
-s4 = point(20, 34.64, 20)
+s4 = point(position=(20, 34.64, 20))
 s4
-s5 = point(0, 21.65, 12.5)
+s5 = point(position=(0, 21.65, 12.5))
 s5
 slab_outline = profile(
     [s1, s2, s3, s4, s5],
@@ -43,13 +43,13 @@ slab = extrude(
 slab
 
 # A round badge on it, in the same plane (the same rule: (s, 0.866 t, 0.5 t)): every point is a spline point, and it is raised from the top of the slab.
-t1 = point(14, 6.93, 4)
+t1 = point(position=(14, 6.93, 4))
 t1
-t2 = point(26, 6.93, 4)
+t2 = point(position=(26, 6.93, 4))
 t2
-t3 = point(26, 19.05, 11)
+t3 = point(position=(26, 19.05, 11))
 t3
-t4 = point(14, 19.05, 11)
+t4 = point(position=(14, 19.05, 11))
 t4
 badge_outline = profile(
     [t1, t2, t3, t4],

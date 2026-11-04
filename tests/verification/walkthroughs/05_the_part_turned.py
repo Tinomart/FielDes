@@ -14,8 +14,8 @@
 
 from fieldes import *
 
-post = box((0, 0, 0), (10, 10, 30))
-plate = box((-20, -20, 30), (30, 30, 35))
+post = box((10, 10, 30), position=(5, 5, 15))
+plate = box((50, 50, 5), position=(5, 5, 32.5))
 part = union(
     post,
     plate,
@@ -23,7 +23,7 @@ part = union(
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
-part = handles(part, [var(5.0), var(5.0), var(5.0), var(5.0), var(15.0), var(15.0), var(5.0), var(25.0), var(5.0), var(25.0), var(32.5), var(2.5)])
+part = handles(part, [var(5.0), var(5.0), var(5.0), var(5.0), var(15.0), var(15.0), var(5.0), var(5.0), var(15.0), var(5.0), var(25.0), var(5.0), var(25.0), var(32.5), var(2.5), var(25.0), var(25.0), var(2.5)])
 part
 free = manufacturing_constraint(overhang=45, build_direction=None)
 res = manufacturing_optimization(part, constraints=[free], max_change=0.9)

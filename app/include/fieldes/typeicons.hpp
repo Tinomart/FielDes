@@ -35,7 +35,7 @@ QIcon icon(const QString& type, bool block = false, const QString& domain = QStr
 
 /*  The colour and the words for a kind (for tooltips); the colour of a simulation or of its conditions is that of their domain  */
 QColor color(const QString& type, const QString& domain = QString());
-QString label(const QString& type);
+QString label(const QString& type, const QString& domain = QString());
 
 /*  The colours and words the interpreter says the kinds have ({kind: {label, color}}, the "kinds" of the model tree's scene
  *  and of the menus' catalog); what it does not say stays as it is  */

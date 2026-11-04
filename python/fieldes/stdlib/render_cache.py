@@ -1,7 +1,7 @@
 '''
 The render cache: keep what FielDes meshes, so a shape that has not changed is on screen at once.
 
-    part = difference(box((0, 0, 0), (40, 30, 10)), sphere(8))
+    part = difference(box((40, 30, 10), position=(20, 15, 5)), sphere(8))
     part                            # its mesh is kept: nothing to write
     part = render_cache(part, False)    # ... unless you opt out (the model tree's cache button writes this line)
 
@@ -22,8 +22,8 @@ A shape is kept when everything it is made of can be recognised from one run to 
 numbers, var()s, imported meshes and parts, lattices, fields.  A shape that is shown with the fields of
 an analysis (a result coloured by stress) is not -- the analysis has caches of its own.
 
-The kept meshes are deleted oldest first when they fill more than 4 GB (the environment variable
-FIELDES_RENDER_CACHE_MB sets that); Settings > Clear the caches deletes them all (and the files of the field cache).
+The kept meshes are deleted least recently used first when they fill more than 2 GB (the environment variable
+FIELDES_RENDER_CACHE_MB sets that); a mesh is tied to the build that made it, a new build deletes those of the one before, and the program removes the meshes that no recently opened file holds; Settings > Clear the caches deletes them all (and the files of the field cache).
 
 Every field a script builds with `name = <expression>` is kept the same way -- by the statement's text, the exact
 content of what it reads, the var() numbers and the code that builds it -- so a lattice laid out on a part is not laid

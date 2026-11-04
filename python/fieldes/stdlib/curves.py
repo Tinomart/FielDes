@@ -1,9 +1,9 @@
 '''
 1D shapes: a line or a spline through points.
 
-    a = point(0, 0, 0)
-    b = point(20, 10, 0)
-    c = point(40, 0, 5)
+    a = point(position=(0, 0, 0))
+    b = point(position=(20, 10, 0))
+    c = point(position=(40, 0, 5))
     lines = polyline([a, b, c])                 # straight pieces between the points: a hard corner at each
     smooth = spline([a, b, c])                  # a smooth curve through the points
     loop = spline([a, b, c], closed=True)       # joined from the last point back to the first
@@ -32,7 +32,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 import ctypes
 import math
 
-from fieldes.ffi import lib
+from fieldes.ffi import lib, libfive_tree
 from fieldes.shape import Shape
 
 __all__ = ['polyline', 'spline', 'Curve']
@@ -46,6 +46,31 @@ def value_of(c):
     if isinstance(c, Shape):
         return float(c(0.0, 0.0, 0.0))
     return float(c)
+
+
+def values_of(items):
+    ''' `value_of` for a list: the fields among them are read together -- every node that they share is worked out once (libfive_tree_eval_many) -- and not with an evaluator for each,
+        which cost 4 ms and more a time for the control points of a body of points and ten seconds for a body of twenty (H68c, the user, 2026-11-02: dragging a point out of a face lags) '''
+    items = list(items)
+    out = [0.0] * len(items)
+    at = []
+    for i, c in enumerate(items):
+        if isinstance(c, Shape):
+            at.append(i)
+        else:
+            out[i] = float(c)
+    if not at:
+        return out
+    if hasattr(lib, 'libfive_tree_eval_many'):
+        trees = (libfive_tree * len(at))(*[items[i].ptr for i in at])
+        numbers = (ctypes.c_float * len(at))()
+        lib.libfive_tree_eval_many(trees, len(at), numbers)
+        for k, i in enumerate(at):
+            out[i] = float(numbers[k])
+    else:
+        for i in at:
+            out[i] = value_of(items[i])
+    return out
 
 
 def vec(v):
@@ -104,7 +129,7 @@ class Control:
         rotation = None
         if xyz is None:
             if not isinstance(item, (tuple, list)) or len(item) not in (2, 3):
-                raise TypeError('a point is point(x, y, z) or a tuple of two or three numbers, not %r' % (item,))
+                raise TypeError('a point is point(position=(x, y, z)) or a tuple of two or three numbers, not %r' % (item,))
             xyz = tuple(item) + (0.0,) * (3 - len(item))
             flag = None
         else:
@@ -131,6 +156,9 @@ class Control:
         # (1: Catmull-Rom; more: rounder; less: tighter) and what multiplies the radius of a round corner at it.  It used to be the scale, so that a spline that is the path of a sweep had one
         # number for the shape of its curve and for how thick the sweep is.  A point that says none has 1
         given_influence = getattr(item, '_influence', None)
+        # (a point whose radius is a var() and that says no influence has that var as its influence too -- see Point.__init__: the number the wheel and the ring change is the radius in mm, and the radius is that
+        # number as it stands, not multiplied by the influence once more)
+        radius_is_influence = given_influence is not None and given_influence is getattr(item, '_radius', None)
         self.influence_expr = None
         self.influence = 1.0
         if given_influence is not None:
@@ -155,15 +183,15 @@ class Control:
             spline = self.flag == 1 or (self.flag < 0 and bool(smooth_default))
             if not spline and value_of(given) > 0.0:
                 self.flag = 0
-                self.radius_expr = Shape.wrap(given) * (self.influence_expr if self.influence_expr is not None else 1.0)
-                self.radius = value_of(given) * self.influence
-        # (a spline point -- the line leaves it in its own direction: the gold ring of its gizmo is its scale, how thick a sweep is there, and Shift turns it into its influence; the ring of any
-        # other point is its influence.  The viewport reads it from the point: see interpreter.cpp)
-        if self.smooth(smooth_default):
-            try:
-                item._spline_point = True
-            except AttributeError:
-                pass
+                if radius_is_influence:
+                    self.radius_expr = Shape.wrap(given)
+                    self.radius = value_of(given)
+                else:
+                    self.radius_expr = Shape.wrap(given) * (self.influence_expr if self.influence_expr is not None else 1.0)
+                    self.radius = value_of(given) * self.influence
+        # (the size of a point -- its scale -- is used by nothing but a path extrude, which marks the spline points of its path as points that have one, `_spline_point`: their gold ring and the plain wheel
+        # are their size, Shift their influence; every other point, in a profile, a line or a body, is scaled by its influence alone -- the user, 2026-10-28.  The viewport reads it from the point: see
+        # interpreter.cpp)
 
     def smooth(self, default):
         return bool(default) if self.flag < 0 else self.flag == 1

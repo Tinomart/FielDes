@@ -21,8 +21,8 @@ from mfgkit import *
 t = Table('h6_what_cannot_be_fixed_and_verify: a roof over a gap of 30 mm (a bridge: reported, never repaired) and a fin 0.6 mm thick (repaired), a bridge rule of 20 and a wall rule of 0.8: with verify=True the tool lists the bridge as still broken, says where, and does not list the fin; with verify=False it does not check what it made: no list and no second check')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-roof = union(union(box((0, 0, 0), (5, 10, 20)), box((35, 0, 0), (40, 10, 20))), box((0, 0, 20), (40, 10, 23)))
-part = union(roof, box((46, 0, 0), (46.6, 10, 20)))
+roof = union(union(box((5, 10, 20), position=(2.5, 5, 10)), box((5, 10, 20), position=(37.5, 5, 10))), box((40, 10, 3), position=(20, 5, 21.5)))
+part = union(roof, box((0.6, 10, 20), position=(46.3, 5, 10)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(max_bridge=20.0, min_wall=0.8)
 lo, hi = (-3, -3, -3), (50, 13, 26)

@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('g2_slot_widen: two blocks 0.2 mm apart, a gap of 0.4 mm asked and gap_fix=widen: the slot is made as wide as asked')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((0, 0, 0), (12, 16, 18)), box((12.2, 0, 0), (24.2, 16, 18)))
+part = union(box((12, 16, 18), position=(6, 8, 9)), box((12, 16, 18), position=(18.2, 8, 9)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_gap=0.4, gap_fix='widen')
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

@@ -146,7 +146,7 @@ def stl_extent(path):
     return [min(p[i] for p in xs) for i in range(3)], [max(p[i] for p in xs) for i in range(3)]
 
 
-cube = box((0, 0, 0), (25.4, 25.4, 25.4))
+cube = box(25.4, position=(12.7, 12.7, 12.7))
 
 units.configure()
 mm_path = run('export_mesh at the defaults', lambda: export_mesh(cube, os.path.join(folder, 'mm.stl'), ascii=True))

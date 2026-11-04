@@ -20,8 +20,8 @@ from mfgkit import *
 t = Table('c3_three_faces_and_roundness: a blind pocket with sharp corners (three faces meet at each bottom corner), a through pocket whose corners are rounded to 1.5 mm and one rounded to 5 mm, an inside corner radius of 3 mm asked: the sharp pocket gets rounded vertical edges, floor edges and a sphere at each of its four bottom corners, the 1.5 mm one is made 3 mm, the 5 mm one is not touched')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-block = box((0, 0, 0), (100, 40, 12))
-pocket_a = box((6, 13, 4), (20, 27, 13))                                                  # (blind: the floor at z = 4, sharp: the corners of three faces)
+block = box((100, 40, 12), position=(50, 20, 6))
+pocket_a = box((14, 14, 9), position=(13, 20, 8.5))                                                  # (blind: the floor at z = 4, sharp: the corners of three faces)
 part = difference(difference(difference(block, pocket_a), rounded_pocket(35, 13, 14, 14, 1.5, -1, 13)), rounded_pocket(65, 13, 14, 14, 5.0, -1, 13))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_radius=3.0)

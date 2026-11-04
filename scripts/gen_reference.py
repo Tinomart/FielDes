@@ -10,6 +10,7 @@ import importlib, inspect, os, sys, textwrap
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'python'))
+import fieldes
 
 MODULES = [
     ('shapes', 'Primitive shapes', 'fieldes.stdlib.shapes'),
@@ -116,7 +117,11 @@ def main():
             if getattr(obj, '__module__', None) != modname or (modname, n) in seen:
                 continue
             seen.add((modname, n))
-            lines.extend(describe(('app.' + n) if modname == 'fieldes.app' else n, obj))
+            # (what a script calls is the function of the namespace -- the placement arguments added, the shapes made by their size alone: H93, one global position -- and the reference says that one)
+            shown = getattr(fieldes, n, None) if modname != 'fieldes.app' else None
+            if not (inspect.isfunction(obj) and callable(shown) and not inspect.isclass(shown)):
+                shown = obj
+            lines.extend(describe(('app.' + n) if modname == 'fieldes.app' else n, shown))
     with open(os.path.join(ROOT, 'docs', 'reference.md'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines).rstrip() + '\n')
     print('wrote docs/reference.md:', len(seen), 'entries')

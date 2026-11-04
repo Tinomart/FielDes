@@ -24,9 +24,9 @@ part = None
 for k, a in enumerate((0.0, 0.5, 3.0)):
     x0, x1 = 14.0 * k, 14.0 * k + 8.0
     tn = slope(a)
-    left = half_space((-1.0, 0.0, tn), (x0, 0.0, 0.0))                        # (inside: x - x0 >= z tan a)
-    right = half_space((1.0, 0.0, tn), (x1, 0.0, 0.0))                        # (inside: x <= x1 - z tan a)
-    wall = intersection(intersection(left, right), box((x0 - 1, 0, 0), (x1 + 1, 10, 20)))
+    left = half_space((-1.0, 0.0, tn), position=(x0, 0.0, 0.0))                        # (inside: x - x0 >= z tan a)
+    right = half_space((1.0, 0.0, tn), position=(x1, 0.0, 0.0))                        # (inside: x <= x1 - z tan a)
+    wall = intersection(intersection(left, right), box(((x1 + 1) - (x0 - 1), 10, 20), position=(((x0 - 1) + (x1 + 1)) / 2, 5, 10)))
     part = wall if part is None else union(part, wall)
 probe_in = evaluate(part, [(14.0 * 0 + 4.0, 5.0, 10.0), (14.0 * 2 + 4.0 + 0.0, 5.0, 10.0)])
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them

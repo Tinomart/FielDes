@@ -27,7 +27,7 @@ along it -- the "conformal" lattice of nTop.
     # an open surface of no thickness -- a field that is zero on it (negative below, positive above) -- with a patch
     # of it: one layer of cells on its positive side, cut off at the edge of the patch
     wave = Shape.Z() - 8 * (0.12 * Shape.X()).sin()
-    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box((-30, -20, -14), (30, 20, 14)),
+    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box((60, 40, 28)),
                                     side='outside', cell_thickness=6)
 
     # a periodic surface instead of struts: a gyroid skin that follows the part, 6 mm periods, 1 mm walls
@@ -146,13 +146,14 @@ _TPMS_CODES = {'gyroid': 0, 'schwarz_p': 1, 'schwarz': 1, 'diamond': 2, 'schwarz
                'split_p': 5, 'iwp': 6, 'frd': 7, 'fischer_koch_s': 8}
 
 
-def _viewport_resolution():
-    ''' The resolution (samples per mm) the script has asked the viewport for so far, or None (outside the
-        application, or not set yet) '''
+def _viewport_resolution(lo=None, hi=None):
+    ''' The samples per mm the viewport meshes a part whose box is `lo` .. `hi` at -- the scene's resolution is normed by the size of the part: ten samples across its longest side for every unit --,
+        or None (outside the application, or not set yet) '''
     try:
-        import _fieldes_host as host
-        res = getattr(host, '__resolution', None)
-        return float(res) if res else None
+        from fieldes.view import resolution_per_mm
+        if lo is None or hi is None:
+            return resolution_per_mm(0.0)
+        return resolution_per_mm(max(float(hi[i]) - float(lo[i]) for i in range(3)))
     except (ImportError, TypeError, ValueError):
         return None
 
@@ -239,7 +240,8 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
         body = Shape.wrap(surface_field.surface)
         patch = surface_field.patch
     else:
-        body = Shape.wrap(surface_field)
+        # (a plain surface has no inside; the lattice stands on the side it faces)
+        body = Shape.wrap(getattr(surface_field, 'facing', surface_field))
     surface = region
     if side is None:
         # (a surface has one side to stand on, the one it faces; a body is filled)
@@ -348,7 +350,7 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
         if os.environ.get('FIELDES_SC_STATS'):
             print('[conformal] {} cells, {} nodes, TPMS {} {}, wall {:g}, layers {} of {:.2f} mm'.format(
                 int(info[0]), int(info[2]), key, style, wall, int(info[8]), info[9]))
-        view_res = _viewport_resolution()
+        view_res = _viewport_resolution(lo, hi)
         if view_res and style == 'sheet' and wall * view_res < 3.0:
             print("lattice_surface_conform: its walls are {:g} mm thick: {:.1f} samples at the viewport's resolution "
                   "({:g} per mm), and a wall needs three or four to show: use a thicker wall or a finer "
@@ -378,7 +380,7 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
         print('[conformal] {} cells, {} nodes, {} beams, layers {} of {:.2f} mm, radius {:.2f}'.format(
             cells, int(info[2]), int(info[3]), used_layers, thickness, info[7]))
     if isinstance(radius, float):
-        view_res = _viewport_resolution()
+        view_res = _viewport_resolution(lo, hi)
         if view_res and 2.0 * radius * view_res < 3.0:
             print("lattice_surface_conform: its struts are {:.2g} mm thick: {:.1f} samples at the viewport's "
                   "resolution ({:g} per mm), and a lattice needs three or four to show: use a larger radius or "

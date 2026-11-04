@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('w4_open_box: a box open at the top with walls of 0.5 mm, a 0.8 mm wall asked (the four walls and the floor), small enough to be drawn at 14 cells to the millimetre: a wall is 7 cells thick, the layer added to it 2')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-shell_ = difference(box((0, 0, 0), (6, 6, 5)), box((0.5, 0.5, 0.5), (5.5, 5.5, 6)))
+shell_ = difference(box((6, 6, 5), position=(3, 3, 2.5)), box((5, 5, 5.5), position=(3, 3, 3.25)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('o7_build_direction_x: the ledge of o1 turned so that the print stands on the x axis (the part with its x and z exchanged, the way up (1, 0, 0) given): the same gusset must come out as in o1')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((0, 0, 0), (40, 40, 10)), box((20, 0, 10), (25, 40, 30)))              # (o1 with x and z exchanged: the wall is a slab at the foot, the ledge a rib standing out of it)
+part = union(box((40, 40, 10), position=(20, 20, 5)), box((5, 40, 20), position=(22.5, 20, 20)))              # (o1 with x and z exchanged: the wall is a slab at the foot, the ledge a rib standing out of it)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45, overhang_fix='fill', build_direction=(1, 0, 0))
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

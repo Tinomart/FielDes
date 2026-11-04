@@ -31,15 +31,17 @@ print('STARTING design : height 20')
 print('KNOWN BEST      : height %.2f mm (beam theory)' % h_star)
 
 height = var(20)
-beam = box((0, 0, 0), (100, b, height))
-wall = fixed(box((-1, -1, -1), (1, 60, 60)))
-pull = force(box((99, -1, -1), (101, 60, 60)), (0, 0, -200))
+beam = box((100, b, height), position=(50, b / 2, height / 2))
+wall = fixed(box((2, 61, 61), position=(0, 29.5, 29.5)))
+pull = force(box((2, 61, 61), position=(100, 29.5, 29.5)), (0, 0, -200))
 stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=3)
 
-best = parametric_optimization(stress, (height, 6, 24), constraints=[minimize(lambda r: r.mass + k * r.max_displacement)])
+mass_1 = stress.mass
+max_displacement_1 = stress.max_displacement
+best = parametric_optimization(stress, (height, 6, 24), conditions=[minimize(mass_1 + k * max_displacement_1)])
 
-starting_beam = move(box((0, 0, 0), (100, b, 20)), (0, -35, 0))
-known_best_beam = move(box((0, 0, 0), (100, b, h_star)), (0, 35, 0))
+starting_beam = move(box((100, b, 20), position=(50, b / 2, 10)), (0, -35, 0))
+known_best_beam = move(box((100, b, h_star), position=(50, b / 2, h_star / 2)), (0, 35, 0))
 starting_beam
 best
 known_best_beam

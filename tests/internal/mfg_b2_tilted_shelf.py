@@ -21,7 +21,7 @@ from mfgkit import *
 t = Table('b2_tilted_shelf: a shelf tilted 30 degrees (a plate 40 x 30 x 3 with a post standing square on it), an overhang of 45 degrees and the way up left free: of the six axes none holds it without an overhang, and the direction the tool finds, searched over the axes and forty more, leaves less of the surface leaning out than the best axis does')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-shelf = union(box((0, 0, 0), (40, 30, 3)), cylinder(4.0, 20.0, (20, 15, 3)))
+shelf = union(box((40, 30, 3), position=(20, 15, 1.5)), cylinder(4.0, 20.0, position=(20, 15, 3)))
 part = rotate_y(shelf, math.radians(30.0), center=(20, 15, 0))
 lo, hi = (-8, -3, -16), (48, 33, 27)
 # (the view of the window: the box round the part, and how finely it is drawn)

@@ -13,17 +13,17 @@ parts = import_model("step/PivotBearingSupportBracket.STEP")
 body, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 # 1) Any geometry.  The region is the box of the cell (here 10 mm); the geometry is any field -- it may reach out of the
 #    box, only what is inside is the cell, and the cell repeats.  Here a hollow ball held by square rods that run through
 #    its middle and out through the middle of every face: what leaves one face comes in on the opposite one, so the cells
 #    tile.  (cell.solid() is the cell on its own: put it last to look at it.)
-region = box((0, 0, 0), (10, 10, 10))
-ball = difference(sphere(3.8, (5, 5, 5)), sphere(2.6, (5, 5, 5)))                        # a hollow ball, 1.2 mm wall
-rods = union(box((-2, 4, 4), (12, 6, 6)), box((4, -2, 4), (6, 12, 6)), box((4, 4, -2), (6, 6, 12)))
-held_ball = cell_custom(region, union(ball, difference(rods, sphere(2.6, (5, 5, 5)))))
+region = box(10, position=(5, 5, 5))
+ball = difference(sphere(3.8, position=(5, 5, 5)), sphere(2.6, position=(5, 5, 5)))                        # a hollow ball, 1.2 mm wall
+rods = union(box((14, 2, 2), position=(5, 5, 5)), box((2, 14, 2), position=(5, 5, 5)), box((2, 2, 14), position=(5, 5, 5)))
+held_ball = cell_custom(region, union(ball, difference(rods, sphere(2.6, position=(5, 5, 5)))))
 print("custom cell:", held_ball)                       # a warning here would say where the faces do not match
 ball_lattice = lattice(body, held_ball, skin=1.0)      # cells of 10 mm as modelled; cell_size=7 scales them to 7 mm
 

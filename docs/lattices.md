@@ -71,7 +71,7 @@ such as `'gyroid'` is not a cell, `cell_periodic('gyroid')` is.
 
 ```python
 lattice(part, cell_periodic('octet'), cell_size=10, radius=0.6)
-lattice(part, cell_custom(box((0, 0, 0), (10, 10, 10)), my_geometry))
+lattice(part, cell_custom(box((10, 10, 10), position=(5, 5, 5)), my_geometry))
 lattice(part, cell_custom_tpms(my_equation), cell_size=8, thickness=0.8)
 lattice_surface_conform(part, cell_periodic('truncated_octahedron'), cell_thickness=2, cell_size=5)
 ```
@@ -223,8 +223,8 @@ thickness = fit([(0, 1.6), (3, 1.2), (6, 0.8), (12, 0.6)], model='pchip')(depth_
 graded = lattice(body, cell_periodic('gyroid'), cell_size=6, thickness=thickness, skin=1.0)
 ```
 
-Thin walls need a fine mesh: a 0.6 mm wall wants a resolution of about 3 samples per mm or more
-(`view.set_resolution(3)`).
+Thin walls need a fine mesh: a 0.6 mm wall wants about 3 samples per mm or more. The resolution is normed by the size of the part -- ten samples across it for every unit --, so for a part
+100 mm long that is 300 samples across: `view.set_resolution(30)`.
 
 ## Skin, shell and fill()
 
@@ -294,10 +294,10 @@ sphere on a corner): only what is inside is the cell. The cell repeats on any ce
 or a spherical one.
 
 ```python
-region = box((0, 0, 0), (10, 10, 10))
-ball = difference(sphere(3.8, (5, 5, 5)), sphere(2.6, (5, 5, 5)))                 # a hollow ball, 1.2 mm wall
-rods = union(box((-2, 4, 4), (12, 6, 6)), box((4, -2, 4), (6, 12, 6)), box((4, 4, -2), (6, 6, 12)))
-cell = cell_custom(region, union(ball, difference(rods, sphere(2.6, (5, 5, 5)))))
+region = box((10, 10, 10), position=(5, 5, 5))
+ball = difference(sphere(3.8, position=(5, 5, 5)), sphere(2.6, position=(5, 5, 5)))                 # a hollow ball, 1.2 mm wall
+rods = union(box((14, 2, 2), position=(5, 5, 5)), box((2, 14, 2), position=(5, 5, 5)), box((2, 2, 14), position=(5, 5, 5)))
+cell = cell_custom(region, union(ball, difference(rods, sphere(2.6, position=(5, 5, 5)))))
 
 lattice(part, cell)                                         # cells of 10 mm, as modelled
 lattice(part, cell, cell_size=6)                            # the cell scaled to 6 mm (or (sx, sy, sz): stretched)
@@ -375,7 +375,7 @@ part_with_ribs = union(part, ribs, radius=1.0)       # blended into the part wit
 # side of it -- side='outside' is the side where the field is positive, 'inside' the side where it is negative --
 # and it is cut off at the edge of the region `patch`: nothing goes round an edge, there is no other face
 wave = z_field() - 8 * (0.12 * x_field()).sin()
-patch = box((-30, -20, -14), (30, 20, 14))
+patch = box((60, 40, 28), position=(0, 0, 0))
 layer = lattice_surface_conform(wave, cell_periodic('octet'), within=patch, side='outside', cell_thickness=6, cell_size=6, radius=0.6)
 ```
 

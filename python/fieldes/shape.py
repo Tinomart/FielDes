@@ -15,6 +15,10 @@ import subprocess
 from fieldes.ffi import (lib, libfive_region_t, libfive_interval_t,
                          libfive_vec3_t, libfive_tree)
 
+# The number of an opcode and the number of arguments it takes, by its name (see Shape.new)
+_OP_INFO = {}
+
+
 def _combined_kind(shapes):
     ''' The kind of what is made of these shapes by arithmetic: a number is a number ('const'), fields combine into a
         field, and anything else -- a body, or a shape of no known kind -- makes a body (None) '''
@@ -26,15 +30,43 @@ def _combined_kind(shapes):
     return None
 
 
+# (the numbers an arithmetic step is given are wrapped into trees: one tree for each number, kept -- a body of points makes fifty thousand steps and most of them multiply by a few numbers (1/3, 0.5, 3 ...).
+# Only the step itself ever sees the wrapped number and nothing there changes it, so it can be shared; Shape.wrap, which gives a new one each time because its caller may go on to set its kind, is not shared)
+_OPERANDS = {}
+
+
+def _operand(t):
+    c = t.__class__
+    if (c is float or c is int) and t == t and t != 0:
+        key = (c, t)
+        s = _OPERANDS.get(key)
+        if s is None:
+            s = Shape.wrap(t)
+            if len(_OPERANDS) < 4096:
+                _OPERANDS[key] = s
+        return s
+    return Shape.wrap(t)
+
+
 def _wrapped(f, whole=True):
     ''' Decorator function which calls Shape.wrap on every argument
         in f(self, *args), then calls f as usual.  The result is a field when all it is made of are fields (and
         numbers); with whole=False, as the first of them is (a remapped body is a body)
     '''
     def g(*args):
-        args = [Shape.wrap(a) for a in args]
+        args = [a if a.__class__ is Shape else _operand(a) for a in args]
         out = f(*args)
-        out._kind = _combined_kind(args if whole else args[:1])
+        kind = 'const'
+        for s in (args if whole else args[:1]):
+            k = s._kind
+            if k == 'const':
+                continue
+            if k == 'field':
+                kind = 'field'
+            else:
+                kind = None
+                break
+        out._kind = kind
         for a in args:                  # (a field made of fields is about what the first of them is about)
             o = a._field_origin
             if o is not None:
@@ -70,13 +102,22 @@ class Shape:
 
     @classmethod
     def new(cls, op, *args):
-        if isinstance(op, str):
-            op = op.encode('ascii')
-        if isinstance(op, bytes):
-            op = lib.libfive_opcode_enum(op)
-        if op == -1:
-            raise RuntimeError("Invalid opcode")
-        num_args = lib.libfive_opcode_args(op)
+        # (the number of an opcode and how many arguments it takes are asked of the library once for each name: a body of points makes fifty thousand of these, and the two questions were three
+        # calls into the library each time)
+        info = _OP_INFO.get(op)
+        if info is None:
+            name = op
+            if isinstance(op, str):
+                op = op.encode('ascii')
+            if isinstance(op, bytes):
+                op = lib.libfive_opcode_enum(op)
+            if op == -1:
+                raise RuntimeError("Invalid opcode")
+            num_args = lib.libfive_opcode_args(op)
+            if isinstance(name, str):
+                _OP_INFO[name] = (op, num_args)
+        else:
+            op, num_args = info
         if len(args) != num_args:
             raise RuntimeError("Error: opcode {} takes {} arguments"
                     .format(op, num_args))
@@ -91,12 +132,13 @@ class Shape:
     def wrap(cls, t):
         ''' Ensures that the input argument is a Shape, converting constants
         '''
-        if isinstance(t, numbers.Number):
+        # (a shape is what most things are: asked first, as a plain class -- the check for a number goes through an abstract base class and costs ten times as much)
+        if isinstance(t, cls):
+            return t
+        elif isinstance(t, numbers.Number):
             out = cls(lib.libfive_tree_const(t))
             out._kind = 'const'
             return out
-        elif isinstance(t, cls):
-            return t
         elif getattr(type(t), '_as_field', None) is not None:
             return cls.wrap(t._as_field())          # (a result of an analysis or an optimisation: its field -- see fea.FieldResult)
         else:

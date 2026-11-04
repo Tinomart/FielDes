@@ -18,8 +18,8 @@ from mfgkit import *
 t = Table('w3b_spheres: thin curved walls of 0.5 mm, hollow spheres of radius 6 and 12, a wall of 0.8 mm asked: a wall that curves two ways')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-defs = [('sphere r 6', sphere(6.0, (0, 0, 6)), sphere(5.5, (0, 0, 6)), (6.0, 0.0, 6.0), 8),
-        ('sphere r 12', sphere(12.0, (0, 0, 12)), sphere(11.5, (0, 0, 12)), (12.0, 0.0, 12.0), 14)]
+defs = [('sphere r 6', sphere(6.0, position=(0, 0, 6)), sphere(5.5, position=(0, 0, 6)), (6.0, 0.0, 6.0), 8),
+        ('sphere r 12', sphere(12.0, position=(0, 0, 12)), sphere(11.5, position=(0, 0, 12)), (12.0, 0.0, 12.0), 14)]
 
 result, original = curved_shells(t, defs, [(0, 0), (30, 0)], ([-16, -16, -3], [48, 16, 28]))
 

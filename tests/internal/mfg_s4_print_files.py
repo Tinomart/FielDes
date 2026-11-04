@@ -21,8 +21,8 @@ from mfgkit import *
 t = Table('s4_print_files: a small ledge on a wall (10 x 10 x 12) with a block of support under it, written as a print: the 3MF holds the part, the supports and the no-support volume as three objects of the right volumes, the DXF has one layer for each millimetre of height, the SVG slice has the area of the section -- the one case of the suite that writes files, because writing them is a feature of the product')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((0, 0, 0), (4, 10, 12)), box((4, 0, 6), (10, 10, 8)))
-strip = box((8, -1, -1), (11, 11, 13))
+part = union(box((4, 10, 12), position=(2, 5, 6)), box((6, 10, 2), position=(7, 5, 7)))
+strip = box((3, 12, 14), position=(9.5, 5, 6))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45, support='block', support_gap=0.3, no_support=[strip])
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

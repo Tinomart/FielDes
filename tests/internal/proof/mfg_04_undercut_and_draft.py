@@ -20,8 +20,8 @@ view.set_bounds([-5, -50, -5], [75, 35, 35], auto_scale=True)
 view.set_resolution(3)
 view.set_quality(8)
 
-block = difference(box((0, 0, 0), (30, 30, 30)), box((-1, 5, 12), (8, 25, 18)))
-upright = box((45, 10, 0), (55, 20, 30))
+block = difference(box(30, position=(15, 15, 15)), box((9, 20, 6), position=(3.5, 15, 15)))
+upright = box((10, 10, 30), position=(50, 15, 15))
 part = union(block, upright)
 
 t = math.tan(math.radians(2))

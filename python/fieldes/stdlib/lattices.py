@@ -1390,8 +1390,8 @@ def cell_custom(region=None, geometry=None, check=True, **removed):
                     it does on the opposite face (a rod that leaves through one face must come in through the other,
                     a sphere on a corner must be on all eight)
 
-            cell = cell_custom(box((0, 0, 0), (10, 10, 10)),
-                               union(sphere(3, (5, 5, 5)), cylinder(1.0, 20, (5, 5, -5))))
+            cell = cell_custom(box((10, 10, 10), position=(5, 5, 5)),
+                               union(sphere(3, position=(5, 5, 5)), cylinder(1.0, 20, position=(5, 5, 5))))
             lattice(part, cell)                                    # cells of 10 mm, as modelled
             lattice(part, cell, cell_size=6)                       # the cell scaled to 6 mm
             lattice(part, cell, cell_map=cylindrical(cells_around=12))
@@ -1926,7 +1926,7 @@ def _bounding_box(points, spacing):
 def point_cloud(points, body=None):
     ''' Points of your own, exactly where you put them -- nothing random.  A foam or a truss is made around them as around random_points(): voronoi_lattice(cloud), delaunay_lattice(cloud).
 
-        points   the points: places (x, y, z), or the points of the model tree (point(x, y, z): its dot is dragged by its gizmo, to put it exactly where it is wanted).  A lattice needs at least five
+        points   the points: places (x, y, z), or the points of the model tree (point(position=(x, y, z)): its dot is dragged by its gizmo, to put it exactly where it is wanted).  A lattice needs at least five
         body     the body that clips the lattice (and that it fills): any body.  Without one, the bounding box of the points
 
             cloud = point_cloud([(0, 0, 0), (10, 0, 0), (0, 10, 0), (10, 10, 0), (5, 5, 8), (5, 5, -8)])

@@ -28,6 +28,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QJsonObject>
 #include <QSettings>
 #include <QSurfaceFormat>
+#include <QDateTime>
+#include <QElapsedTimer>
+#include <QTimer>
+#include <atomic>
+#include <iostream>
+#include <string>
+#include <thread>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -222,5 +229,82 @@ int main(int argc, char** argv)
     QCoreApplication::setApplicationVersion(FIELDES_VERSION);
 
     App a(argc, argv);
+    // With FIELDES_TIMING a clock ticks on the window's thread and says so whenever it did not tick for a while: the window was busy with something and did not answer.  The lag and the freezes the user
+    // feels are these -- a run of the script shows in the log by its own clocks, not by how long the window stopped (H90, "it lags at the beginning heavily and then ... it freezes for like 30 seconds")
+    QTimer stallClock;
+    QElapsedTimer sinceTick;
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING"))
+    {
+#ifdef _WIN32
+        // (a thread of its own looks at the window's thread: when that has not ticked for 250 ms it is stopped for an instant and the places of its stack are written down -- the module and the offset in it, to be
+        // read in the map file of the link -- and again every 450 ms while the stall lasts, so that a stall says what the window thread was in, not only how long it lasted.  Nothing is allocated while it is stopped)
+        static std::atomic<unsigned long long> lastTick{GetTickCount64()};
+        HANDLE windowThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
+        std::thread([windowThread] {
+            unsigned long long nextAt = 250;
+            for (;;)
+            {
+                Sleep(50);
+                const unsigned long long gap = GetTickCount64() - lastTick.load();
+                if (gap < 250) { nextAt = 250; continue; }
+                if (gap < nextAt) continue;
+                nextAt = gap + 450;
+                DWORD64 at[40];
+                int n = 0;
+                if (SuspendThread(windowThread) != static_cast<DWORD>(-1))
+                {
+                    CONTEXT c;
+                    memset(&c, 0, sizeof(c));
+                    c.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+                    if (GetThreadContext(windowThread, &c))
+                    {
+                        while (n < 40 && c.Rip)
+                        {
+                            at[n++] = c.Rip;
+                            DWORD64 base = 0;
+                            PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(c.Rip, &base, nullptr);
+                            if (!entry)
+                            {
+                                c.Rip = *reinterpret_cast<DWORD64*>(c.Rsp);
+                                c.Rsp += 8;
+                            }
+                            else
+                            {
+                                PVOID handlerData = nullptr;
+                                DWORD64 establisher = 0;
+                                RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, c.Rip, entry, &c, &handlerData, &establisher, nullptr);
+                            }
+                        }
+                    }
+                    ResumeThread(windowThread);
+                }
+                std::string text = "[stall-stack] the window thread, " + std::to_string(gap) + " ms without an answer:";
+                for (int i = 0; i < n; ++i)
+                {
+                    HMODULE module = nullptr;
+                    char name[MAX_PATH] = "?";
+                    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(at[i]), &module))
+                        GetModuleFileNameA(module, name, MAX_PATH);
+                    const char* leaf = strrchr(name, '\\');
+                    char one[400];
+                    snprintf(one, sizeof(one), " %s+0x%llx", leaf ? leaf + 1 : name, static_cast<unsigned long long>(at[i] - reinterpret_cast<DWORD64>(module)));
+                    text += one;
+                }
+                std::cerr << text << std::endl;
+            }
+        }).detach();
+#endif
+        sinceTick.start();
+        stallClock.setInterval(50);
+        QObject::connect(&stallClock, &QTimer::timeout, [&] {
+            const qint64 gap = sinceTick.restart();
+#ifdef _WIN32
+            lastTick.store(GetTickCount64());
+#endif
+            App::eventStatsReport(gap);
+            if (gap > 100) std::cerr << "[at " << (QDateTime::currentMSecsSinceEpoch() % 100000000) << " ms] [stall] the window did not answer for " << gap << " ms" << std::endl;
+        });
+        stallClock.start();
+    }
     a.exec();
 }

@@ -25,12 +25,12 @@ spot = lambda k: (22.0 * (k % 4), 20.0 * (k // 4))                        # (fou
 part = None
 for k, g in enumerate(leans):
     cx, oy = spot(k)
-    plate = move(rotate_y(box((cx - 1.0, oy, 0), (cx + 1.0, oy + 12, 8)), math.radians(g), center=(cx, oy + 6, 0)), (0, 0, 1.2))      # (lifted: turned about its foot, a plate dips up to 1 mm below it, and the lowest point of the whole part is the print bed)
+    plate = move(rotate_y(box(((cx + 1.0) - (cx - 1.0), (oy + 12) - oy, 8), position=(((cx - 1.0) + (cx + 1.0)) / 2, (oy + (oy + 12)) / 2, 4)), math.radians(g), center=(cx, oy + 6, 0)), (0, 0, 1.2))      # (lifted: turned about its foot, a plate dips up to 1 mm below it, and the lowest point of the whole part is the print bed)
     part = plate if part is None else union(part, plate)
 px, py = spot(7)
-post = cylinder(4.0, 8.0, (px, py + 6, 0))                                           # (a post with its flat bottom on the plate: the first layer is no overhang)
+post = cylinder(4.0, 8.0, position=(px, py + 6, 0))                                           # (a post with its flat bottom on the plate: the first layer is no overhang)
 rx, ry = spot(8)
-roof = union(box((rx - 6, ry, 8), (rx + 6, ry + 12, 10)), box((rx - 1, ry + 5, 0), (rx + 1, ry + 7, 8)))      # (a flat roof on a thin post, its underside at z = 8: an overhang of 90 degrees)
+roof = union(box(((rx + 6) - (rx - 6), (ry + 12) - ry, 2), position=(((rx - 6) + (rx + 6)) / 2, (ry + (ry + 12)) / 2, 9)), box(((rx + 1) - (rx - 1), (ry + 7) - (ry + 5), 8), position=(((rx - 1) + (rx + 1)) / 2, ((ry + 5) + (ry + 7)) / 2, 4)))      # (a flat roof on a thin post, its underside at z = 8: an overhang of 90 degrees)
 part = union(union(part, post), roof)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45.0)

@@ -12,7 +12,7 @@ parts = import_model("step/PivotBearingSupportBracket.STEP")
 bracket, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 os.makedirs("meshes", exist_ok=True)

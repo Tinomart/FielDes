@@ -321,10 +321,18 @@ def _without_default_placement(expr):
         text = lines[lineno - 1]
         return starts[lineno - 1] + len(text.encode('utf-8')[:col].decode('utf-8', 'ignore'))
 
+    # (one global position, H93: `position=(0, 0, 0)` is the default only of a shape made by its size alone, at the origin; the position of anything else is where its pivot is, and (0, 0, 0) is a place)
+    framed = False
+    if isinstance(call.func, ast.Name):
+        try:
+            import fieldes
+            framed = getattr(getattr(fieldes, call.func.id, None), '_placement_frame', None) == 'origin'
+        except Exception:
+            framed = False
     cuts = []
     for kw in call.keywords:
         default = _PLACEMENT_DEFAULTS.get(kw.arg)
-        if default is None:
+        if default is None or (kw.arg == 'position' and not framed):
             continue
         try:
             value = ast.literal_eval(_plain_numbers(ast.get_source_segment(expr, kw.value)))

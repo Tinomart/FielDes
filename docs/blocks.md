@@ -8,13 +8,13 @@ call tip, completion, a place in the right-click menus and a mark in the model t
 # blocks/my_blocks.py
 def perforate(body, hole_radius=2.0, spacing=10.0):
     ''' Drills a grid of round holes right through a body, along z '''
-    holes = repeat(cylinder(hole_radius, 100000, (0, 0, -50000)), (spacing, spacing, 0))
+    holes = repeat(cylinder(hole_radius, 100000, position=(0, 0, 0)), (spacing, spacing, 0))
     return difference(body, holes)
 ```
 
 ```python
 # any script, anywhere
-plate = box((0, 0, 0), (60, 40, 6))
+plate = box((60, 40, 6), position=(30, 20, 3))
 drilled = perforate(plate, 2.5, 10)
 drilled
 ```

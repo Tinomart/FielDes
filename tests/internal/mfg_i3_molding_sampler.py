@@ -20,12 +20,12 @@ from mfgkit import *
 t = Table('i3_molding_sampler: the same part for injection moulding (walls of 1.5 mm, a draft of 2 degrees, nothing out of reach along the pull)')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-plate = difference(box((0, 0, 0), (70, 40, 5)), cylinder(2.5, 7, (62, 8, -1)))
-fin = box((5, 5, 5), (5.5, 20, 17))
-block_a = box((10, 5, 5), (18, 20, 13))
-block_b = box((18.3, 5, 5), (26.3, 20, 13))
-ell = union(box((32, 5, 5), (44, 8, 15)), box((32, 5, 5), (35, 25, 15)))
-boss = cylinder(5, 10, (55, 28, 5))
+plate = difference(box((70, 40, 5), position=(35, 20, 2.5)), cylinder(2.5, 7, position=(62, 8, -1)))
+fin = box((0.5, 15, 12), position=(5.25, 12.5, 11))
+block_a = box((8, 15, 8), position=(14, 12.5, 9))
+block_b = box((8, 15, 8), position=(22.3, 12.5, 9))
+ell = union(box((12, 3, 10), position=(38, 6.5, 10)), box((3, 20, 10), position=(33.5, 15, 10)))
+boss = cylinder(5, 10, position=(55, 28, 5))
 part = union(union(union(union(union(plate, fin), block_a), block_b), ell), boss)
 # WHAT IS ASKED: the preset of injection moulding: walls of 1.5, a draft of 2 degrees, nothing out of reach along the pull, inside corners of half the wall
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)

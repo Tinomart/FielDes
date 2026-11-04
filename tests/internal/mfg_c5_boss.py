@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('c5_boss: a round boss on a plate, a radius of 2 mm asked where it meets the plate: a ring of fillet')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((-20, -20, 0), (20, 20, 4)), cylinder(6, 14, (0, 0, 4)))
+part = union(box((40, 40, 4), position=(0, 0, 2)), cylinder(6, 14, position=(0, 0, 4)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_radius=2.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

@@ -6,25 +6,25 @@
 from fieldes import *
 
 view.set_bounds([-45, -45, -3], [45, 45, 30], auto_scale=True)
-view.set_resolution(4)
+view.set_resolution(20)
 view.set_quality(8)
 
 # The flange: a disc 80 mm across and 6 thick, and a hub on it -- the profile (distance from the axis, height) turned about the y axis, then turned up onto z.
-plate = cylinder(40, 6)
-hub = rotate(revolve(rectangle((0, 0), (15, 26))), (1, 0, 0), 90)
+plate = cylinder(40, 6, position=(0, 0, 3))
+hub = rotate(revolve(rectangle((15, 26), position=(7.5, 13))), (1, 0, 0), 90)
 flange = union(plate, hub)
-bore = cylinder(9, 40, (0, 0, -5))
+bore = cylinder(9, 40, position=(0, 0, 15))
 
 # Six bolt holes 30 mm from the axis: one countersunk hole from the top of the plate, six times round the z axis.
 bolt = hole_cutter((30, 0, 6), 5, kind='countersink', head_diameter=9, angle=90)
 bolts = circular_pattern(bolt, 6, axis=(0, 0, 1))
 
 # Six radial slots between the bolts, 12 long and 4 wide, 18 mm from the axis (a slot is 2D: extruded through the plate, then turned half a step).
-window = rotate(extrude(slot(12, 4, (18, 0)), -1, 7), (0, 0, 1), 30)
+window = rotate(extrude(slot(12, 4, position=(18, 0)), -1, 7), (0, 0, 1), 30)
 windows = circular_pattern(window, 6, axis=(0, 0, 1))
 
 # Three gussets from the hub to the rim: a box cut by a plane that slopes from the top of the hub down to the plate, three times round, turned 15 degrees off the bolts.
-rib = box((14, -2.5, 6), (38, 2.5, 24))
+rib = box((24, 5, 18), position=(26, 0, 15))
 gusset = cut_plane(rib, (18, 0, 23), (15, 0, 24), keep='below')
 gussets = circular_pattern(rotate(gusset, (0, 0, 1), 15), 3, axis=(0, 0, 1))
 

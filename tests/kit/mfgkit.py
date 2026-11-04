@@ -262,12 +262,12 @@ def control(t, part, lo, hi, name, res_=3, rules=None):
 
 def sampler():
     ''' A plate 70 x 40 x 5 with a thin fin, two blocks with a narrow slot between them, an L of two walls, a round boss and a hole: a bit of everything a process asks about '''
-    plate = difference(box((0, 0, 0), (70, 40, 5)), cylinder(2.5, 7, (62, 8, -1)))
-    fin = box((5, 5, 5), (5.5, 20, 17))
-    block_a = box((10, 5, 5), (18, 20, 13))
-    block_b = box((18.3, 5, 5), (26.3, 20, 13))
-    ell = union(box((32, 5, 5), (44, 8, 15)), box((32, 5, 5), (35, 25, 15)))
-    boss = cylinder(5, 10, (55, 28, 5))
+    plate = difference(box((70, 40, 5), position=(35, 20, 2.5)), cylinder(2.5, 7, position=(62, 8, -1)))
+    fin = box((0.5, 15, 12), position=(5.25, 12.5, 11))
+    block_a = box((8, 15, 8), position=(14, 12.5, 9))
+    block_b = box((8, 15, 8), position=(22.3, 12.5, 9))
+    ell = union(box((12, 3, 10), position=(38, 6.5, 10)), box((3, 20, 10), position=(33.5, 15, 10)))
+    boss = cylinder(5, 10, position=(55, 28, 5))
     part = plate
     for piece in (fin, block_a, block_b, ell, boss):
         part = union(part, piece)
@@ -303,7 +303,7 @@ def preset_case(t, constraint, name):
 def random_part(rng):
     ''' A plate with two to four features.  Returns (part, description, (width, depth, height)) '''
     W, D, tp = rng.uniform(35, 60), rng.uniform(30, 50), rng.uniform(2.5, 6.0)
-    part = box((0, 0, 0), (W, D, tp))
+    part = box((W, D, tp), position=(W / 2, D / 2, tp / 2))
     desc = ['plate %.0f x %.0f x %.1f' % (W, D, tp)]
     top = tp
     for _ in range(rng.randint(2, 4)):
@@ -311,31 +311,31 @@ def random_part(rng):
         x, y = rng.uniform(4, W - 16), rng.uniform(4, D - 16)
         if kind == 'fin':
             th, ln, h = rng.choice([0.3, 0.45, 0.6, 0.75, 1.0, 1.5]), rng.uniform(8, 20), rng.uniform(8, 22)
-            piece = box((x, y, tp), (x + th, y + ln, tp + h)) if rng.random() < 0.5 else box((x, y, tp), (x + ln, y + th, tp + h))
+            piece = box(((x + th) - x, (y + ln) - y, (tp + h) - tp), position=((x + (x + th)) / 2, (y + (y + ln)) / 2, (tp + (tp + h)) / 2)) if rng.random() < 0.5 else box(((x + ln) - x, (y + th) - y, (tp + h) - tp), position=((x + (x + ln)) / 2, (y + (y + th)) / 2, (tp + (tp + h)) / 2))
             desc.append('fin %.2f' % th)
         elif kind == 'post':
             r, h = rng.uniform(1.0, 5.0), rng.uniform(6, 20)
-            piece = cylinder(r, h, (x + 5, y + 5, tp))
+            piece = cylinder(r, h, position=(x + 5, y + 5, tp))
             desc.append('post r%.1f' % r)
         elif kind == 'block':
             w, d, h = rng.uniform(4, 12), rng.uniform(4, 12), rng.uniform(5, 18)
-            piece = box((x, y, tp), (x + w, y + d, tp + h))
+            piece = box(((x + w) - x, (y + d) - y, (tp + h) - tp), position=((x + (x + w)) / 2, (y + (y + d)) / 2, (tp + (tp + h)) / 2))
             desc.append('block')
         elif kind == 'slot':
             gap, w, d, h = rng.choice([0.15, 0.25, 0.4, 0.8, 1.5, 2.5]), rng.uniform(5, 9), rng.uniform(8, 14), rng.uniform(6, 14)
-            piece = union(box((x, y, tp), (x + w, y + d, tp + h)), box((x + w + gap, y, tp), (x + 2 * w + gap, y + d, tp + h)))
+            piece = union(box(((x + w) - x, (y + d) - y, (tp + h) - tp), position=((x + (x + w)) / 2, (y + (y + d)) / 2, (tp + (tp + h)) / 2)), box(((x + 2 * w + gap) - (x + w + gap), (y + d) - y, (tp + h) - tp), position=(((x + w + gap) + (x + 2 * w + gap)) / 2, (y + (y + d)) / 2, (tp + (tp + h)) / 2)))
             desc.append('slot %.2f' % gap)
         elif kind == 'ledge':
             wt, h, ln = rng.uniform(3, 6), rng.uniform(12, 22), rng.uniform(6, 14)
-            piece = union(box((x, y, tp), (x + wt, y + 14, tp + h)), box((x + wt, y, tp + h - 3), (x + wt + ln, y + 14, tp + h)))
+            piece = union(box(((x + wt) - x, (y + 14) - y, (tp + h) - tp), position=((x + (x + wt)) / 2, (y + (y + 14)) / 2, (tp + (tp + h)) / 2)), box(((x + wt + ln) - (x + wt), (y + 14) - y, (tp + h) - (tp + h - 3)), position=(((x + wt) + (x + wt + ln)) / 2, (y + (y + 14)) / 2, ((tp + h - 3) + (tp + h)) / 2)))
             desc.append('ledge')
         elif kind == 'ell':
             th, ln, h = rng.uniform(2, 4), rng.uniform(10, 16), rng.uniform(8, 16)
-            piece = union(box((x, y, tp), (x + ln, y + th, tp + h)), box((x, y, tp), (x + th, y + ln, tp + h)))
+            piece = union(box(((x + ln) - x, (y + th) - y, (tp + h) - tp), position=((x + (x + ln)) / 2, (y + (y + th)) / 2, (tp + (tp + h)) / 2)), box(((x + th) - x, (y + ln) - y, (tp + h) - tp), position=((x + (x + th)) / 2, (y + (y + ln)) / 2, (tp + (tp + h)) / 2)))
             desc.append('L')
         else:
             r = rng.uniform(0.5, 4.0)
-            part = difference(part, cylinder(r, tp + 2, (x + 6, y + 6, -1)))
+            part = difference(part, cylinder(r, tp + 2, position=(x + 6, y + 6, -1)))
             desc.append('hole r%.1f' % r)
             continue
         part = union(part, piece)
@@ -574,10 +574,10 @@ def region_boxes(report, rule):
 def rounded_pocket(x0, y0, w, d, r, z0, z1):
     ''' The cutter of a pocket: a rectangle w x d with its four corners rounded to radius r (r = 0: sharp corners), from z0 to z1 '''
     if r <= 0:
-        return box((x0, y0, z0), (x0 + w, y0 + d, z1))
+        return box(((x0 + w) - x0, (y0 + d) - y0, z1 - z0), position=((x0 + (x0 + w)) / 2, (y0 + (y0 + d)) / 2, (z0 + z1) / 2))
     # (ONE convex primitive, so that the field inside it -- the air of the pocket -- is the distance to its wall: a union of two boxes and four cylinders has inside it the deepest of their own
     # depths, 1.4 mm 3 mm from a wall, and the corner rule, which reads the field up to the ball's radius, took the middle of every wall of such a pocket for a corner)
-    return extrude(rounded_rectangle((x0, y0), (x0 + w, y0 + d), r), z0, z1)
+    return extrude(rounded_rectangle(((x0 + w) - x0, (y0 + d) - y0), r, position=((x0 + (x0 + w)) / 2, (y0 + (y0 + d)) / 2)), z0, z1)
 
 
 
@@ -922,8 +922,8 @@ def surface_points(field, lines, per_line=3, samples=80):
 
 def scaled_fin_and_slot(t, s):
     ''' The fin of 0.6 mm and the slot of 0.2 mm between two blocks of h4, every length multiplied by `s` and the rules with them: what the tool does must not depend on the size of the part '''
-    fin = box((0, 0, 0), (0.6 * s, 12 * s, 10 * s))
-    part = union(union(fin, box((6 * s, 0, 0), (12 * s, 12 * s, 10 * s))), box((12.2 * s, 0, 0), (18.2 * s, 12 * s, 10 * s)))
+    fin = box((0.6 * s, 12 * s, 10 * s), position=((0.6 * s) / 2, (12 * s) / 2, (10 * s) / 2))
+    part = union(union(fin, box(((12 * s) - (6 * s), 12 * s, 10 * s), position=(((6 * s) + (12 * s)) / 2, (12 * s) / 2, (10 * s) / 2))), box(((18.2 * s) - (12.2 * s), 12 * s, 10 * s), position=(((12.2 * s) + (18.2 * s)) / 2, (12 * s) / 2, (10 * s) / 2)))
     rule = manufacturing_constraint(min_wall=0.8 * s, min_gap=0.4 * s)
     lo, hi = (-3 * s, -3 * s, -3 * s), (21 * s, 15 * s, 13 * s)
     frame(lo, hi, res=8.0 / s)
@@ -1030,7 +1030,7 @@ def job_table(t, label, part, res, lo, hi, rules, count=2500, spare=0.005, boxes
 def _bracket_holes():
     ''' The two bolt-hole regions of the bracket, as one shape: the regions `_bracket_parts` hands to exclude().  A part held as `exact_distance` carries no locks (it is a plain field of distances), so a case that wraps
         the bracket in it gives these to the tool as `keep=` '''
-    return union(box((-48, -88, -22), (-26, -44, 22)), box((26, -88, -22), (48, -44, 22)))
+    return union(box((22, 44, 44), position=(-37, -66, 0)), box((22, 44, 44), position=(37, -66, 0)))
 
 
 def _bracket_parts():
@@ -1038,8 +1038,8 @@ def _bracket_parts():
         load -- the plates it is held by and the lugs the load is put on '''
     parts = import_model(_step_file('PivotBearingSupportBracket.STEP'))
     space, (slo, shi) = parts[0]
-    plates = union(box((-76, 5, -61), (-45, 36, 29)), box((45, 5, -61), (76, 36, 29)))
-    lugs = box((-60, -90, -61), (60, -60, 29))
+    plates = union(box((31, 31, 90), position=(-60.5, 20.5, -16)), box((31, 31, 90), position=(60.5, 20.5, -16)))
+    lugs = box((120, 30, 90), position=(0, -75, -16))
     holes = _bracket_holes()
     design = exclude(space, holes)
     return design, plates, lugs
@@ -1067,29 +1067,29 @@ def _keep_unchanged(t, label, part, res, boxes, lo, hi):
 def _frustum(x0, y0, x1, y1, z0, z1, draft):
     ''' a block whose four side faces lean `draft` degrees in toward the top (out toward the top for a negative draft) '''
     k = math.tan(math.radians(draft))
-    body = intersection(box((x0 - 2, y0 - 2, z0), (x1 + 2, y1 + 2, z1)), half_space((1, 0, k), (x1, 0, z0)))
-    body = intersection(body, half_space((-1, 0, k), (x0, 0, z0)))
-    body = intersection(body, half_space((0, 1, k), (0, y1, z0)))
-    return intersection(body, half_space((0, -1, k), (0, y0, z0)))
+    body = intersection(box(((x1 + 2) - (x0 - 2), (y1 + 2) - (y0 - 2), z1 - z0), position=(((x0 - 2) + (x1 + 2)) / 2, ((y0 - 2) + (y1 + 2)) / 2, (z0 + z1) / 2)), half_space((1, 0, k), position=(x1, 0, z0)))
+    body = intersection(body, half_space((-1, 0, k), position=(x0, 0, z0)))
+    body = intersection(body, half_space((0, 1, k), position=(0, y1, z0)))
+    return intersection(body, half_space((0, -1, k), position=(0, y0, z0)))
 
 
 def _control_parts(process, defects):
     ''' A small part built by hand to the published rules of `process` ('fff', 'cnc', 'mould'), and with `defects` the same part with what the rules forbid added -- one defect for each rule '''
     if process == 'fff':
         # an L-bracket of 2 mm walls on the plate and a gusset rib of 2 mm: every wall at least 2, no face looking down, no gap
-        part = union(union(box((0, 0, 0), (40, 30, 2)), box((0, 0, 0), (40, 2, 25))), intersection(box((19, 2, 2), (21, 20, 20)), half_space((0, 1, 1), (0, 10, 10))))
+        part = union(union(box((40, 30, 2), position=(20, 15, 1)), box((40, 2, 25), position=(20, 1, 12.5))), intersection(box((2, 18, 18), position=(20, 11, 11)), half_space((0, 1, 1), position=(0, 10, 10))))
         if defects:
-            part = union(part, box((8, 10, 2), (8.4, 24, 10)))                                                                  # a rib 0.4 mm thick
-            part = union(part, rotate_y(box((30, 6, 2), (32, 16, 10)), math.radians(70.0), center=(31, 11, 2)))                  # a plate whose lower face leans 70 degrees
-            part = difference(part, box((25, 5, -1), (25.2, 25, 3)))                                                            # a slot 0.2 mm wide through the base
+            part = union(part, box((0.4, 14, 8), position=(8.2, 17, 6)))                                                                  # a rib 0.4 mm thick
+            part = union(part, rotate_y(box((2, 10, 8), position=(31, 11, 6)), math.radians(70.0), center=(31, 11, 2)))                  # a plate whose lower face leans 70 degrees
+            part = difference(part, box((0.2, 20, 4), position=(25.1, 15, 1)))                                                            # a slot 0.2 mm wide through the base
         return part
     if process == 'cnc':
         # a plate with a window through it, its four corners rounded to 3.2 (the cutter's own radius is 3): a mill reaches every face from above, the walls are 6 mm
-        part = difference(box((0, 0, 0), (40, 30, 6)), extrude(rounded_rectangle((6, 6), (34, 24), 3.2), -1, 7))
+        part = difference(box((40, 30, 6), position=(20, 15, 3)), extrude(rounded_rectangle((28, 18), 3.2, position=(20, 15)), -1, 7))
         if defects:
-            part = difference(part, box((8, 8, -1), (11, 14, 7)))                                                                # a slot with sharp corners (radius 0), narrower than the cutter
-            part = union(part, box((36, 10, 6), (36.3, 20, 11)))                                                                 # a fin 0.3 mm thick standing on the plate
-            part = difference(part, box((-1, 12, 2), (4, 18, 4)))                                                                # a groove in the side: out of reach along z
+            part = difference(part, box((3, 6, 8), position=(9.5, 11, 3)))                                                                # a slot with sharp corners (radius 0), narrower than the cutter
+            part = union(part, box((0.3, 10, 5), position=(36.15, 15, 8.5)))                                                                 # a fin 0.3 mm thick standing on the plate
+            part = difference(part, box((5, 6, 2), position=(1.5, 15, 3)))                                                                # a groove in the side: out of reach along z
         # (the corner rule reads the value of the field up to the cutter's radius from the surface: a part made by differences of boxes whose cutters overshoot has only a lower bound of the distance
         # in its window, so it is read through exact_distance, as docs/manufacturing.md says)
         return exact_distance(part)
@@ -1097,9 +1097,9 @@ def _control_parts(process, defects):
     sharp = difference(_frustum(0, 0, 40, 30, 0, 20, 2.0), _frustum(3, 3, 37, 27, 3, 21, -2.0))
     part = fillet(sharp, 1.0)
     if defects:
-        part = union(part, box((38.5, 8, 4), (43.9, 8.4, 14)))                                                                  # a rib 0.4 mm thick standing out of the outside, its root in the wall
-        part = difference(part, box((-1, 12, 6), (2, 18, 12)))                                                                    # a groove in the outer face: an undercut along the pull
-        part = union(part, box((12, -1.5, 4), (24, 0.3, 12)))                                                                    # a wall that stands upright (no draft) on the outside
+        part = union(part, box((5.4, 0.4, 10), position=(41.2, 8.2, 9)))                                                                  # a rib 0.4 mm thick standing out of the outside, its root in the wall
+        part = difference(part, box((3, 6, 6), position=(0.5, 15, 9)))                                                                    # a groove in the outer face: an undercut along the pull
+        part = union(part, box((12, 1.8, 8), position=(18, -0.6, 8)))                                                                    # a wall that stands upright (no draft) on the outside
     return part
 
 

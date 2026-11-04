@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('u1_groove: a cube with a groove in its side, nothing out of reach along z asked: the groove is filled')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = difference(box((0, 0, 0), (30, 30, 30)), box((-1, 5, 12), (8, 25, 18)))
+part = difference(box(30, position=(15, 15, 15)), box((9, 20, 6), position=(3.5, 15, 15)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(undercut_along=(0, 0, 1))
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

@@ -20,10 +20,10 @@ from mfgkit import *
 t = Table('s3_supports_in_a_region: two ledges of the same kind on one wall unit each, a constraint with support="block" that holds only in a region round the first, and a budget that refuses the gusset: supports are made under the first ledge only')
 
 def unit(y0):
-    return union(box((0, y0, 0), (10, y0 + 40, 40)), box((10, y0, 20), (30, y0 + 40, 25)))
+    return union(box((10, (y0 + 40) - y0, 40), position=(5, (y0 + (y0 + 40)) / 2, 20)), box((20, (y0 + 40) - y0, 5), position=(20, (y0 + (y0 + 40)) / 2, 22.5)))
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 part = union(unit(0), unit(60))
-region = box((-5, -5, -5), (35, 50, 45))
+region = box((40, 55, 50), position=(15, 22.5, 20))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45, support='block', support_gap=0.3, region=region)
 lo, hi = (-3, -3, -3), (33, 103, 43)

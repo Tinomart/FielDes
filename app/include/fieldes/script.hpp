@@ -217,6 +217,8 @@ protected:
     void onCursorMoved();
     void onContentsChange(int pos, int removed, int added);
     void validateFolds();
+    const QSet<int>& internalBlocks() const;        // (the blocks of the regions the program keeps for itself: `# fieldes-internal: begin` ... `end`)
+    void hideInternalRegion();
     void ensureBlockVisible(const QTextBlock& b);
     void refreshSelections();
     void highlightBrackets();
@@ -233,6 +235,8 @@ protected:
     bool isBlankOrComment(const QTextBlock& b) const;
     int objectEnd(const QTextBlock& b) const;      // (the last line, 0-based, of the object that starts at this line; -1 when none does)
     QTimer* m_shadeTimer = nullptr;
+    mutable QSet<int> m_internal;                  // (internalBlocks(), kept until the text changes)
+    mutable bool m_internalValid = false;
 
     Formatter* m_formatter=nullptr;
     ScriptGutter* m_gutter=nullptr;

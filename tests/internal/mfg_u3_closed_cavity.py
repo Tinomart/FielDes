@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('u3_closed_cavity: a closed cavity of 8 mm in a block of 20, an undercut along z asked: a cavity that no tool can reach is filled, and the block is solid again')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = difference(box((0, 0, 0), (20, 20, 20)), box((6, 6, 6), (14, 14, 14)))
+part = difference(box(20, position=(10, 10, 10)), box(8, position=(10, 10, 10)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(undercut_along=(0, 0, 1))
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

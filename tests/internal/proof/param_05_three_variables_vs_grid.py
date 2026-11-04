@@ -17,12 +17,12 @@ view.set_bounds([-5, -75, -5], [105, 75, 30], auto_scale=True)
 view.set_resolution(3)
 view.set_quality(8)
 
-wall = fixed(box((-1, -1, -1), (1, 60, 60)))
-pull = force(box((99, -1, -1), (101, 60, 60)), (0, 0, -200))
+wall = fixed(box((2, 61, 61), position=(0, 29.5, 29.5)))
+pull = force(box((2, 61, 61), position=(100, 29.5, 29.5)), (0, 0, -200))
 
 
 def beam_of(w, h, r):
-    return difference(box((0, 0, 0), (100, w, h)), cylinder(r, 40, (50, 15, -10)))
+    return difference(box((100, w, h), position=(50, w / 2, h / 2)), cylinder(r, 40, position=(50, 15, -10)))
 
 
 grid_best, solved = None, 0
@@ -44,11 +44,17 @@ print('STARTING design : width 40, height 20, hole radius 2')
 width = var(40)
 height = var(20)
 radius = var(2)
-beam = difference(box((0, 0, 0), (100, width, height)), cylinder(radius, 40, (50, 15, -10)))
+beam = difference(box((100, width, height), position=(50, width / 2, height / 2)), cylinder(radius, 40, position=(50, 15, -10)))
 stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=3)
 
-best = parametric_optimization(stress, [(width, 20, 40), (height, 8, 20), (radius, 2, 8)],
-                               constraints=[minimize('mass'), 'max_von_mises <= 120', 'max_displacement <= 0.8'])
+mass_1 = stress.mass
+max_von_mises_1 = stress.max_von_mises
+max_displacement_1 = stress.max_displacement
+best = parametric_optimization(
+    stress,
+    [(width, 20, 40), (height, 8, 20), (radius, 2, 8)],
+    conditions=[minimize(mass_1), keep_below(max_von_mises_1, 120), keep_below(max_displacement_1, 0.8)],
+)
 
 starting_beam = move(beam_of(40, 20, 2), (0, -60, 0))
 starting_beam

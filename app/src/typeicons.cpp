@@ -69,6 +69,7 @@ QHash<QString, Domain>& domains()
         {"structural", {QColor("#ee6a5e"), QColor("#f4958c")}},
         {"thermal",    {QColor("#f08c2a"), QColor("#f5b46e")}},
         {"fluid",      {QColor("#6f86f2"), QColor("#a1b0f7")}},
+        {"optimization", {QColor("#3fb8a0"), QColor("#7fd4c2")}},
     };
     return d;
 }
@@ -157,6 +158,25 @@ void drawKind(QPainter& p, const QString& type, const QColor& c, const QString& 
         p.setBrush(c);
         p.drawEllipse(QPointF(8, 8), 2.7, 2.7);
     }
+    else if (type == "simulation" && domain == "mesh")
+    {
+        // a mesh (not a result: the user, 2026-11-03, "dont make meshing be marked as simulation"): a patch of triangles, its nodes marked
+        const double xs[3] = {2.4, 8.0, 13.6};
+        const double ys[3] = {2.6, 8.0, 13.4};
+        p.setPen(QPen(alpha(c, 200), 1.1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        for (int i = 0; i < 3; ++i)
+        {
+            p.drawLine(QPointF(xs[0], ys[i]), QPointF(xs[2], ys[i]));
+            p.drawLine(QPointF(xs[i], ys[0]), QPointF(xs[i], ys[2]));
+        }
+        for (int i = 0; i < 2; ++i)
+            for (int j = 0; j < 2; ++j) p.drawLine(QPointF(xs[i], ys[j]), QPointF(xs[i + 1], ys[j + 1]));
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) p.drawEllipse(QPointF(xs[i], ys[j]), 1.2, 1.2);
+    }
     else if (type == "simulation" && domain == "thermal")
     {
         // a thermal result: a thermometer, its column filled
@@ -209,6 +229,28 @@ void drawKind(QPainter& p, const QString& type, const QColor& c, const QString& 
         }
         p.setPen(QPen(alpha(c, 220), 1.2, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(QPointF(1.8, 13.8), QPointF(14.2, 13.8));
+    }
+    else if (type == "result")
+    {
+        // one result of an analysis (a von Mises stress, a frequency, a drag): a gauge, its needle at the value, in the colour of the analysis's domain
+        const QPointF centre(8.0, 10.2);
+        p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap));
+        p.setBrush(Qt::NoBrush);
+        p.drawArc(QRectF(2.0, 4.2, 12.0, 12.0), 15 * 16, 150 * 16);
+        p.setPen(QPen(alpha(c, 200), 1.0, Qt::SolidLine, Qt::RoundCap));
+        for (double deg : {30.0, 90.0, 150.0})
+        {
+            const double a = deg * kPi / 180.0;
+            p.drawLine(QPointF(centre.x() + 4.0 * std::cos(a), centre.y() - 4.0 * std::sin(a)), QPointF(centre.x() + 5.2 * std::cos(a), centre.y() - 5.2 * std::sin(a)));
+        }
+        const double needle = 62.0 * kPi / 180.0;
+        p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(centre, QPointF(centre.x() + 4.6 * std::cos(needle), centre.y() - 4.6 * std::sin(needle)));
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawEllipse(centre, 1.4, 1.4);
+        p.setPen(QPen(alpha(c, 220), 1.4, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(3.0, 14.4), QPointF(13.0, 14.4));
     }
     else if (type == "material")
     {
@@ -661,7 +703,118 @@ bool drawShape(QPainter& p, const QString& name, const QColor& c)
         drawF(p, QColor(0xf4, 0xf6, 0xfa), QPointF(5.2, 3.6), 9.0, 1.8);
         return true;
     }
+    if (name == "box")
+    {
+        // a box, longer than it is tall: its front, its top and its right side, lit from above
+        p.setPen(strokeOf(shade, 0.8));
+        p.setBrush(c);
+        p.drawPolygon(QPolygonF({QPointF(2.2, 6.4), QPointF(10.0, 6.4), QPointF(10.0, 13.6), QPointF(2.2, 13.6)}));
+        p.setBrush(lit);
+        p.drawPolygon(QPolygonF({QPointF(2.2, 6.4), QPointF(5.6, 2.6), QPointF(13.4, 2.6), QPointF(10.0, 6.4)}));
+        p.setBrush(shade);
+        p.drawPolygon(QPolygonF({QPointF(10.0, 6.4), QPointF(13.4, 2.6), QPointF(13.4, 9.8), QPointF(10.0, 13.6)}));
+        return true;
+    }
+    if (name == "capsule")
+    {
+        // a pill: a cylinder with a half ball at each end
+        QLinearGradient g(4.6, 0, 11.4, 0);
+        g.setColorAt(0.0, c.lighter(130));
+        g.setColorAt(0.55, c);
+        g.setColorAt(1.0, c.darker(155));
+        p.setPen(Qt::NoPen);
+        p.setBrush(g);
+        p.drawRoundedRect(QRectF(4.6, 1.6, 6.8, 12.8), 3.4, 3.4);
+        p.setPen(strokeOf(lit, 0.9));
+        p.drawLine(QPointF(5.9, 4.8), QPointF(5.9, 11.2));
+        return true;
+    }
+    if (name == "tube")
+    {
+        // a pipe: a cylinder with a hole through it, seen down its mouth
+        QPainterPath body;
+        body.addRect(QRectF(3.2, 4.4, 9.6, 7.4));
+        QPainterPath bottom;
+        bottom.addEllipse(QPointF(8, 11.8), 4.8, 2.0);
+        QLinearGradient g(3.2, 0, 12.8, 0);
+        g.setColorAt(0.0, c.lighter(125));
+        g.setColorAt(0.55, c);
+        g.setColorAt(1.0, c.darker(150));
+        p.setPen(Qt::NoPen);
+        p.setBrush(g);
+        p.drawPath(body.united(bottom));
+        p.setBrush(c.lighter(150));
+        p.drawEllipse(QPointF(8, 4.4), 4.8, 2.0);
+        p.setBrush(c.darker(260));
+        p.drawEllipse(QPointF(8, 4.5), 3.0, 1.1);
+        return true;
+    }
+    if (name == "threaded_rod" || name == "threaded_rod_normed")
+    {
+        // a rod with a thread running round it; the one of a standard screw has the head of a bolt as well
+        const bool normed = name == "threaded_rod_normed";
+        const double top = normed ? 5.0 : 2.0;
+        QLinearGradient g(5.0, 0, 11.0, 0);
+        g.setColorAt(0.0, c.lighter(125));
+        g.setColorAt(0.55, c);
+        g.setColorAt(1.0, c.darker(150));
+        p.setPen(Qt::NoPen);
+        p.setBrush(g);
+        p.drawRect(QRectF(5.0, top, 6.0, 13.6 - top));
+        p.setPen(strokeOf(shade, 1.0));
+        for (double y = top + 1.4; y < 13.4; y += 2.2) p.drawLine(QPointF(5.0, y + 1.0), QPointF(11.0, y - 0.6));
+        if (normed)
+        {
+            p.setPen(strokeOf(shade, 0.8));
+            p.setBrush(lit);
+            p.drawRoundedRect(QRectF(3.4, 1.8, 9.2, 3.2), 0.8, 0.8);
+        }
+        return true;
+    }
+    if (name == "morph_polyhedron")
+    {
+        // a body made of points with flat faces and sharp corners: a cube with a point (gold, as a point is) at each corner
+        const QPointF top(8, 2.6), ur(13.0, 5.4), lr(13.0, 10.6), bottom(8, 13.4), ll(3.0, 10.6), ul(3.0, 5.4), mid(8, 8);
+        p.setPen(Qt::NoPen);
+        p.setBrush(lit);
+        p.drawPolygon(QPolygonF({top, ur, mid, ul}));
+        p.setBrush(c);
+        p.drawPolygon(QPolygonF({ul, mid, bottom, ll}));
+        p.setBrush(shade);
+        p.drawPolygon(QPolygonF({ur, lr, bottom, mid}));
+        for (const QPointF& q : {top, ur, lr, bottom, ll, ul, mid}) nodeAt(p, QColor(0xf4, 0xb7, 0x3a), q, 1.3);
+        return true;
+    }
+    if (name == "morph_body")
+    {
+        // a body made of points whose surface is smooth through them: a rounded body with points on it
+        QRadialGradient g(QPointF(6.0, 5.6), 9.0);
+        g.setColorAt(0.0, c.lighter(165));
+        g.setColorAt(0.5, c);
+        g.setColorAt(1.0, c.darker(160));
+        QPainterPath blob;
+        blob.moveTo(8, 2.0);
+        blob.cubicTo(12.6, 2.0, 14.4, 5.6, 13.6, 9.2);
+        blob.cubicTo(12.8, 12.8, 9.6, 14.2, 6.6, 13.4);
+        blob.cubicTo(3.0, 12.4, 1.6, 8.6, 3.2, 5.2);
+        blob.cubicTo(4.2, 3.2, 6.0, 2.0, 8, 2.0);
+        p.setPen(Qt::NoPen);
+        p.setBrush(g);
+        p.drawPath(blob);
+        for (const QPointF& q : {QPointF(8.0, 2.4), QPointF(13.2, 9.0), QPointF(6.6, 13.2), QPointF(3.2, 5.4), QPointF(8.2, 8.2)}) nodeAt(p, QColor(0xf4, 0xb7, 0x3a), q, 1.3);
+        return true;
+    }
     // ---- 2D
+    if (name == "slot")
+    {
+        // a slot: a long shape with round ends, its middle line dashed
+        p.setPen(strokeOf(c, 1.5));
+        p.setBrush(alpha(c, 95));
+        p.drawRoundedRect(QRectF(1.8, 4.6, 12.4, 6.8), 3.4, 3.4);
+        p.setPen(QPen(alpha(c, 220), 1.0, Qt::DashLine, Qt::RoundCap));
+        p.drawLine(QPointF(5.2, 8.0), QPointF(10.8, 8.0));
+        return true;
+    }
     if (name == "circle" || name == "rectangle" || name == "rounded_rectangle" || name == "ring" || name == "polygon" || name == "triangle" || name == "profile")
     {
         p.setPen(strokeOf(c, 1.5));
@@ -688,7 +841,21 @@ bool drawShape(QPainter& p, const QString& name, const QColor& c)
         }
         return true;
     }
-    // ---- 1D (a spline is the picture of its kind)
+    // ---- 1D
+    if (name == "spline")
+    {
+        // a smooth line through points
+        QPainterPath path;
+        path.moveTo(2.4, 11.4);
+        path.cubicTo(3.4, 8.0, 4.4, 4.6, 6.0, 4.6);
+        path.cubicTo(7.6, 4.6, 8.4, 10.6, 10.0, 10.6);
+        path.cubicTo(11.6, 10.6, 12.6, 7.0, 13.6, 4.4);
+        p.setPen(strokeOf(c, 1.6));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(path);
+        for (const QPointF& q : {QPointF(2.4, 11.4), QPointF(6.0, 4.6), QPointF(10.0, 10.6), QPointF(13.6, 4.4)}) nodeAt(p, c, q, 1.6);
+        return true;
+    }
     if (name == "polyline")
     {
         const QPointF pts[4] = {QPointF(2.4, 11.6), QPointF(6.0, 4.4), QPointF(9.6, 10.8), QPointF(13.6, 4.2)};
@@ -698,7 +865,28 @@ bool drawShape(QPainter& p, const QString& name, const QColor& c)
         for (const QPointF& q : pts) nodeAt(p, c, q, 1.6);
         return true;
     }
-    // ---- surfaces (a wave surface is the picture of its kind)
+    // ---- surfaces
+    if (name == "wave_surface")
+    {
+        // a sheet that goes up and down: a band of waves
+        QPainterPath sheet;
+        sheet.moveTo(1.6, 9.0);
+        for (int i = 1; i <= 24; ++i)
+        {
+            const double t = i / 24.0;
+            sheet.lineTo(1.6 + 12.8 * t, 7.6 - 2.6 * std::sin(2 * kPi * 1.5 * t));
+        }
+        for (int i = 24; i >= 0; --i)
+        {
+            const double t = i / 24.0;
+            sheet.lineTo(1.6 + 12.8 * t, 12.4 - 2.6 * std::sin(2 * kPi * 1.5 * t));
+        }
+        sheet.closeSubpath();
+        p.setPen(strokeOf(c, 1.4));
+        p.setBrush(alpha(c, 85));
+        p.drawPath(sheet);
+        return true;
+    }
     if (name == "plane")
     {
         // a flat sheet, a grid across it
@@ -1441,6 +1629,113 @@ bool drawCell(QPainter& p, const QString& kind, const QColor& c)
     return false;
 }
 
+// The pictures of what the Optimization section of the menus is made of: what designs for an analysis, and what an optimization is given -- each its own (the user, 2026-11-02: "get different icons")
+bool drawOptimization(QPainter& p, const QString& name, const QColor& c)
+{
+    // ---- the Optimization section of the menus: what designs for an analysis, and what an optimization is given -- each its own picture (the user, 2026-11-02: "this should be ordered into its own
+    // optimization section here, obviously and get different icons, just like I told you everything new gets")
+    if (name == "topology_optimization")
+    {
+        // a part with the material taken out where the load does not need it: the block it started as, dashed, and the truss of two chords and a zig-zag that is left of it (the user, 2026-11-04: the plate with
+        // three holes "looks like a robot face")
+        p.setPen(QPen(alpha(c, 170), 1.0, Qt::DashLine, Qt::RoundCap));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(1.4, 2.8, 13.2, 10.4), 1.2, 1.2);
+        p.setPen(strokeOf(c, 1.5));
+        p.drawLine(QPointF(2.4, 4.4), QPointF(13.6, 4.4));
+        p.drawLine(QPointF(2.4, 11.6), QPointF(13.6, 11.6));
+        QPolygonF zig;
+        zig << QPointF(2.4, 11.6) << QPointF(5.2, 4.4) << QPointF(8.0, 11.6) << QPointF(10.8, 4.4) << QPointF(13.6, 11.6);
+        p.drawPolyline(zig);
+        return true;
+    }
+    if (name == "parametric_optimization")
+    {
+        // a shape with a number to tune: a block and, under it, a slider with its knob
+        p.setPen(strokeOf(c, 1.4));
+        p.setBrush(alpha(c, 95));
+        p.drawRoundedRect(QRectF(3.0, 2.2, 10.0, 5.4), 1.2, 1.2);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(strokeOf(c, 1.6));
+        p.drawLine(QPointF(2.2, 11.8), QPointF(13.8, 11.8));
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawEllipse(QPointF(9.4, 11.8), 2.1, 2.1);
+        return true;
+    }
+    if (name == "optimization_condition")
+    {
+        // a limit on a number: a bar filled up to a value and a line across it that it must not pass
+        p.setPen(strokeOf(c, 1.2));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(1.8, 6.0, 12.4, 4.4), 1.2, 1.2);
+        p.setPen(Qt::NoPen);
+        p.setBrush(alpha(c, 170));
+        p.drawRoundedRect(QRectF(1.8, 6.0, 7.0, 4.4), 1.2, 1.2);
+        p.setPen(strokeOf(c, 1.8));
+        p.drawLine(QPointF(11.4, 3.0), QPointF(11.4, 13.4));
+        return true;
+    }
+    if (name == "keep_below")
+    {
+        // bars that stay under a dashed limit
+        p.setPen(QPen(alpha(c, 200), 1.0, Qt::DashLine, Qt::RoundCap));
+        p.drawLine(QPointF(2.0, 3.8), QPointF(14.0, 3.8));
+        p.setPen(strokeOf(c, 2.2));
+        p.drawLine(QPointF(4.5, 14.0), QPointF(4.5, 8.5));
+        p.drawLine(QPointF(8.0, 14.0), QPointF(8.0, 6.5));
+        p.drawLine(QPointF(11.5, 14.0), QPointF(11.5, 9.5));
+        return true;
+    }
+    if (name == "keep_above")
+    {
+        // bars that stand on a dashed limit and reach over it
+        p.setPen(QPen(alpha(c, 200), 1.0, Qt::DashLine, Qt::RoundCap));
+        p.drawLine(QPointF(2.0, 12.2), QPointF(14.0, 12.2));
+        p.setPen(strokeOf(c, 2.2));
+        p.drawLine(QPointF(4.5, 11.0), QPointF(4.5, 5.5));
+        p.drawLine(QPointF(8.0, 11.0), QPointF(8.0, 3.0));
+        p.drawLine(QPointF(11.5, 11.0), QPointF(11.5, 6.5));
+        return true;
+    }
+    if (name == "keep_between")
+    {
+        // a curve that stays between two dashed limits
+        p.setPen(QPen(alpha(c, 200), 1.0, Qt::DashLine, Qt::RoundCap));
+        p.drawLine(QPointF(2.0, 3.8), QPointF(14.0, 3.8));
+        p.drawLine(QPointF(2.0, 12.2), QPointF(14.0, 12.2));
+        QPainterPath wave;
+        wave.moveTo(2.5, 8.0);
+        wave.cubicTo(5.0, 4.6, 6.5, 4.6, 8.0, 8.0);
+        wave.cubicTo(9.5, 11.4, 11.0, 11.4, 13.5, 8.0);
+        p.setPen(strokeOf(c, 1.7));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(wave);
+        return true;
+    }
+    if (name == "minimize")
+    {
+        // an arrow down onto a floor
+        p.setPen(strokeOf(c, 1.8));
+        p.drawLine(QPointF(8.0, 2.2), QPointF(8.0, 11.0));
+        p.drawLine(QPointF(4.8, 7.8), QPointF(8.0, 11.0));
+        p.drawLine(QPointF(11.2, 7.8), QPointF(8.0, 11.0));
+        p.drawLine(QPointF(3.2, 13.8), QPointF(12.8, 13.8));
+        return true;
+    }
+    if (name == "maximize")
+    {
+        // an arrow up from a floor to a ceiling
+        p.setPen(strokeOf(c, 1.8));
+        p.drawLine(QPointF(8.0, 13.8), QPointF(8.0, 5.0));
+        p.drawLine(QPointF(4.8, 8.2), QPointF(8.0, 5.0));
+        p.drawLine(QPointF(11.2, 8.2), QPointF(8.0, 5.0));
+        p.drawLine(QPointF(3.2, 2.4), QPointF(12.8, 2.4));
+        return true;
+    }
+    return false;
+}
+
 // The picture of a primitive; false when it has none of its own
 bool drawPrimitive(QPainter& p, const QString& name, const QColor& c)
 {
@@ -1449,7 +1744,7 @@ bool drawPrimitive(QPainter& p, const QString& name, const QColor& c)
     p.setBrush(Qt::NoBrush);
     bool done;
     if (name.startsWith("cell_")) done = drawCell(p, name.mid(5), c);
-    else done = drawShape(p, name, c) || drawCondition(p, name, c) || drawMaterial(p, name, c);
+    else done = drawShape(p, name, c) || drawCondition(p, name, c) || drawMaterial(p, name, c) || drawOptimization(p, name, c);
     p.restore();
     return done;
 }
@@ -1475,17 +1770,18 @@ void drawBlockMark(QPainter& p)
 
 QColor color(const QString& type, const QString& domain)
 {
-    if (!domain.isEmpty() && (type == "simulation" || type == "conditions"))
+    if (!domain.isEmpty() && (type == "simulation" || type == "conditions" || type == "result"))
     {
         auto d = domains().constFind(domain);
-        if (d != domains().constEnd()) return type == "simulation" ? d->result : d->conditions;
+        if (d != domains().constEnd()) return type == "conditions" ? d->conditions : d->result;
     }
     auto it = kinds().constFind(type);
     return it == kinds().constEnd() ? kinds()["solid"].color : it->color;
 }
 
-QString label(const QString& type)
+QString label(const QString& type, const QString& domain)
 {
+    if (type == "simulation" && domain == "mesh") return T("Mesh");        // (a mesh is no analysis: its kind is the one of the simulations, what the user reads is not)
     auto it = kinds().constFind(type);
     return it == kinds().constEnd() ? type : T(it->label);
 }
@@ -1493,7 +1789,7 @@ QString label(const QString& type)
 QIcon icon(const QString& type, bool block, const QString& domain, const QString& primitive)
 {
     // (only a simulation and what an analysis is given have a picture of their domain)
-    const QString d = (type == "simulation" || type == "conditions") ? domain : QString();
+    const QString d = (type == "simulation" || type == "conditions" || type == "result") ? domain : QString();
     const QString key = type + (block ? "+block" : "") + (d.isEmpty() ? QString() : "@" + d) + (primitive.isEmpty() ? QString() : "#" + primitive);
     auto it = cache().constFind(key);
     if (it != cache().constEnd()) return *it;

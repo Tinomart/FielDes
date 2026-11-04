@@ -15,7 +15,9 @@ Steady-state thermal analysis (heat conduction) of FielDes shapes.
     thicker = part - 0.2 * result.heat_flux   # results are fields like any other
 
     # the material layout (30 % of the part) that keeps the part coolest, for the conditions of the analysis
-    design = topology_optimization(result, constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3'])
+    max_temperature_1 = result.max_temperature
+    volume_fraction_1 = result.volume_fraction
+    design = topology_optimization(result, conditions=[minimize(max_temperature_1), keep_below(volume_fraction_1, 0.3)])
     design.shape()
 
 Every kind of condition is an input of its own, needed -- written with a placeholder -- and takes one item or a list ([] says there is none).
@@ -55,6 +57,7 @@ from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape, field_shape
 from fieldes.stdlib.element_size import default_element_size
+from fieldes.stdlib import sim_mesh as _sim_mesh
 from fieldes.stdlib.excluded import keep_regions
 from fieldes.stdlib.fea import (FeaError, FieldResult, TopologyResult, aluminium, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
                                 _use_conditions, _with_conditions)
@@ -242,6 +245,8 @@ class ThermalResult(FieldResult):
         input_temperature (tetrahedral elements: the temperature the heat comes in at, weighted by how much comes in at each place),
         volume (mm^3, of the mesh) and mass (when the material has a density), elements, iterations, seconds. '''
 
+    _physics = 'thermal'
+
     def __init__(self, handle, shape, material):
         self._handle = handle
         self.shape = shape
@@ -249,7 +254,8 @@ class ThermalResult(FieldResult):
         p = handle.ptr
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
-            setattr(self, name, field_shape(handle.fn('field')(p, i)))
+            from fieldes.stdlib.analysis_results import result_field as _result_field
+            setattr(self, name, _result_field(self, name, handle.fn('field')(p, i)))
             self._ranges[name] = (handle.fn('field_min')(p, i), handle.fn('field_max')(p, i))
         stat = lambda k: handle.fn('stat')(p, k)
         self.elements = int(stat(0))
@@ -317,14 +323,16 @@ def _conductivity(material, conductivity, what):
     return k
 
 
-def _problem(shape, boundary, k, element_size, bounds, what, element='tet'):
+def _problem(shape, boundary, k, element_size, bounds, what, element='tet', mesh=None):
     ''' A libfive_thermal problem (in a _Handle) with the boundary
         conditions added; (handle, element size, (lo, hi)) '''
     if not isinstance(shape, Shape):
         raise TypeError('{}: the part must be a Shape'.format(what))
     items = list(boundary if isinstance(boundary, (list, tuple)) else [boundary])
-    lo, hi = bounds if bounds is not None else _bounds(shape)
+    lo, hi = bounds if bounds is not None else (mesh.bounds if mesh is not None else _bounds(shape))
     size = [hi[i] - lo[i] for i in range(3)]
+    if mesh is not None:
+        element_size = mesh.size            # (the elements are the mesh's own)
     if element_size is None:
         element_size = default_element_size(shape, lo, hi, 40.0, 1000000) if element == 'tet' else max(size) / 40.0
     element_size = float(element_size)
@@ -363,6 +371,8 @@ def _problem(shape, boundary, k, element_size, bounds, what, element='tet'):
             raise FeaError('this FielDes library is too old for fields in a thermal analysis')
         # (a conductivity that is a field is measured against 1: each element has its own value)
         ptr = lib.libfive_tetthermal_new(shape.ptr, region, element_size, 1.0 if isinstance(k, Shape) else float(k))
+        if mesh is not None:
+            _sim_mesh.give('tetthermal', ptr, mesh, what)
         if isinstance(k, Shape):
             lib.libfive_tetthermal_set_conductivity_field(ptr, k.ptr)
     else:
@@ -414,14 +424,15 @@ def thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, c
 
         Everything else is as in the analysis below.  '''
     max_iterations = 50000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
+    shape, mesh = _sim_mesh.part(shape, 'thermal_analysis', element_size, element)
     boundary = _boundary(fixed_temperatures, heat_inputs, heat_generations, convections, 'thermal_analysis')
     _use_conditions(boundary, shape)
-    return _thermal_analysis(shape, boundary, material, element_size, bounds, conductivity, max_iterations, tolerance, element, cache)
+    return _thermal_analysis(shape, boundary, material, element_size, bounds, conductivity, max_iterations, tolerance, element, cache, mesh)
 
 
 def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bounds=None,
                       conductivity=None, max_iterations=50000, tolerance=1e-7, element='tet',
-                      cache=True):
+                      cache=True, mesh=None):
     ''' Steady-state heat conduction in `shape` with the given boundary
         conditions: fixed_temperature(...), heat_input(...),
         heat_generation(...) and convection(...) items (see the module's
@@ -445,7 +456,7 @@ def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bo
     ekey = problem_key('thermal', shape=shape, part_bounds=getattr(shape, '_bounds', None),
                        boundary=boundary, material=material, conductivity=conductivity,
                        element_size=element_size, bounds=bounds, max_iterations=max_iterations,
-                       tolerance=tolerance, element=element) if cache else None
+                       tolerance=tolerance, element=element, **_sim_mesh.key(mesh)) if cache else None
     if ekey is not None and ekey in _cache:
         _cache.move_to_end(ekey)
         cached = _cache[ekey]
@@ -454,8 +465,9 @@ def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bo
         r = object.__new__(ThermalResult)      # the same problem from an identical part
         r.__dict__.update(cached.__dict__)
         r.shape = shape
+        _rebind(r)
         return r
-    handle, element_size, _ = _problem(shape, boundary, k, element_size, bounds, 'thermal_analysis', element)
+    handle, element_size, _ = _problem(shape, boundary, k, element_size, bounds, 'thermal_analysis', element, mesh)
     kind = 'tetthermal' if handle.tet else 'thermal'
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load(kind, ekey, 'thermal analysis')
@@ -485,6 +497,7 @@ def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bo
             r = object.__new__(ThermalResult)      # the same problem from an identical part
             r.__dict__.update(cached.__dict__)
             r.shape = shape
+            _rebind(r)
             return r
     if ekey is not None:
         handle.fn('set_salt')(ptr, result_cache.salt(kind, ekey))
@@ -504,6 +517,11 @@ def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bo
 
 ################################################################################
 # Topology optimization of a thermal analysis: the call is topology_optimization (fea.py), this is its thermal side
+
+# The numbers a thermal analysis gives are analysis results too (H91): `thermal_analysis_1.max_temperature` -- see analysis_results.wrap_numbers
+from fieldes.stdlib.analysis_results import rebind as _rebind, wrap_class as _wrap_class
+_wrap_class(ThermalResult)
+
 
 class ThermalTopologyResult(TopologyResult):
     """ The result of topology_optimization() for a thermal analysis (see there): the part made best for what is asked of its temperature.
@@ -527,21 +545,21 @@ class ThermalTopologyResult(TopologyResult):
 _topo_cache = OrderedDict()
 
 
-def topology_optimization_thermal(analysis, constraints, iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None,
+def topology_optimization_thermal(analysis, conditions, iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None,
                                   extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-5, cache=True):
     """ topology_optimization() of a thermal analysis: the layout of material, within the part, that is best for what is asked of its temperature.
         The held temperatures, the heat inputs and generations and the convection of the analysis are the problem (the elements that hold a temperature
         or bring heat in stay solid, and material that nothing joins to a held temperature or a convecting surface is taken out); the conductivity of
         an element is the material's times a power of its density (penalty).  The numbers it can be asked for: max_temperature, min_temperature (the
         peaks of the temperature, as p-norms), max_heat_flux, input_temperature (the heat-weighted mean temperature of the heat inputs: the usual
-        goal of a heat sink), temperature(x, y, z), volume, mass and volume_fraction; their sensitivities come from one adjoint solve each """
+        goal of a heat sink), the temperature at a place (sink.temperature.at(x, y, z)), volume, mass and volume_fraction; their sensitivities come from one adjoint solve each """
     from fieldes.stdlib import optimization_measures as measures
     from fieldes.stdlib.fea import _optimization_analyses, _symmetry_request
     if getattr(lib, 'libfive_tetthermal_optimize_density', None) is None:
         raise FeaError('this FielDes library is too old for topology optimization of a thermal analysis')
     iterations = 100 if iterations is None else iterations
-    if not constraints:
-        raise TypeError("topology_optimization: say what the design is for -- constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3', ...]")
+    if not conditions:
+        raise TypeError("topology_optimization: say what the design is for -- conditions=[minimize(max_temperature_1), keep_below(volume_fraction_1, 0.3), ...]")
     if grow:
         raise FeaError('topology_optimization: grow=True lets the design of a structure reach out of its part; a thermal design stays in the part (grow=False)')
     analyses = _optimization_analyses(analysis, 'topology_optimization')
@@ -566,8 +584,6 @@ def topology_optimization_thermal(analysis, constraints, iterations=None, filter
     axes = {None: -1, 'x': 0, 'y': 1, 'z': 2}
     if extrude not in axes:
         raise ValueError("extrude is None, 'x', 'y' or 'z'")
-    if isinstance(constraints, str) or callable(constraints):
-        constraints = [constraints]
     given = [a.result for a in analyses]
 
     def baseline_leaf(key):
@@ -576,7 +592,7 @@ def topology_optimization_thermal(analysis, constraints, iterations=None, filter
     def baseline(node):
         return measures.evaluate(node, baseline_leaf)
 
-    outputs, goal = measures.outputs_of(constraints, analyses, baseline)
+    outputs, goal = measures.outputs_of(conditions, analyses, baseline)
     program = measures.Program(outputs)
     if ('fraction',) not in program.measures:
         program.measures.append(('fraction',))                      # (the share of the part the design uses is always kept: the result reports it)
@@ -694,3 +710,6 @@ def topology_optimization_thermal(analysis, constraints, iterations=None, filter
 
 ThermalResult._as_field = lambda self: self.temperature
 ThermalResult.fields = property(lambda self: OrderedDict((name, getattr(self, name)) for name in _FIELDS))
+
+# The analyses that can be given the mesh of a body in place of the body (the menus read it: menu_catalog._part_kinds)
+_sim_mesh.takes_mesh(thermal_analysis)

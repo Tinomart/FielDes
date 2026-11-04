@@ -18,8 +18,8 @@ from mfgkit import *
 t = Table('o3_teardrop: a horizontal hole of radius 5 in a block, an overhang of 45 degrees asked with overhang_fix=cut: a teardrop above the hole')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-block = box((0, 0, 0), (40, 20, 30))
-hole = rotate_x(cylinder(5, 30, (20, 15, -25)), math.pi / 2)
+block = box((40, 20, 30), position=(20, 10, 15))
+hole = rotate_x(cylinder(5, 30, position=(20, 15, -25)), math.pi / 2)
 part = difference(block, hole)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45, overhang_fix='cut')

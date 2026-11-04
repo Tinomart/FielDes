@@ -18,7 +18,7 @@ from fieldes import *
 
 def perforate(body, hole_radius=2.0, spacing=10.0):
     ''' Drills a grid of round holes right through a body, along z '''
-    holes = repeat(cylinder(hole_radius, 100000, (0, 0, -50000)), (spacing, spacing, 0))
+    holes = repeat(cylinder(hole_radius, 100000, position=(0, 0, 0)), (spacing, spacing, 0))
     return difference(body, holes)
 
 
@@ -35,18 +35,18 @@ def light_core(body, wall=2.0, cell_size=8.0, thickness=0.9):
 
 def bracket(width=40.0, height=30.0, thickness=4.0, depth=20.0):
     ''' An L-shaped bracket: a base plate and an upright, with a rounded inside corner '''
-    base = box((0, 0, 0), (width, depth, thickness))
-    upright = box((0, 0, 0), (width, thickness, height))
+    base = box((width, depth, thickness), position=(width / 2, depth / 2, thickness / 2))
+    upright = box((width, thickness, height), position=(width / 2, thickness / 2, height / 2))
     return union(base, upright, radius=thickness * 0.8)
 
 
 view.set_bounds([-5, -5, -5], [95, 95, 45], auto_scale=True)
-view.set_resolution(5)
+view.set_resolution(25)
 view.set_quality(8)
 
-plate = box((0, 0, 0), (90, 50, 6))
+plate = box((90, 50, 6), position=(45, 25, 3))
 drilled = perforate(plate, ramp(x_field(), (0, 90), (1.0, 3.5)), 10)      # the radius of the holes is a field
-drilled = handles(drilled, [var(45.0), var(45.0), var(25.0), var(25.0), var(3.0), var(3.0), var(5.0), var(5.0), var(-50000.0), var(50000.0)])
+drilled = handles(drilled, [var(45.0), var(45.0), var(25.0), var(25.0), var(3.0), var(3.0), var(45.0), var(25.0), var(3.0), var(5.0), var(5.0), var(-50000.0), var(100000.0)])
 drilled = place(
     drilled,
     position=(var(0), var(0), var(0)),
@@ -61,5 +61,5 @@ moved = move(support, (0, 60, 0),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
-moved = handles(moved, [var(20.0), var(20.0), var(60.0), var(10.0), var(10.0), var(2.0), var(2.0), var(10.0), var(10.0), var(20.0), var(20.0), var(2.0), var(2.0), var(15.0), var(15.0), var(2.0), var(2.0), var(10.0), var(10.0), var(10.0), var(10.0), var(3.2), var(2.0), var(2.0), var(2.0), var(2.0), var(3.2)])
+moved = handles(moved, [var(20.0), var(20.0), var(60.0), var(10.0), var(10.0), var(2.0), var(2.0), var(20.0), var(10.0), var(2.0), var(20.0), var(20.0), var(2.0), var(2.0), var(15.0), var(15.0), var(20.0), var(2.0), var(15.0), var(20.0), var(10.0), var(10.0), var(2.0), var(20.0), var(10.0), var(2.0), var(3.2), var(20.0), var(2.0), var(2.0), var(15.0), var(20.0), var(2.0), var(15.0), var(3.2)])
 moved

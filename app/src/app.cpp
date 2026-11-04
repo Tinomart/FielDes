@@ -17,9 +17,18 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <QElapsedTimer>
 #include <QFileOpenEvent>
+#include <QThread>
 #include <QTimer>
 #include <QSettings>
+
+#include <algorithm>
+#include <iostream>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "fieldes/app.hpp"
 #include "fieldes/args.hpp"
@@ -66,6 +75,49 @@ App::App(int& argc, char** argv)
         return;
     }
     window.reset(new Window(args));
+}
+
+namespace {
+// What the events of the window thread were since the last tick of the stall clock: for each kind of receiver and of event how many and how long in all (a stall is often thousands of events of 1 ms, none of which
+// the 80 ms of App::notify sees)
+struct EventStat { int count = 0; double ms = 0; };
+std::map<std::pair<const QMetaObject*, int>, EventStat> g_eventStats;
+}
+
+void App::eventStatsReport(qint64 gap)
+{
+    if (gap > 250 && !g_eventStats.empty())
+    {
+        std::vector<std::pair<double, std::string>> rows;
+        for (const auto& e : g_eventStats)
+            rows.push_back({e.second.ms, std::to_string(e.second.count) + " events, " + std::to_string(int(e.second.ms)) + " ms in all: " + e.first.first->className() + " (event type " + std::to_string(e.first.second) + ")"});
+        std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        std::cerr << "[event-stats] in the stall of " << gap << " ms, the events that ran in it:" << std::endl;
+        for (size_t i = 0; i < rows.size() && i < 6; ++i) std::cerr << "[event-stats]   " << rows[i].second << std::endl;
+    }
+    g_eventStats.clear();
+}
+
+bool App::notify(QObject* receiver, QEvent* event)
+{
+    // With FIELDES_TIMING every event that the window's thread takes 80 ms or more to handle is written to the log, with who handled it (the class and the name of the receiver) and what it was: a stall
+    // is then named by the object whose slot, timer or painting took the time.  (The stacks of the watchdog in main.cpp name no function that the map file does not list -- a static one --, and the
+    // stalls of the stall test of 2026-11-03 had names in them that could not be right.  H90.)  The class and the name are taken before the event is handled: a receiver may be deleted by it
+    static const bool timing = qEnvironmentVariableIsSet("FIELDES_TIMING");
+    if (!timing || !receiver || QThread::currentThread() != thread()) return QApplication::notify(receiver, event);
+    const char* className = receiver->metaObject()->className();
+    const std::string name = receiver->objectName().toStdString();
+    const int type = int(event->type());
+    QElapsedTimer clock;
+    clock.start();
+    const QMetaObject* meta = receiver->metaObject();
+    const bool handled = QApplication::notify(receiver, event);
+    const qint64 ms = clock.elapsed();
+    { EventStat& stat = g_eventStats[{meta, type}]; ++stat.count; stat.ms += double(clock.nsecsElapsed()) / 1e6; }
+    if (ms >= 80)
+        std::cerr << "[slow-event] " << ms << " ms in " << className << " '" << name << "' (event type " << type
+                  << (type == int(QEvent::MetaCall) ? ", a queued call" : type == int(QEvent::Timer) ? ", a timer" : type == int(QEvent::Paint) ? ", painting" : "") << ")" << std::endl;
+    return handled;
 }
 
 bool App::event(QEvent *event)

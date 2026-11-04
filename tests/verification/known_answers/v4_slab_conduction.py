@@ -20,9 +20,9 @@ view.set_bounds((-10, -10, -10), (L + 10, b + 10, h + 10), auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 
-bar = box((0, 0, 0), (L, b, h))
-hot_end = box((-1, -1, -1), (0.01, b + 1, h + 1))
-cold_end = box((L - 0.01, -1, -1), (L + 1, b + 1, h + 1))
+bar = box((L, b, h), position=(L / 2, b / 2, h / 2))
+hot_end = box((1.01, (b + 1) - (-1), (h + 1) - (-1)), position=(-0.495, ((-1) + (b + 1)) / 2, ((-1) + (h + 1)) / 2))
+cold_end = box(((L + 1) - (L - 0.01), (b + 1) - (-1), (h + 1) - (-1)), position=(((L - 0.01) + (L + 1)) / 2, ((-1) + (b + 1)) / 2, ((-1) + (h + 1)) / 2))
 result = thermal_analysis(bar,
                           fixed_temperatures=[fixed_temperature(hot_end, HOT), fixed_temperature(cold_end, COLD)],
                           heat_inputs=[], heat_generations=[], convections=[],

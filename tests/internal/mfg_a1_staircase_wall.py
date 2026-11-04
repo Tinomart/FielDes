@@ -22,7 +22,7 @@ t = Table('a1_staircase_wall: a staircase of six free plates, 0.3, 0.7, 0.74, 0.
 thickness = [0.3, 0.7, 0.74, 0.78, 0.85, 2.0]
 part = None
 for k, h in enumerate(thickness):
-    plate = box((9 * k, 0, 0), (9 * k + 6, 6, h))
+    plate = box(((9 * k + 6) - (9 * k), 6, h), position=(((9 * k) + (9 * k + 6)) / 2, 3, h / 2))
     part = plate if part is None else union(part, plate)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)

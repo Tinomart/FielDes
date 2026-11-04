@@ -22,8 +22,8 @@ view.set_resolution(3)
 view.set_quality(8)
 
 rule = manufacturing_constraint(min_wall=4.0)
-original = box((0, 0, 0), (1.5, 16, 24))
-by_hand = [box((-0.75, 0, 0), (2.25, 16, 24)), box((-1.1, 0, 0), (2.6, 16, 24)), box((-1.2, 0, 0), (2.7, 16, 24)), box((-1.25, 0, 0), (2.75, 16, 24))]
+original = box((1.5, 16, 24), position=(0.75, 8, 12))
+by_hand = [box((3, 16, 24), position=(0.75, 8, 12)), box((3.7, 16, 24), position=(0.75, 8, 12)), box((3.9, 16, 24), position=(0.75, 8, 12)), box((4, 16, 24), position=(0.75, 8, 12))]
 made = manufacturing_optimization(original, constraints=[rule], max_change=3.0)
 
 row = [original] + by_hand + [made]

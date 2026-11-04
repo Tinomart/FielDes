@@ -131,6 +131,11 @@ switch (checkUnsaved())                                                     \
 
 namespace FielDes {
 
+// (shape.cpp, in this namespace: the build of the program, and the render cache folder that is tidied by what the recent files hold)
+QString fieldesBuildStamp();
+void fieldesSetCacheOwner(const QString& path);
+void fieldesSweepRenderCache(const QStringList& recent);
+
 namespace {
 
 // A field that is clicked into (or tabbed into) has all of its text selected, so that typing replaces it: every number and every name
@@ -634,6 +639,12 @@ Window::Window(Arguments args)
         });
         settings_menu->addSeparator();
         // A double click on a .fieldesapp file opens FielDes's app window (the installers do this too; a downloaded folder does not)
+        // The message that says an edge was removed (ScenePanel::removeLostEdges) has "Don't show this again" in it: this entry turns it on again
+        auto lost_notice = settings_menu->addAction(T("Tell me when an edge is removed"));
+        lost_notice->setToolTip(T("An edge that can no longer follow its object is removed from the script, and a message says so"));
+        lost_notice->setCheckable(true);
+        lost_notice->setChecked(settings.value("notify/lostEdges", true).toBool());
+        connect(lost_notice, &QAction::toggled, this, [this](bool on){ settings.setValue("notify/lostEdges", on); });
         auto assoc_action = settings_menu->addAction(T("Open .fieldesapp files with FielDes"));
         assoc_action->setToolTip(T("Make a double click on an app file (.fieldesapp) open it in FielDes"));
         assoc_action->setCheckable(true);
@@ -1252,12 +1263,16 @@ Window::Window(Arguments args)
         PopOut::attach(panel, T("Symmetry"), "symmetry", closeButtonOf(panel));
         panel->hide();
         auto symAction = view_menu->addAction(T("Symmetry in use or not"));
-        symAction->setToolTip(T("Use the symmetry that is selected, or stop: what you make is made at its images across the planes too, and the images follow it.  With no symmetry in the "
-                                "script one is made"));
+        symAction->setToolTip(T("Use the symmetry that is selected, or stop: what you make is made at its images across the planes too, and the images follow it.  With a shape made of points "
+                                "selected (a profile, a line, a morph body) the points that already have an exact mirror partner are linked to it; any other model that is selected is added to the symmetry (its images are made).  With no symmetry in the script one is made"));
         Shortcuts::add(symAction, "view.symmetry", {QKeySequence(Qt::SHIFT | Qt::Key_S)});
         symAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         view->addAction(symAction);
-        connect(symAction, &QAction::triggered, this, [=] { view->toggleSymmetry(); });
+        // (with a shape made of points selected and a symmetry in the script, Shift+S links the points that have an exact mirror partner to it; with nothing to link it is the symmetry in use or not)
+        connect(symAction, &QAction::triggered, this, [=] {
+            if (view->symmetryExists() && view->scenePanel()->linkSymmetryToSelection()) return;
+            view->toggleSymmetry();
+        });
         // (a new symmetry where the cursor is: the window's own shortcut, like the new work plane's -- it types nothing, so it needs no focus in the viewport)
         auto newSymAction = view_menu->addAction(T("New symmetry at the cursor"));
         newSymAction->setToolTip(T("Make a new symmetry at the cursor and use it: what you make is made at its images too"));
@@ -1759,6 +1774,8 @@ Window::Window(Arguments args)
             view->setFocus(Qt::MouseFocusReason);
         });
         connect(view, &View::outlineInsertRequested, scene, [=](int line, QVector3D press, QVector3D at) { scene->editPoints("insert", line, press, at); });
+        // (a press on the surface of a body made of points, moved: the point is put where it was pressed)
+        connect(view, &View::surfaceInsertRequested, scene, [=](int line, QVector3D press) { scene->editPoints("insert", line, press, press); });
         connect(view, &View::pointToggleRequested, scene, [=](int line) { scene->editPoints("toggle", line, QVector3D(), QVector3D()); });
         connect(view, &View::radiusVarRequested, scene, [=](int line, int control) { scene->editPoints("radius", line, QVector3D(), QVector3D(), control); });
         connect(scene, &ScenePanel::pointEditDone, view, &View::expectNewPoint);
@@ -1788,15 +1805,35 @@ Window::Window(Arguments args)
         connect(editor, &Editor::objectMenuRequested, view, &View::showMenuForLine);
         connect(scene, &ScenePanel::menuRequested, view, &View::showMenuForLine);
         // (the list is asked for once, after a script has run, so that a right-click never waits for Python)
-        connect(editor, &Editor::runFinished, view, [=]{ view->loadMenuCatalog(); });
+        connect(editor, &Editor::runFinished, view, [=]{
+        // (the catalog of the menus is asked of python on this thread after every run: with FIELDES_TIMING the log says how long the window waited for it, H90)
+        QElapsedTimer clock;
+        clock.start();
+        view->loadMenuCatalog();
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[menu] the catalog of the menus was loaded in " << clock.elapsed() << " ms" << std::endl;
+    });
         // (what the render cache did, on the cache buttons of the shapes that have it on)
         connect(view, &View::cacheStatesChanged, scene, [=]{ scene->setCacheStates(view->cacheStates()); });
     }
 
     {   // Status bar: render state on the left, region / resolution on the right
+        // (fieldesBuildStamp, declared at the top of the namespace, is in shape.cpp: the time of the executable)
+        const QString buildStamp = fieldesBuildStamp();          // (asked now, when the window is made: a window that goes on while the next build replaces the file keeps its own build)
         auto region = new QLabel;
         region->setStyleSheet("color: palette(mid); padding-right: 6px;");
         statusBar()->addPermanentWidget(region);
+        {   // The sweep of the render cache folder: a mesh whose script is not among the recently opened files any more, or that has not been used for two weeks, is deleted (shape.cpp); a little after the start and every six hours
+            auto sweepCache = [this]() {
+                // (fieldesSweepRenderCache, declared at the top of the namespace, is in shape.cpp)
+                const QStringList recent = settings.value("recent-files").toStringList();
+                std::thread([recent] { fieldesSweepRenderCache(recent); }).detach();
+            };
+            QTimer::singleShot(20000, this, sweepCache);
+            auto sweepTimer = new QTimer(this);
+            sweepTimer->setInterval(6 * 60 * 60 * 1000);
+            connect(sweepTimer, &QTimer::timeout, this, sweepCache);
+            sweepTimer->start();
+        }
         {   // Where the keyboard is: a frame round the pane that has it, and a word in the status bar -- the viewport's single keys (W, E, D, R ...) are letters in the script editor
             auto keys = new QLabel;
             keys->setObjectName("KeysLabel");
@@ -1844,7 +1881,7 @@ Window::Window(Arguments args)
             region->setText(T("Region (%1, %2, %3) → (%4, %5, %6)   ·   resolution %7   ·   quality %8")
                 .arg(fmt(s.min.x())).arg(fmt(s.min.y())).arg(fmt(s.min.z()))
                 .arg(fmt(s.max.x())).arg(fmt(s.max.y())).arg(fmt(s.max.z()))
-                .arg(fmtN(s.res)).arg(fmtN(s.quality)));
+                .arg(fmtN(s.res)).arg(fmtN(s.quality)) + dot + "build " + buildStamp);          // (the build of this window: a picture of it says which build it is from)
         });
         auto timer = new QElapsedTimer;
         auto running = new bool(false);
@@ -2306,6 +2343,28 @@ Window::Window(Arguments args)
         a->add("click", [=](const QString& name){
             if (auto b = findChild<QAbstractButton*>(name.trimmed())) b->click();
             else std::cerr << "automation: no button " << name.toStdString() << std::endl;
+        });
+        // propdrag <entry object name> <x> <y>: drag an entry of the property drawer (prop_compliance ...) to a place of the WINDOW (the coordinates of a picture of it) and let go there: the press on the
+        // entry, twelve moves with the button down, the release -- the events go to the entry itself, as they do while a button is held in a real drag (H103)
+        a->add("propdrag", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) return;
+            auto b = findChild<QAbstractButton*>(p[0]);
+            if (!b)
+            {
+                std::cerr << "automation: no button " << p[0].toStdString() << std::endl;
+                return;
+            }
+            const QPoint from = b->mapToGlobal(b->rect().center());
+            const QPoint to = mapToGlobal(QPoint(p[1].toInt(), p[2].toInt()));
+            auto send = [&](QEvent::Type t, const QPoint& global, Qt::MouseButton button, Qt::MouseButtons buttons) {
+                QMouseEvent e(t, b->mapFromGlobal(global), global, global, button, buttons, Qt::NoModifier);
+                QApplication::sendEvent(b, &e);
+            };
+            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            for (int i = 1; i <= 12; ++i) send(QEvent::MouseMove, from + (to - from) * i / 12, Qt::NoButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+            std::cerr << "automation: propdrag " << p[0].toStdString() << " from " << from.x() << "," << from.y() << " to " << to.x() << "," << to.y() << std::endl;
         });
         // param <key> <text>: type into a field of the menu that asks for what an entry of the creation menus writes (a volume fraction, a force...)
         a->add("param", [=](const QString& args){
@@ -2838,7 +2897,8 @@ Window::Window(Arguments args)
                 QPainter painter(&shot);
                 for (QWidget* w : QApplication::topLevelWidgets())
                 {
-                    if (qobject_cast<QMenu*>(w) && w->isVisible())
+                    // (a menu, and the drawer of a model's properties -- a popup frame of the tree -- as they stand over the window)
+                    if ((qobject_cast<QMenu*>(w) || w->objectName() == "PropertyDrawer") && w->isVisible())
                         painter.drawPixmap(this->mapFromGlobal(w->pos()), w->grab());
                 }
                 painter.end();
@@ -2904,19 +2964,20 @@ Window::Window(Arguments args)
             if (p.size() < 6) { std::cerr << "automation: viewframe <x0> <y0> <z0> <x1> <y1> <z1>" << std::endl; return; }
             view->focusOn(QVector3D(p[0].toFloat(), p[1].toFloat(), p[2].toFloat()), QVector3D(p[3].toFloat(), p[4].toFloat(), p[5].toFloat()), QList<int>());
         });
-        // viewzoom <x> <y> <steps>: turn the mouse wheel over a point of the viewport (positive: in)
+        // viewzoom <x> <y> <steps> [shift]: turn the mouse wheel over a point of the viewport (positive: in), with Shift held when the fourth word is shift
         a->add("viewzoom", [=](const QString& args){
             const auto p = args.split(' ');
             if (p.size() < 3) return;
             const QPoint pos(p[0].toInt(), p[1].toInt());
             const int steps = p[2].toInt();
+            const Qt::KeyboardModifiers mods = (p.size() > 3 && p[3] == "shift") ? Qt::ShiftModifier : Qt::NoModifier;
             QMouseEvent move(QEvent::MouseMove, pos, view->mapToGlobal(pos), Qt::NoButton, Qt::NoButton,
                              Qt::NoModifier);
             QApplication::sendEvent(view, &move);
             for (int i = 0; i < std::abs(steps); ++i)
             {
                 QWheelEvent w(QPointF(pos), QPointF(view->mapToGlobal(pos)), QPoint(),
-                              QPoint(0, steps > 0 ? 120 : -120), Qt::NoButton, Qt::NoModifier,
+                              QPoint(0, steps > 0 ? 120 : -120), Qt::NoButton, mods,
                               Qt::NoScrollPhase, false);
                 QApplication::sendEvent(view, &w);
             }
@@ -4087,6 +4148,7 @@ void Window::updateRecentMenu()
 void Window::setFilename(const QString& f)
 {
     filename = f;
+    fieldesSetCacheOwner(f);          // (the meshes the render cache keeps while this script is open are noted as its: the sweep of the folder goes by that)
     editor->setFilePath(f);
     addRecentFile(f);
     if (filename.startsWith(":/"))
@@ -5033,20 +5095,42 @@ void Window::importModel(const QString& path)
     const QString nativePath = QDir::toNativeSeparators(fi.absoluteFilePath());
     QStringList code;
     code << "" << "# Imported model: " + fi.fileName();
+    // A triangle mesh comes in as a body of points: a point at each vertex, the faces of the mesh, a morph_polyhedron (the user, 2026-11-02, H64: "A TRI MESH SHOULD IMPORT AS A FUCKING POLYHEDRON";
+    // "THERE ARE NO DOWNSIDES AND ONLY UPSIDES TO MAKING IT IMPORT AS A POLYHEDRON").  A mesh that cannot be one -- it is not closed, or it has more points than a body of points is edited by (5000) --
+    // is imported as the exact distance to its triangles, as before, and the status bar says why
+    QString status;
+    bool body = false;
     if (mesh)
     {
-        // STL / OBJ / PLY files carry no units: say so explicitly, so it's
-        // obvious where to change it (3MF files state theirs)
-        if (ext == "3mf" || ext == "glb" || ext == "gltf")
-            code << QString("%1 = import_model(r\"%2\")").arg(name, nativePath);
+        // (STL / OBJ / PLY files carry no units: said explicitly, so it is obvious where to change it; 3MF, GLB and glTF files state theirs)
+        const bool unitless = !(ext == "3mf" || ext == "glb" || ext == "gltf");
+        const QJsonObject ask{{"path", nativePath}, {"name", name}, {"file_units", unitless ? QJsonValue(QStringLiteral("mm")) : QJsonValue()}};
+        QString error;
+        const QJsonObject made = QJsonDocument::fromJson(
+                editor->callSupport("import_editable", QString::fromUtf8(QJsonDocument(ask).toJson(QJsonDocument::Compact)), &error).toUtf8()).object();
+        if (made.contains("text"))
+        {
+            code << made["text"].toString().split('\n');
+            body = true;
+            status = T("Imported %1 as a body of points (%2 points)").arg(fi.fileName()).arg(made["points"].toInt());
+        }
         else
-            code << QString("%1 = import_model(r\"%2\", file_units=\"mm\")").arg(name, nativePath);
+        {
+            status = T("Imported %1 as a mesh, not as a body of points: %2").arg(fi.fileName(), made.contains("reason") ? made["reason"].toString() : error);
+        }
+    }
+    if (body)
+    {
+        m_pendingImport.clear();
     }
     else
     {
-        code << QString("%1 = import_model(r\"%2\")").arg(name, nativePath);
+        if (mesh && !(ext == "3mf" || ext == "glb" || ext == "gltf"))
+            code << QString("%1 = import_model(r\"%2\", file_units=\"mm\")").arg(name, nativePath);
+        else
+            code << QString("%1 = import_model(r\"%2\")").arg(name, nativePath);
+        m_pendingImport = name;   // part display lines follow once evaluated
     }
-    m_pendingImport = name;   // part display lines follow once evaluated
 
     // The region and the resolution are not written: the region grows with the models (ScenePanel::fitRegion) and every model is meshed at the scene's resolution scaled by its own size
     // (auto_scale), so `view.set_bounds(*roi(...))` and `view.set_resolution(roi_resolution(...))` served nothing (the user, 2026-10-28: "When importing a model this code about the ROI and res
@@ -5090,7 +5174,7 @@ void Window::importModel(const QString& path)
     edits << TextEdit{0, 0, last, int(lines[last].size()), out.join('\n')};
     editor->applyEdits(edits, "Import " + fi.fileName());
     view->zoomOnNextSettings();
-    statusBar()->showMessage(T("Imported %1").arg(fi.fileName()), 8000);
+    statusBar()->showMessage(status.isEmpty() ? T("Imported %1").arg(fi.fileName()) : status, 12000);
 }
 
 void Window::watchImports(const QString& sceneJson)

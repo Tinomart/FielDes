@@ -3,13 +3,13 @@ Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in
 
     from fieldes import *
 
-    duct = box((0, 0, 0), (80, 40, 4))             # the DOMAIN: the fluid, and the place the body is in
-    post = cylinder(5, 6, (24, 20, -1))                # the BODY the flow goes around
+    duct = box((80, 40, 4), position=(40, 20, 2))             # the DOMAIN: the fluid, and the place the body is in
+    post = cylinder(5, 6, position=(24, 20, 2))                # the BODY the flow goes around
     result = fluid_analysis(
         post,
         duct,
-        inlets=[inlet(box((-1, -1, -1), (0.01, 41, 5)), speed=4)],                             # mm/s, in
-        outlets=[outlet(box((79.99, -1, -1), (81, 41, 5)), pressure=0)],                       # MPa
+        inlets=[inlet(box((1.01, 42, 6), position=(-0.495, 20, 2)), speed=4)],                             # mm/s, in
+        outlets=[outlet(box((1.01, 42, 6), position=(80.495, 20, 2)), pressure=0)],                       # MPa
         boundaries=[],                                                                               # (none: the rest of the surface is wall)
         fluid=water, element_size=1.0)
     result                                               # the flow (FielDes: the fluid coloured by the speed,
@@ -65,6 +65,7 @@ from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape, field_shape
 from fieldes.stdlib.element_size import default_element_size
+from fieldes.stdlib import sim_mesh as _sim_mesh
 from fieldes.stdlib.excluded import keep_regions, carry_locks
 from fieldes.stdlib.fea import (FeaError, FieldResult, TopologyResult, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
                                 _use_conditions, _with_conditions, _symmetry_request)
@@ -265,6 +266,8 @@ class FluidResult(FieldResult):
         with streamlines from the inlets and particles moving along them drawn over it; the result card
         switches the field and steps through the iterations or the times (slider, play / pause). '''
 
+    _physics = 'flow'
+
     def __init__(self, handle, shape, fluid, items):
         self._handle = handle
         self.shape = shape
@@ -272,7 +275,8 @@ class FluidResult(FieldResult):
         p = handle.ptr
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
-            setattr(self, name, field_shape(lib.libfive_tetflow_field(p, i)))
+            from fieldes.stdlib.analysis_results import result_field as _result_field
+            setattr(self, name, _result_field(self, name, lib.libfive_tetflow_field(p, i)))
             self._ranges[name] = (lib.libfive_tetflow_field_min(p, i), lib.libfive_tetflow_field_max(p, i))
         stat = lambda k: lib.libfive_tetflow_stat(p, k)
         self.elements = int(stat(0))
@@ -365,23 +369,32 @@ class FluidResult(FieldResult):
         norm = math.sqrt(sum(a * a for a in l))
         return tuple(a / norm for a in l)
 
-    @property
-    def drag_force(self):
-        ''' The force of the flow on the walls along the flow (N): `wall_force` along the direction the inlets' velocity points in.  For a body in a stream
-            whose domain has slip walls it is the body's drag.  None when no inlet was given a `velocity=` (the direction is not known) '''
+    def _drag_number(self):
         found = self._flow_direction()
         if found is None:
             return None
         return sum(f * d for f, d in zip(self.wall_force, found[0]))
 
-    @property
-    def lift_force(self):
-        ''' The force of the flow on the walls across the flow (N), along the direction across it that is most nearly Z (Y for a flow along Z).
-            None when no inlet was given a `velocity=` '''
+    def _lift_number(self):
         found = self._flow_direction()
         if found is None:
             return None
         return sum(f * d for f, d in zip(self.wall_force, self._lift_direction(found[0])))
+
+    @property
+    def drag_force(self):
+        ''' The force of the flow on the walls along the flow (N): `wall_force` along the direction the inlets' velocity points in.  For a body in a stream
+            whose domain has slip walls it is the body's drag.  None when no inlet was given a `velocity=` (the direction is not known).  It is an analysis result (a field that has that number
+            everywhere, which float() and print() read as the number): the condition of an optimization is made from it, `minimize(drag_force_1)` '''
+        from fieldes.stdlib import analysis_results
+        return analysis_results.property_result(self, 'flow', 'drag_force', self._drag_number())
+
+    @property
+    def lift_force(self):
+        ''' The force of the flow on the walls across the flow (N), along the direction across it that is most nearly Z (Y for a flow along Z).
+            None when no inlet was given a `velocity=`.  An analysis result, as drag_force is '''
+        from fieldes.stdlib import analysis_results
+        return analysis_results.property_result(self, 'flow', 'lift_force', self._lift_number())
 
     def _reference(self):
         ''' (dynamic pressure in MPa, reference area in mm^2): the pressure 1/2 rho U^2 of the mean inlet speed, and the area of the body's bounding box
@@ -407,13 +420,13 @@ class FluidResult(FieldResult):
     def drag_coefficient(self):
         ''' drag_force / (1/2 rho U^2 A): U the mean speed of the inlets that were given a velocity, A the area of the body's bounding box seen along the flow
             (the frontal area, taken from the box: give the true one by dividing `drag_force` yourself).  None when it is not known '''
-        ref, force = self._reference(), self.drag_force
+        ref, force = self._reference(), self._drag_number()
         return None if ref is None or force is None else force / (ref[0] * ref[1])
 
     @property
     def lift_coefficient(self):
         ''' lift_force / (1/2 rho U^2 A), as drag_coefficient.  None when it is not known '''
-        ref, force = self._reference(), self.lift_force
+        ref, force = self._reference(), self._lift_number()
         return None if ref is None or force is None else force / (ref[0] * ref[1])
 
     def _read_steps(self):
@@ -534,6 +547,11 @@ class FluidResult(FieldResult):
         return s
 
 
+# The numbers a flow analysis gives are analysis results too (H91): `fluid_analysis_1.drag_force` -- see analysis_results.wrap_numbers
+from fieldes.stdlib.analysis_results import rebind as _rebind, wrap_class as _wrap_class
+_wrap_class(FluidResult)
+
+
 class FluidStep:
     ''' One step of a flow: after a solver iteration of a steady solve (.iteration, 0 the Stokes start; .time
         None), or at a stored time of a flow in time (.time in s; .iteration None).  The fields (speed, vx, vy,
@@ -553,7 +571,8 @@ class FluidStep:
             (_tr('Stokes start') if self.iteration == 0 else _tr('iteration %d') % self.iteration)
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
-            setattr(self, name, field_shape(lib.libfive_tetflow_step_field(p, k, i)))
+            from fieldes.stdlib.analysis_results import result_field as _result_field
+            setattr(self, name, _result_field(self, name, lib.libfive_tetflow_step_field(p, k, i)))
             self._ranges[name] = (lib.libfive_tetflow_step_field_min(p, k, i), lib.libfive_tetflow_step_field_max(p, k, i))
         stat = lambda w: lib.libfive_tetflow_step_stat(p, k, w)
         self.iterations = int(stat(3))
@@ -588,7 +607,7 @@ class FluidStep:
             self.label, self.max_speed, self.pressure_drop, *self.wall_force)
 
 
-def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, relaxation, what):
+def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, relaxation, what, mesh=None):
     if not isinstance(shape, Shape):
         raise TypeError('{}: the fluid domain must be a Shape'.format(what))
     if not isinstance(fluid, Fluid):
@@ -596,8 +615,10 @@ def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, ma
     if getattr(lib, 'libfive_tetflow_new', None) is None:
         raise FeaError('this FielDes library is too old for flow analysis')
     items = list(conditions if isinstance(conditions, (list, tuple)) else [conditions])
-    lo, hi = bounds if bounds is not None else _bounds(shape)
+    lo, hi = bounds if bounds is not None else (mesh.bounds if mesh is not None else _bounds(shape))
     size = [hi[i] - lo[i] for i in range(3)]
+    if mesh is not None:
+        element_size = mesh.size            # (the elements are the mesh's own)
     if element_size is None:
         element_size = default_element_size(shape, lo, hi, 40.0, 300000)
     element_size = float(element_size)
@@ -607,6 +628,8 @@ def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, ma
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
     ptr = lib.libfive_tetflow_new(shape.ptr, region, element_size, fluid.density, fluid.viscosity)
     handle = _Handle(ptr)
+    if mesh is not None:
+        _sim_mesh.give('tetflow', ptr, mesh, what)
     n_in = 0
     for b in items:
         if isinstance(b, _Inlet):
@@ -673,20 +696,24 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
         surface, no outlet and no moving wall, a flow that does not converge). '''
     max_iterations = 60         # (the nonlinear iterations at most: a flow that has not settled by then is unsteady or its mesh too coarse, which the error says)
     conditions = _flow_conditions(inlets, outlets, boundaries, 'fluid_analysis')
+    domain, mesh = _sim_mesh.part(domain, 'fluid_analysis', element_size, 'tet')      # (a mesh is the mesh of the fluid itself)
     if not isinstance(body, Shape) or not isinstance(domain, Shape):
         raise TypeError('fluid_analysis: the body and the domain must be Shapes (the flow goes around the body, inside the domain)')
     _use_conditions(conditions, domain)
-    around = _difference(domain, body)
-    around._bounds = bounds if bounds is not None else _bounds(domain)
+    if mesh is None:
+        around = _difference(domain, body)
+        around._bounds = bounds if bounds is not None else _bounds(domain)
+    else:
+        around = domain             # (the user's mesh is of the fluid: the domain with the body cut out, which they made)
     result = _fluid_analysis(around, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, tolerance, relaxation, cache,
-                             time, store_every)
+                             time, store_every, mesh)
     result.body, result.domain = body, domain
     result._conditions = conditions
     return result
 
 
 def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1):
+                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, mesh=None):
     if time is not None:
         try:
             duration, dt = float(time[0]), float(time[1])
@@ -699,7 +726,7 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
     ekey = problem_key('flow', mesh=2, shape=shape, part_bounds=getattr(shape, '_bounds', None), conditions=conditions,
                        fluid=fluid, element_size=element_size, bounds=bounds, gravity=gravity, stokes=bool(stokes),
                        max_iterations=int(max_iterations), tolerance=float(tolerance),
-                       relaxation=float(relaxation), time=time, store_every=int(store_every)) if cache else None
+                       relaxation=float(relaxation), time=time, store_every=int(store_every), **_sim_mesh.key(mesh)) if cache else None
     if ekey is not None and ekey in _cache:
         _cache.move_to_end(ekey)
         cached = _cache[ekey]
@@ -708,9 +735,10 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
         r = object.__new__(FluidResult)      # the same problem from an identical shape
         r.__dict__.update(cached.__dict__)
         r.shape = shape
+        _rebind(r)
         return r
     handle, element_size, (lo, hi), items = _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes,
-                                                     max_iterations, relaxation, 'fluid_analysis')
+                                                     max_iterations, relaxation, 'fluid_analysis', mesh)
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load('tetflow', ekey, 'flow analysis')
     if loaded is not None:
@@ -740,6 +768,7 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
             r = object.__new__(FluidResult)
             r.__dict__.update(cached.__dict__)
             r.shape = shape
+            _rebind(r)
             return r
     if ekey is not None:
         lib.libfive_tetflow_set_salt(ptr, result_cache.salt('tetflow', ekey))
@@ -1031,10 +1060,10 @@ def _mean_sd(values):
 _density_cache = OrderedDict()
 
 
-def topology_optimization_flow(analysis, constraints=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None,
+def topology_optimization_flow(analysis, conditions=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None,
                                extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-5, cache=True):
     ''' topology_optimization() for a body in a flow (see fea.py): `analysis` is the result of fluid_analysis(body, domain, inlets, outlets, boundaries).
-        The body is the design it starts from, the fluid domain is its space; the numbers the constraints can read are drag_force and lift_force (the
+        The body is the design it starts from, the fluid domain is its space; the numbers the conditions can be made of are drag_force and lift_force (the
         force of the flow on the body along the flow and across it, N), volume_fraction (of the body's own volume) and volume.  The flow of every
         iteration is solved once, with one adjoint solve for each force the constraints read; the density of each tetrahedron is the friction the fluid
         feels there (1 solid, 0 fluid) '''
@@ -1043,8 +1072,9 @@ def topology_optimization_flow(analysis, constraints=(), iterations=None, filter
     iterations = 80 if iterations is None else iterations
     if getattr(lib, 'libfive_tetflow_optimize_density', None) is None:
         raise FeaError('this FielDes library is too old for the topology optimization of a flow')
-    if not constraints:
-        raise TypeError("topology_optimization: say what the design is for -- constraints=[minimize('drag_force'), 'volume_fraction <= 0.5', ...]")
+    optimization_conditions = conditions                 # (the name `conditions` is the flow's boundary conditions further down)
+    if not optimization_conditions:
+        raise TypeError("topology_optimization: say what the design is for -- conditions=[minimize(drag_force_1), keep_below(volume_fraction_1, 0.5), ...]")
     if grow or grow_limit is not None:
         raise ValueError('topology_optimization: a body in a flow is designed inside the fluid domain it is in -- the domain is its space, grow does not apply')
     if penalty != 3.0 or tolerance != 1e-5:
@@ -1079,8 +1109,6 @@ def topology_optimization_flow(analysis, constraints=(), iterations=None, filter
     if extrude not in axes:
         raise ValueError("extrude is None, 'x', 'y' or 'z'")
     mirrors = _symmetry_request(symmetry, 'tet', 'topology_optimization')
-    if isinstance(constraints, str) or callable(constraints):
-        constraints = [constraints]
 
     def baseline_leaf(key):
         return 1.0 if key[0] == 'fraction' else measures.true_value(key, [flow])
@@ -1088,7 +1116,7 @@ def topology_optimization_flow(analysis, constraints=(), iterations=None, filter
     def baseline(node):
         return measures.evaluate(node, baseline_leaf)
 
-    outputs, goal = measures.outputs_of(constraints, analyses, baseline)
+    outputs, goal = measures.outputs_of(optimization_conditions, analyses, baseline)
     program = measures.Program(outputs)
     if ('fraction',) not in program.measures:
         program.measures.append(('fraction',))                      # (the share of the body the design uses is always kept: the result reports it)
@@ -1227,3 +1255,6 @@ def _flow_topology_fields(self):
 
 
 FlowTopologyResult.fields = property(_flow_topology_fields)
+
+# The analyses that can be given the mesh of a body in place of the body (the menus read it: menu_catalog._part_kinds)
+_sim_mesh.takes_mesh(fluid_analysis)

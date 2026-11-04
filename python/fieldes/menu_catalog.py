@@ -96,7 +96,7 @@ def _cell_entries():
     listed(L.TPMS_KINDS, 'TPMS cells')
     for kind in L.PLANAR_KINDS:
         out.append(('cell_' + kind, 'Planar cells', "cell_periodic('%s')" % kind, kind))
-    out.append(('cell_custom', 'Custom cells', 'cell_custom(box((0, 0, 0), ({s}, {s}, {s})), sphere({h}, ({h}, {h}, {h})))',
+    out.append(('cell_custom', 'Custom cells', 'cell_custom(box(({s}, {s}, {s}), position=({h}, {h}, {h})), sphere({h}, position=({h}, {h}, {h})))',
                 'custom'))
     out.append(('cell_custom_truss', 'Custom cells',
                 "cell_custom_truss({{'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}}, [('c', 'o')], mirror='xyz')", 'custom_truss'))
@@ -131,6 +131,12 @@ HINTS = {
     'delaunay_lattice': tr('A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were '
                            'made in.  Select points first (random_points)'),
     'instance': tr('A linked copy of the selected model: the same shape, following every change of it, that can only be moved and rotated (Ctrl+D)'),
+    'keep_below': tr('The optimization keeps the selected result at most a limit: keep_below(result, limit)'),
+    'keep_above': tr('The optimization keeps the selected result at least a limit: keep_above(result, limit)'),
+    'keep_between': tr('The optimization keeps the selected result between a lower and an upper limit: keep_between(result, lower, upper)'),
+    'minimize': tr('The optimization makes the selected result as small as it can be (one goal at most): minimize(result)'),
+    'maximize': tr('The optimization makes the selected result as large as it can be (one goal at most): maximize(result)'),
+    'optimization_condition': tr('One condition written whole, a comparison of analysis results: optimization_condition(max_von_mises_1 <= 90). It must have an analysis result in it'),
 }
 
 # A profile or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
@@ -139,8 +145,8 @@ def _gizmoed_point(name, x, y, z, influence=None):
     ''' The statements of a point that is a model of its own, with its gizmo (so that it can be dragged).  `influence` (the text of a number): the point says how far it reaches, `influence=var(r)`, so that the
         ring of its gizmo drags it -- the radius of the field that is made of the point '''
     said = '' if influence is None else '    influence=var(%s),\n' % influence
-    return ('%s = point(\n    %s, %s, %s,\n%s    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n'
-            '    scale=(var(1), var(1), var(1)),\n)\n%s\n' % (name, x, y, z, said, name))
+    return ('%s = point(\n    position=(var(%s), var(%s), var(%s)),\n    rotation=(var(0), var(0), var(0)),\n'
+            '    scale=(var(1), var(1), var(1)),\n%s)\n%s\n' % (name, x, y, z, said, name))
 
 
 def _points(*places, base='{var}', influence=None):
@@ -158,6 +164,13 @@ _PROFILE = _PROFILE_POINTS + '#@@#\nprofile([' + _PROFILE_LIST + '])'
 _LINE_POINTS, _LINE_LIST = _points(('{xm}', '{y}', '{z}'), ('{x}', '{yp}', '{z}'), ('{xp}', '{y}', '{z}'))
 _POLYLINE = _LINE_POINTS + '#@@#\npolyline([' + _LINE_LIST + '])'
 _SPLINE = _LINE_POINTS + '#@@#\nspline([' + _LINE_LIST + '])'
+
+# A body made of eight points, the 3D equivalent of a profile (the user, 2026-10-28: "It should have 2 parametric shapes called morph cube and morph body, which are the same: 8 points, just corners
+# for the cube and splines for the morph body"): the eight points are the corners of a box round the click, in the order x changes fastest, then y, then z
+# (a body of points says its influence from the start, influence=var(1): the tree would write it into every point right after the body is made -- a second run of the script that replaces the body once more, H77)
+_MORPH_POINTS, _MORPH_LIST = _points(*[('{xp}' if i & 1 else '{xm}', '{yp}' if i & 2 else '{ym}', '{zp}' if i & 4 else '{zm}') for i in range(8)], influence='1')
+_MORPH_POLYHEDRON = _MORPH_POINTS + '#@@#\nmorph_polyhedron([' + _MORPH_LIST + '])'
+_MORPH_BODY = _MORPH_POINTS + '#@@#\nmorph_body([' + _MORPH_LIST + '])'
 
 # A radial field, or a distance to a point, made from the menu is made of a POINT (the Point class: a model of its own, with its gizmo), written above it -- not of a vector (the user, 2026-10-28:
 # "DO YOU KNOW WHAT THE POINT CLASS IS IN FIELDES?") --, and the point says its INFLUENCE, which is the radius of the field: negative inside it, 0 on it, positive outside, and the ring of the point's gizmo drags it
@@ -178,6 +191,14 @@ FROM_SELECTION = {
                   'outline (a flat face exactly; a surface that is not flat is projected onto a plane).  With none: four new points to drag.  '
                   'Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
                [({'point'}, 3, None, 'profile([{names}])'), ({'curve'}, 1, None, 'profile({name})'), ({'surface'}, 1, None, 'profile({name})')]),
+    'morph_polyhedron': (tr('A body made of points with flat faces and a sharp corner at each point (a polyhedron).  With four or more points selected (not all in one plane): made from them, with the '
+                      'faces of their convex hull.  With none: eight new points to drag, the corners of a cube.  Double-click a point to make it a corner or a spline point; '
+                      'press a surface and drag to pull the points near it'),
+                   [({'point'}, 4, None, 'morph_polyhedron([{names}])')]),
+    'morph_body': (tr('A smooth body made of points: its surface goes through every point and is smooth there, every point a spline point (it is not a polyhedron).  With four or more points selected '
+                      '(not all in one plane): made from them -- the faces of their convex hull say which points are joined, the surface between stays smooth.  With none: eight new points to '
+                      'drag, the corners of a cube.  Double-click a point to make it a corner or a spline point; press a surface and drag to pull the points near it'),
+                   [({'point'}, 4, None, 'morph_body([{names}])')]),
     'polyline': (tr('A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
                     'drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
                  [({'point'}, 2, None, 'polyline([{names}])')]),
@@ -196,37 +217,43 @@ FROM_SELECTION = {
 
 # (function, group, template)
 PRIMITIVES = [
-    ('sphere', '3D', 'sphere({h}, ({x}, {y}, {z}))'),
-    ('box', '3D', 'box(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}))'),
-    ('rounded_box', '3D', 'rounded_box(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}), {r})'),
-    ('cylinder', '3D', 'cylinder({h}, {s}, ({x}, {y}, {zm}))'),
-    ('cone', '3D', 'cone({h}, {s}, ({x}, {y}, {zm}))'),
-    ('torus', '3D', 'torus({h}, {q}, ({x}, {y}, {z}))'),
-    ('pyramid', '3D', 'pyramid(({xm}, {ym}), ({xp}, {yp}), {zm}, {s})'),
-    ('prism', '3D', 'prism(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}), {zm}, {zp})'),
-    ('capsule', '3D', 'capsule({q}, {s}, ({x}, {y}, {zm}))'),
-    ('tube', '3D', 'tube({h}, {q}, {s}, ({x}, {y}, {zm}))'),
-    # (a thread has the sizes of a standard screw, so its diameter is the screw nearest to what the other shapes are -- see _screw_for -- and its length is the size of the click, as the cylinder's height is: made
-    # from the menu it stands as high as the cylinder beside it.  The user, 2026-10-28: "The threaded rod is still BY FAR the largest primitive and should be set in line with the other ones": it was an M8 of
-    # 20 mm whatever the view)
-    ('threaded_rod', '3D', "threaded_rod('M{screw}', {s}, ({x}, {y}, {zm}))"),
+    # (every shape is its SIZE and ONE global position -- the middle of a box, a sphere, a torus; the middle of the base of a cylinder, a cone, a pyramid -- the user, 2026-11-03: "EVERYTHING HAS ONE
+    # GLOBLA POSITION. GLOBAL. AND ONE. NO EXCEPTION.")
+    ('sphere', '3D', 'sphere({h}, position=({x}, {y}, {z}))'),
+    ('box', '3D', 'box({s}, position=({x}, {y}, {z}))'),
+    ('rounded_box', '3D', 'rounded_box({s}, {r}, position=({x}, {y}, {z}))'),
+    ('cylinder', '3D', 'cylinder({h}, {s}, position=({x}, {y}, {z}))'),
+    ('cone', '3D', 'cone({h}, {s}, position=({x}, {y}, {zm}))'),
+    ('torus', '3D', 'torus({h}, {q}, position=({x}, {y}, {z}))'),
+    ('pyramid', '3D', 'pyramid({s}, {s}, position=({x}, {y}, {zm}))'),
+    ('prism', '3D', 'prism(({mh}, {mh}), ({h}, {mh}), (0, {h}), {mh}, {h}, position=({x}, {y}, {z}))'),
+    ('capsule', '3D', 'capsule({q}, {s}, position=({x}, {y}, {zm}))'),
+    ('tube', '3D', 'tube({h}, {q}, {s}, position=({x}, {y}, {zm}))'),
+    # (a threaded cylinder: the same radius and height as the cylinder made the same way, the thread in proportion to the radius.  The user, 2026-10-28: "JUST MAKE IT A CYLINDER THAT IS THREADED THAT IS THE
+    # SAME FUCKING SIZE" -- it was the M8 of a screw table, wider than the cylinder beside it)
+    ('threaded_rod', '3D', 'threaded_rod({h}, {s}, position=({x}, {y}, {zm}))'),
+    # (the thread of a standard screw, its sizes fixed, no handles -- the user, 2026-10-28: "I would still want the old thread logic with different set normed is sizes back as "threaded rod normed""
+    # -- so its diameter is the screw nearest to what the other shapes are, see _screw_for, and its length is the size of the click, as the cylinder's height is)
+    ('threaded_rod_normed', '3D', "threaded_rod_normed('M{screw}', {s}, position=({x}, {y}, {zm}))"),
+    ('morph_polyhedron', '3D', _MORPH_POLYHEDRON),
+    ('morph_body', '3D', _MORPH_BODY),
     ('low_level_body', '3D', _LOW_LEVEL_BODY),
-    ('circle', '2D', 'circle({h}, ({x}, {y}))'),
-    ('rectangle', '2D', 'rectangle(({xm}, {ym}), ({xp}, {yp}))'),
-    ('rounded_rectangle', '2D', 'rounded_rectangle(({xm}, {ym}), ({xp}, {yp}), {r})'),
-    ('slot', '2D', 'slot({s}, {h}, ({x}, {y}))'),
-    ('ring', '2D', 'ring({h}, {q}, ({x}, {y}))'),
-    ('polygon', '2D', 'polygon({h}, {n}, ({x}, {y}))'),
-    ('triangle', '2D', 'triangle(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}))'),
+    ('circle', '2D', 'circle({h}, position=({x}, {y}))'),
+    ('rectangle', '2D', 'rectangle({s}, position=({x}, {y}))'),
+    ('rounded_rectangle', '2D', 'rounded_rectangle({s}, {r}, position=({x}, {y}))'),
+    ('slot', '2D', 'slot({s}, {h}, position=({x}, {y}))'),
+    ('ring', '2D', 'ring({h}, {q}, position=({x}, {y}))'),
+    ('polygon', '2D', 'polygon({h}, {n}, position=({x}, {y}))'),
+    ('triangle', '2D', 'triangle(({mh}, {mh}), ({h}, {mh}), (0, {h}), position=({x}, {y}))'),
     ('profile', '2D', _PROFILE),
     ('polyline', '1D', _POLYLINE),
     ('spline', '1D', _SPLINE),
-    ('point', 'Points', 'point({x}, {y}, {z})'),
-    ('symmetry_planes', 'Symmetry', 'symmetry_planes(planes=1, kind=\'axis\', centre=({x}, {y}, {z}), axis=(0, 0, 1))'),
-    ('plane', 'Surfaces', 'plane(({x}, {y}, {z}), (0, 0, 1))'),
-    ('sphere_surface', 'Surfaces', 'sphere_surface({h}, ({x}, {y}, {z}))'),
-    ('cylinder_surface', 'Surfaces', "cylinder_surface({h}, 'z', ({x}, {y}, 0))"),
-    ('wave_surface', 'Surfaces', 'wave_surface({q}, {s}, "x", {z})'),
+    ('point', 'Points', 'point(position=({x}, {y}, {z}))'),
+    ('symmetry_planes', 'Symmetry', 'symmetry_planes(planes=1, kind=\'axis\', axis=(0, 0, 1), position=({x}, {y}, {z}))'),
+    ('plane', 'Surfaces', 'plane((0, 0, 1), position=({x}, {y}, {z}))'),
+    ('sphere_surface', 'Surfaces', 'sphere_surface({h}, position=({x}, {y}, {z}))'),
+    ('cylinder_surface', 'Surfaces', "cylinder_surface({h}, 'z', position=({x}, {y}, 0))"),
+    ('wave_surface', 'Surfaces', 'wave_surface({q}, {s}, "x", position=(0, 0, {z}))'),
     ('distance_to_point', 'Fields', _DISTANCE_FIELD),
     ('radial_field', 'Fields', _RADIAL_FIELD),
     ('z_field', 'Fields', 'z_field()'),
@@ -266,12 +293,6 @@ BASIC = frozenset((
     'plane', 'sphere_surface', 'cylinder_surface',
     'distance_to_point', 'radial_field', 'z_field', 'noise_field',
 ))
-
-# The number of an operation's call that a FIELD takes the place of when one is selected with the body -- `offset(plate, swell)`, `lattice(part, cell, thickness=density)`
-# -- the way a field dropped on the call in the model tree does it (every size, radius, thickness of the library takes a field)
-FIELD_SLOTS = {n: 't' for n in ('offset', 'shell', 'thicken', 'shell_inside', 'shell_outside', 'shell_centered', 'offset_exact',
-                                'shell_exact', 'smooth', 'round_edges', 'fillet')}
-FIELD_SLOTS['lattice'] = 'ct'
 
 # The values the templates of an entry are filled with where the menu has nothing better than a default: a number, a text, or '$key' (what the menu
 # works out for the place and the size of the model).  Nothing is asked: what an entry writes is in the script, in front of the user, to be edited
@@ -385,7 +406,13 @@ OPERATIONS = [
     ('texture', 'Texturing', 'texture({body})', 'optional'),
     ('smooth', 'Rounding', 'smooth({body}, {t}, {n})', 'optional'),
     ('round_edges', 'Rounding', 'round_edges({body}, {t})', 'optional'),
-    ('fillet', 'Rounding', 'fillet({body}, {t})', 'optional'),
+    # One edge of a body, selected with it (the curve `edge_at` makes: a line along a straight edge, a closed curve for a circular one): rounded, or chamfered, exactly that edge (the user, 2026-10-28: "I would want it to
+    # instead work that you select an edge of a body and can put that as an argument for it to work and chamfer/fillet that edge exactly")
+    # (the edge ALONE is the call -- it knows the body it was made on, so a body selected with it is not written: `fillet(edge_1, radius=...)`, the radius a placeholder like every number a menu does not make up; the
+    # user, 2026-10-28: "you just take the edge and that's that" -- after "Selecting fillet or chamfer from the context menu just does absolutely nothing".  A body alone is fillet(body, radius): every concave edge.
+    # See _build_operation)
+    ('fillet', 'Rounding', 'fillet({body})', 'optional'),
+    ('chamfer', 'Rounding', 'chamfer({body})', 'optional'),
     ('move', 'Moving', 'move({body}, ({dx}, {dy}, {dz}))', False),
     ('rotate_z', 'Moving', 'rotate_z({body}, {angle_rad})', False),
     ('scale_xyz', 'Moving', 'scale_xyz({body}, ({sx}, {sy}, {sz}))', False),
@@ -462,7 +489,10 @@ OPERATIONS = [
     # conditions that are selected with the body are written in the input of their kind.  The completion writes the inputs from the signature
     ('static_analysis', 'Simulations', 'static_analysis({body})', 'optional'),
     ('modal_analysis', 'Simulations', 'modal_analysis({body})', 'optional'),
-    ('topology_optimization', 'Simulations', 'topology_optimization({body})', False),
+    ('topology_optimization', 'Simulations', 'topology_optimization({body})', 'optional'),
+    # What an optimization does with the result of an analysis of any domain (the result itself is a class internal to the simulations and no entry of a menu: the user, 2026-11-02, "IT IS NOT SOMETHING THAT THE USER CAN CREATE") (the user, 2026-11-01: one for every von Mises, deformation, velocity or temperature, and conditions
+    # for the topology optimization made from the context menu, without coding): it is given the result of an analysis, as the optimizations are; it is in the Optimization section of the menu
+    # (the optimization conditions are listed after parametric_optimization, in a submenu of their own)
     ('thermal_analysis', 'Simulations', 'thermal_analysis({body})', 'optional'),
     ('fluid_analysis', 'Simulations', 'fluid_analysis({body})', 'optional'),
     # Meshing: the body as a mesh of elements for the solver of another program (its own category of the Engineering menu)
@@ -471,7 +501,15 @@ OPERATIONS = [
     ('solve', 'Simulations', "solve('heat', {body})", 'optional'),
     # What works over an analysis of any domain, and so is in no category of the Engineering menu: it is given the result of an analysis (a simulation) and
     # finds the best numbers for the var()s the model is made of
-    ('parametric_optimization', 'Simulations', 'parametric_optimization({body})', False),
+    ('parametric_optimization', 'Simulations', 'parametric_optimization({body})', 'optional'),
+    # The optimization conditions, in a submenu of their own (SUBMENUS): each takes the analysis result that is selected and the numbers it needs are placeholders (the user, 2026-11-03: "make an
+    # own optimization condition section that contains the basic keep below, keep above, keep between, minimize maximize and a generic one that takes everything that makes the most sense")
+    ('keep_below', 'Simulations', 'keep_below({body})', False),
+    ('keep_above', 'Simulations', 'keep_above({body})', False),
+    ('keep_between', 'Simulations', 'keep_between({body})', False),
+    ('minimize', 'Simulations', 'minimize({body})', False),
+    ('maximize', 'Simulations', 'maximize({body})', False),
+    ('optimization_condition', 'Simulations', 'optimization_condition({body} <= ...)', False),
     # Manufacturing: the check of a part against constraints (where it breaks them, as colours on it) and the shell that changes the part until it keeps them
     ('manufacturing_analysis', 'Simulations', 'manufacturing_analysis({body})', 'optional'),
     ('manufacturing_optimization', 'Simulations', 'manufacturing_optimization({body})', 'optional'),
@@ -481,9 +519,13 @@ OPERATIONS = [
 # (operations that are in the first menu of a body, not under a group: used all the time)
 QUICK = ('center', 'bounding_box', 'distance_to_point', 'radial_field')
 
-# What is the first entry of the Engineering menu, on its own, above the categories of the domains: the optimisation that designs for an analysis of any domain -- a static, a modal, a thermal
-# one, a flow -- and so is in the category of none of them
-TOP = ('topology_optimization',)
+# Entries of the Engineering menu that are in a submenu of their own, by the name of the submenu: the optimization conditions
+SUBMENUS = {name: tr('Optimization condition') for name in ('keep_below', 'keep_above', 'keep_between', 'minimize', 'maximize', 'optimization_condition')}
+
+# What is the first entry of the Engineering menu, on its own, above the categories of the domains: nothing now.  The optimisations -- topology_optimization, parametric_optimization -- and what they are
+# given -- an analysis result, an optimization condition -- are the category Optimization of the menu, with a picture of their own each (the user, 2026-11-02: "this should be ordered into its own
+# optimization section here, obviously and get different icons, just like I told you everything new gets")
+TOP = ()
 
 # The "Python" menu: the most basic features of the language as blocks of plain code, written at the top level of the script, at the insertion point of the model tree (not
 # made into a model: no `name = ...`, no display line).  The code is edited in the code editor; the tree shows the blocks and what is in them.  A body of `pass` is where the
@@ -543,6 +585,7 @@ def catalog():
         'operations': [dict({'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True, 'quick': n in QUICK, 'top': n in TOP},
                             **({'section': SECTIONS[g]} if g in SECTIONS else {}), **({'hint': HINTS[n]} if n in HINTS else {}),
                             **({'domain': DOMAIN_OF_FUNCTION[n]} if g == 'Simulations' and n in DOMAIN_OF_FUNCTION else {}),
+                            **({'submenu': SUBMENUS[n]} if n in SUBMENUS else {}),
                             **({'type': OPERATION_KINDS[n]} if n in OPERATION_KINDS else
                                                                                        {'type': 'lattice'} if g in ('Periodic lattices', 'Non-periodic lattices') else {}))
                        for n, g, _, o in OPERATIONS]
@@ -594,7 +637,7 @@ def _fluids(others):
 # takes: a list of SIGNATURES -- the tags it accepts, and the tags it must be given at least one of.  A selection fits an entry when all of
 # its models are accepted by ONE signature and the signature's needs are met; an entry it does not fit is greyed out in the menu (nothing is
 # said: it is not offered).  A model of no known kind (not run yet) fits anything, and so does an entry that declares nothing (a custom block).
-from fieldes.kinds import SHAPES as _SHAPES                                                       # (what a geometric operation works on)
+from fieldes.kinds import SHAPES as _SHAPES, slot as _slot                                                       # (what a geometric operation works on)
 _FOAMS = ('voronoi_lattice', 'delaunay_lattice')                                                 # (the lattices made around a set of points)
 _PART = frozenset(('solid', 'profile', 'import', 'simulation', 'lattice'))                                 # (what a simulation is made for)
 _REGIONS = frozenset(_REGION_TYPES)                                                               # (what a condition is made of: where it acts)
@@ -619,7 +662,8 @@ def _slots_of(name):
     ''' The inputs of the analysis `name` that are kinds of conditions -- its parameters that are named like one (`supports`, `loads`,
         `inlets`, `outlets` ...), in the order it lists them: what the library says, not a list kept here '''
     try:
-        from fieldes.stdlib.fea import _SLOTS
+        from fieldes.stdlib.fea import _SLOTS, _slot_of
+        _slot_of(object())             # (the first call tells the registry that an optimization condition goes in conditions: see fea._slot_of)
     except Exception:
         return []
     return [p for p in _parameters_of(name) if p in _SLOTS]
@@ -628,6 +672,16 @@ def _slots_of(name):
 def _is_flow(name):
     ''' Whether the analysis `name` has a fluid, not a material: its signature says so (`fluid=`) '''
     return 'fluid' in _parameters_of(name)
+
+
+def _part_kinds(name):
+    ''' The kinds of model the simulation `name` is made for: bodies, and the mesh of a body when the function says it takes one (`fn._takes_mesh`, see stdlib/sim_mesh.py) '''
+    try:
+        import fieldes
+        mesh = bool(getattr(getattr(fieldes, name, None), '_takes_mesh', False))
+    except Exception:
+        mesh = False
+    return _PART | {'mesh'} if mesh else _PART
 
 
 def _parts_of(name):
@@ -660,7 +714,7 @@ def _takes(name):
     # (a simulation takes a part, the conditions of the kinds it has an input for and a material -- and needs none of them: what is not selected
     # is a placeholder in the call)
     if name in _SIMULATIONS:
-        return [(_PART | set(_slots_of(name)) | ({'fluid'} if _is_flow(name) else {'material'}), [])]
+        return [(_part_kinds(name) | set(_slots_of(name)) | ({'fluid'} if _is_flow(name) else {'material'}), [])]
     return None
 
 
@@ -691,7 +745,7 @@ def _selection_fits(kind, name, models):
         return True
     if name in _SIMULATIONS:
         # (one input takes one part and one material: a second one has nowhere to go -- the conditions are lists, they take any number)
-        if sum(t in _PART for t in tags) > _parts_of(name):
+        if sum(t in _part_kinds(name) for t in tags) > _parts_of(name):
             return False
         if sum(t in ('material', 'fluid') for t in tags) > 1:
             return False
@@ -729,20 +783,6 @@ def _primitive_fits(name, models):
     return any(_selection_fits('operation', n, list(models) + [made]) for n in users)
 
 
-def _body_first(body, info, others):
-    ''' The first model selected is what an operation works on -- unless it is itself something the operation is made of: a condition or a
-        material.  Those are conditions in whatever order the models were selected, and the body is then the first solid or profile among
-        the others ('' when none was selected).  Returns (body, its info, the others) '''
-    if info.get('type') not in ('conditions', 'material'):
-        return body, info, others
-    first = {'name': body, 'type': info.get('type'), 'role': info.get('role') or '', 'cls': info.get('cls') or ''}
-    main = next((o for o in others if o.get('type') in ('solid', 'profile', 'lattice')), None)
-    if main is None:
-        return '', {}, [first] + list(others)
-    return (main['name'], {'type': main.get('type'), 'role': '', 'cls': main.get('cls') or '', 'part': ''},
-            [first] + [o for o in others if o is not main])
-
-
 def _from_selection(name, models, values):
     ''' The call of a New entry that is made of the models selected (the ways it is made are data: see FROM_SELECTION) -- the points a profile or a curve goes through (in the
         order they were selected), a curve or a surface a profile is the outline of -- or None when what is selected is not what the entry takes (it is made from its own
@@ -769,14 +809,79 @@ def _own_point_names(shape_name):
         return set()
 
 
+def _simulation_slots(name):
+    ''' The inputs of a simulation, read from its signature in the library (see fieldes.kinds.slot): the parts it is made for, the conditions of the kinds it has an input for, a material -- a fluid
+        for a flow '''
+    params = _parameters_of(name)
+    last = _parts_of(name) - 1            # (a mesh is the last part: the domain of a flow, not its body)
+    slots = [_slot(params[k] if k < len(params) else 'part', _part_kinds(name) if k == last else _PART, needed=True) for k in range(_parts_of(name))]
+    slots += [_slot(s, s, as_list=True) for s in _slots_of(name)]
+    slots.append(_slot('fluid', 'fluid', keyword=True) if _is_flow(name) else _slot('material', 'material', keyword=True))
+    return slots
+
+
+def _slots_for(name):
+    ''' The inputs of the operation `name`, in order: what the library function says of itself (`fn._slots`, see fieldes.kinds.slot -- no list of them is kept here), a simulation's from its signature,
+        and None for a function that says nothing: its call is written from its template '''
+    try:
+        import fieldes
+        declared = getattr(getattr(fieldes, name, None), '_slots', None)
+    except Exception:
+        declared = None
+    if declared:
+        return declared
+    if name in _SIMULATIONS:
+        return _simulation_slots(name)
+    return None
+
+
+def _place_by_kind(name, v, others):
+    ''' The call of the operation `name` made of the models selected, each in the input that takes its kind, whatever order they were selected in (see fieldes.kinds.slot): a model that has not run
+        (no kind yet) is the first one's, the body.  An input that is needed and was not selected is a placeholder; the others that were not selected are left to the completion.  None when the
+        function says nothing of its inputs, or its entry is written from a template that says more than the body (`solve('heat', part)`) '''
+    slots = _slots_for(name)
+    if not slots:
+        return None
+    import re
+    if any(n == name and not re.fullmatch(re.escape(name) + r'\(\{body\}(?:, \{\w+\})*\)', t) for n, _g, t, _o in OPERATIONS):
+        return None             # (an entry whose template says more than the body and the numbers the menu makes up -- `solve('heat', part)` -- is written from its template)
+    models = ([dict(v.get('body_info') or {}, name=v['body'])] if v.get('body') else []) + list(others)
+    try:
+        import fieldes
+        parameters = inspect.signature(getattr(fieldes, name)).parameters
+    except Exception:
+        parameters = {}
+    used = set()
+    args, gap = [], False
+    for index, s in enumerate(slots):
+        mine, repeat = [], False
+        for tier in s.tiers:
+            mine = [m for m in models if id(m) not in used and (_tag(m) in tier or (_tag(m) is None and m is models[0] and index == 0))]
+            if mine:
+                repeat = s.many is True or (bool(s.many) and bool(tier & s.many))
+                break
+        mine = mine if repeat else mine[:1]
+        used.update(id(m) for m in mine)
+        names = [m['name'] for m in mine]
+        if not names:
+            if s.needed:
+                gap = True
+                args.append('%s=...' % s.param)
+            continue
+        p = parameters.get(s.param)
+        positional = p is not None and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL)
+        if s.as_list:
+            args.append('%s=[%s]' % (s.param, ', '.join(names)))
+        elif positional and not gap and not s.keyword:
+            args.extend(names)
+        else:
+            args.append('%s=%s' % (s.param, names[0] if len(names) == 1 else '[%s]' % ', '.join(names)))
+    return '%s(%s)' % (name, ', '.join(args))
+
+
 def _build_operation(name, v, others):
     ''' The text of an operation that is given the models selected with the body (see OPERATIONS: 'optional'), or None when they say
         nothing it can use -- the template is written then '''
-    if name in _SIMULATIONS:
-        if any(n == name and t != '%s({body})' % name for n, _g, t, _o in OPERATIONS):
-            return None             # (an entry whose template says more than the body -- `solve('heat', part)` -- is written from its template)
-        body, info, others = _body_first(v['body'], v.get('body_info') or {}, others)
-        v = dict(v, body=body, body_info=info)
     body = v['body']
     if name in ('lattice', 'lattice_surface_conform'):
         # (the first model selected is the one the lattice is made in -- unless it is a cell: that is what it is made of)
@@ -818,11 +923,6 @@ def _build_operation(name, v, others):
         points = [m['name'] for m in [dict(v.get('body_info') or {}, name=body)] + list(others) if m.get('type') == 'point']
         if points:
             return 'point_cloud([%s])' % ', '.join(points)
-    if name == 'texture':
-        # (a surface, a field or a body that is selected with the body is where the texture goes)
-        regions = [o['name'] for o in others if o.get('type') in ('surface', 'field', 'solid', 'profile', 'lattice')]
-        if regions:
-            return 'texture(%s, region=%s)' % (body, regions[0])
     if name == 'path_extrude':
         # (the 2D shape and the path, whichever was selected first; points make a curve of their own, which is shown and edited like any other)
         models = [dict(v.get('body_info') or {}, name=body)] + list(others)
@@ -837,45 +937,8 @@ def _build_operation(name, v, others):
         if profile and len(points) >= 2:
             var = v.get('var') or 'path_extrude_1'
             return '%s_path = spline([%s])\n%s_path%spath_extrude(%s, %s_path)' % (var, ', '.join(points), var, PRELUDE, profile, var)
-    slot = FIELD_SLOTS.get(name)
-    if slot:
-        fields = [o['name'] for o in others if o.get('type') == 'field']
-        if not fields:
-            return None
-        for n, _, template, _ in OPERATIONS:
-            if n == name:
-                return template.format(**dict(v, **{slot: fields[0]}))
-        return None
-    if name in _SIMULATIONS:
-        # The body, then the conditions that were selected, each in the input of its kind -- every input that is not given is a placeholder
-        # (the completion writes it), as is every other argument the call cannot do without, the body too when none was selected
-        # (the flow optimisation has two: the body and the fluid domain it sits in, in the order they were selected)
-        params = _parameters_of(name)
-        parts = ([body] if body else []) + [o['name'] for o in others if o.get('type') in ('solid', 'profile', 'import', 'simulation', 'lattice')]
-        args, missing = [], False
-        for k in range(_parts_of(name)):
-            if k < len(parts):
-                args.append(parts[k] if not missing else '%s=%s' % (params[k] if k < len(params) else 'part', parts[k]))
-            else:
-                missing = True
-                args.append('%s=...' % (params[k] if k < len(params) else 'part'))
-        by_slot = {}
-        for o in others:
-            if o.get('type') == 'conditions' and o.get('role'):
-                by_slot.setdefault(o['role'], []).append(o['name'])
-        for s in _slots_of(name):
-            if s in by_slot:
-                args.append('%s=[%s]' % (s, ', '.join(by_slot[s])))
-        if _is_flow(name):
-            fluid = _fluids(others)
-            if fluid:
-                args.append('fluid=%s' % fluid[0])
-        else:
-            material = _materials(others)
-            if material:
-                args.append('material=%s' % material[0])
-        return '%s(%s)' % (name, ', '.join(args))
-    return None
+    # (every other operation that says what goes into each of its inputs -- fieldes.kinds.slot -- is written from the models selected, each in the input of its kind: a simulation, a fillet ...)
+    return _place_by_kind(name, v, others)
 
 
 def _num(v):
@@ -944,6 +1007,18 @@ def _stroke_text(name, places, smooth, r):
     tol = max(1e-4, 1e-3 * step)
     r['_symmetric'] = True
     symmetry_var = (r.get('symmetry') or {}).get('var') or 'symmetry_1'
+    # A stroke with its middle on a plane of the symmetry is its own image: every point has its mirror partner among the points.  The symmetry is applied to every individual point (the user,
+    # 2026-11-02), and an image that lands on a point that is there IS that point: a point that is the image of an earlier one is written as that image, so that the two move together
+    links = sym.partner_links(positions, elements, tol)
+    if links:
+        text = ''
+        for j, place in enumerate(places):
+            if j in links:
+                i, e = links[j]
+                text += sym.image_statement('{var}_p%d' % (i + 1), '{var}_p%d' % (j + 1), elements[e], symmetry_var)
+            else:
+                text += _gizmoed_point('{var}_p%d' % (j + 1), place[0], place[1], place[2], None)
+        return text + '#@@#\n' + '%s([%s]%s)' % (name, ', '.join('{var}_p%d' % (k + 1) for k in range(len(places))), smooth_arg)
     whole = sym.simple_images(positions, elements, tol)
     if whole is not None:
         # The images are strokes that touch nothing: each is the image of the stroke, like the image of any model, `{var}_m1 = symmetry_image({var}, symmetry_1, 1)`, written under the
@@ -1023,8 +1098,8 @@ def _symmetry_template(r, values):
     def vec(v):
         return '(%s)' % ', '.join(_num(float(c)) for c in v)
     if kind == 'turn':
-        return "symmetry_planes(copies=%d, kind='turn', centre=%s, axis=%s, first=%s)" % (int(planes), vec(centre), vec(axis), vec(first))
-    return 'symmetry_planes(planes=%d, kind=%r, centre=%s, axis=%s, first=%s)' % (int(planes), kind, vec(centre), vec(axis), vec(first))
+        return "symmetry_planes(copies=%d, kind='turn', axis=%s, first=%s, position=%s)" % (int(planes), vec(axis), vec(first), vec(centre))
+    return 'symmetry_planes(planes=%d, kind=%r, axis=%s, first=%s, position=%s)' % (int(planes), kind, vec(axis), vec(first), vec(centre))
 
 
 def _default_stroke_template(name, values, r):
@@ -1035,6 +1110,32 @@ def _default_stroke_template(name, values, r):
     else:
         places = [(values['xm'], values['y'], values['z']), (values['x'], values['yp'], values['z']), (values['xp'], values['y'], values['z'])]
     return _stroke_text(name, places, False, r)
+
+
+def _default_morph_template(name, values, r):
+    ''' morph_polyhedron / morph_body with a symmetry on.  When the symmetry takes the eight points onto themselves (the cube is made with its middle on a plane of the symmetry) every point that is
+        the image of another is written as that image -- `symmetry_image(point, symmetry, k)` -- and not as a point of its own on top of it, so that moving one moves the other (the user, 2026-11-02:
+        the symmetry is applied to every individual point, and an image that lands on a point that is there is that point); the images of the body as a whole are not made then.  Any other cube
+        is mirrored as a whole, as it was '''
+    from fieldes import symmetry_creation as sym
+    template = _MORPH_POLYHEDRON if name == 'morph_polyhedron' else _MORPH_BODY
+    elements = sym.elements_of(r.get('symmetry'))
+    places = [(values['xp'] if i & 1 else values['xm'], values['yp'] if i & 2 else values['ym'], values['zp'] if i & 4 else values['zm']) for i in range(8)]
+    positions = [tuple(float(c) for c in p) for p in places]
+    step = float((r.get('plane') or {}).get('step') or 0.0)
+    links = sym.partner_links(positions, elements, max(1e-4, 1e-3 * step, 1e-6 * float(r.get('scale', 10.0)))) if elements else None
+    if not links:
+        return template
+    r['_symmetric'] = True
+    symmetry_var = (r.get('symmetry') or {}).get('var') or 'symmetry_1'
+    text = ''
+    for j, (x, y, z) in enumerate(places):
+        if j in links:
+            i, e = links[j]
+            text += sym.image_statement('{var}_p%d' % (i + 1), '{var}_p%d' % (j + 1), elements[e], symmetry_var)
+        else:
+            text += _gizmoed_point('{var}_p%d' % (j + 1), x, y, z, '1')
+    return text + '#@@#\n' + '%s([%s])' % (name, ', '.join('{var}_p%d' % (k + 1) for k in range(8)))
 
 
 def _screw_for(size):
@@ -1064,7 +1165,7 @@ def _values(r):
         x, y, z = snap(r.get('x', 0.0)), snap(r.get('y', 0.0)), snap(r.get('z', 0.0))
     h = s / 2.0
     values = {
-        'x': _num(x), 'y': _num(y), 'z': _num(z), 's': _num(s), 'h': _num(h), 't': _num(s / 10.0), 'q': _num(s / 6.0),
+        'x': _num(x), 'y': _num(y), 'z': _num(z), 's': _num(s), 'h': _num(h), 'mh': _num(-h), 't': _num(s / 10.0), 'q': _num(s / 6.0),
         'xm': _num(x - h), 'xp': _num(x + h), 'ym': _num(y - h), 'yp': _num(y + h), 'zm': _num(z - h), 'zp': _num(z + h),
         'body': r.get('body', ''), 'other': r.get('other', ''), 'var': r.get('var') or (name + '_1'),
         'screw': _num(_screw_for(s)),
@@ -1208,8 +1309,8 @@ def _call(r):
                     body = first['name']
         text = _region_arg(regions)
         return BODY_CONDITIONS[name].format(region=text + (', body=' + body if body else ''), volume=text, **values)
-    if kind == 'operation' and (values['body'] or name in _SIMULATIONS) and (r.get('others') is not None or r.get('body_info')
-                                                                             or name in _SIMULATIONS):
+    if kind == 'operation' and (values['body'] or _slots_for(name)) and (r.get('others') is not None or r.get('body_info')
+                                                                         or _slots_for(name)):
         built = _build_operation(name, values, others)
         if built:
             return built
@@ -1228,6 +1329,8 @@ def _call(r):
                 r['_templated'] = True
                 if name in ('profile', 'polyline', 'spline') and (r.get('symmetry') or {}).get('elements'):
                     return _default_stroke_template(name, values, r).format(**values)
+                if name in ('morph_polyhedron', 'morph_body') and (r.get('symmetry') or {}).get('elements'):
+                    return _default_morph_template(name, values, r).format(**values)
                 return template.format(**values)
     elif kind == 'operation':
         for n, _, template, _ in OPERATIONS:

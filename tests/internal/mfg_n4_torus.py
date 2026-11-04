@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('n4_torus: a torus (ring) of 12 and 4 mm: a smooth part that keeps every rule')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = torus(12, 4, (0, 0, 4))
+part = torus(12, 4, position=(0, 0, 4))
 lo, hi = (-18, -18, -3), (18, 18, 11)
 res = control(t, part, lo, hi, 'torus')
 

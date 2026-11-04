@@ -20,9 +20,9 @@ t = Table('g6_gap_thresholds: slots 0.3, 0.37, 0.39, 0.41 and 0.5 mm wide, for a
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 widths = [0.3, 0.37, 0.39, 0.41, 0.5]
-block = box((0, 0, 0), (40, 10, 6))
+block = box((40, 10, 6), position=(20, 5, 3))
 for k, w in enumerate(widths):
-    block = difference(block, box((4 + 8 * k, -1, 1), (4 + 8 * k + w, 11, 7)))
+    block = difference(block, box(((4 + 8 * k + w) - (4 + 8 * k), 12, 6), position=(((4 + 8 * k) + (4 + 8 * k + w)) / 2, 5, 4)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_gap=0.4)
 lo, hi = (-2, -2, -2), (42, 12, 8)

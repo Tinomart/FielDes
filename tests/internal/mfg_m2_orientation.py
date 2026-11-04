@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('m2_orientation: the same thin wall (0.6 mm, a 0.8 mm wall asked) turned about the vertical axis and tilted, 12 ways: does the tool care which way a wall faces?')
 
 # THE PART: one wall 0.6 mm thick, 16 long and 24 high, its middle at the origin; it is turned and tilted 12 ways and put at 12 places of one picture
-wall = box((-0.3, -8, -12), (0.3, 8, 12))
+wall = box((0.6, 16, 24))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)

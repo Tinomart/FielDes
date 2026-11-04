@@ -17,8 +17,14 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <unordered_map>
+#include <tuple>
+#include <unordered_set>
 #include <algorithm>
 #include <chrono>
+#include <atomic>
+#include <mutex>
+#include <set>
 #include <thread>
 #include <QDateTime>
 #include <cstdlib>
@@ -36,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -96,6 +103,228 @@ Shape::Shape(const libfive::Tree& t,
             this, &Shape::onFutureFinished);
 }
 
+// A field that is not negative anywhere (the field of a surface: zero on the sheet, the distance to it elsewhere) has no inside to find the sheet by.  It is drawn by its zero set all the same:
+// the thin shell that is within a cell of the sheet is meshed, as any body is, and every vertex of it is carried onto the sheet along the field's own gradient.  What comes of it is the sheet
+// A part that is placed turned is meshed in its own frame, so that its mesh does not depend on how it stands (the user, 2026-11-04: "the meshing does not follow the direction of the body either, so they body is
+// meshes differently when it is rotated. That should not be the case ever."): the field the mesher sees is the placed field taken through the part's own placement, which gives the part as it was made, upright and
+// at its own size, and the finished mesh is carried into the world by the same placement.  Where the part is not turned, nothing changes
+static libfive::Tree inFrame(const libfive::Tree& t, const QMatrix4x4& M)
+{
+    auto row = [&](int r) {
+        return libfive::Tree(double(M(r, 0))) * libfive::Tree::X() + libfive::Tree(double(M(r, 1))) * libfive::Tree::Y() +
+               libfive::Tree(double(M(r, 2))) * libfive::Tree::Z() + libfive::Tree(double(M(r, 3)));
+    };
+    return t.remap(row(0), row(1), row(2));
+}
+
+static libfive::Region<3> localRegion(const libfive::Region<3>& region, const QMatrix4x4& Mi)
+{
+    Eigen::Vector3d lo(1e30, 1e30, 1e30), hi(-1e30, -1e30, -1e30);
+    for (int c = 0; c < 8; ++c)
+    {
+        const QVector3D corner((c & 1) ? float(region.upper.x()) : float(region.lower.x()), (c & 2) ? float(region.upper.y()) : float(region.lower.y()),
+                               (c & 4) ? float(region.upper.z()) : float(region.lower.z()));
+        const QVector3D q = Mi.map(corner);
+        for (int a = 0; a < 3; ++a)
+        {
+            lo[a] = std::min(lo[a], double(q[a]));
+            hi[a] = std::max(hi[a], double(q[a]));
+        }
+    }
+    libfive::Region<3> out = region;
+    out.lower = lo;
+    out.upper = hi;
+    return out;
+}
+
+// The region a turned part is meshed over, made so that its cells are the cells the same part has upright (the user, 2026-11-04, H146, "When you rotate an object ... its resolution changes"): the mesher
+// cuts a region into halves until a cell is no bigger than the feature size, so its cell is the side of the region over a power of two -- and the region of a turned part in its own frame is the
+// world's region turned, a bigger box, whose cell comes out on another power of two (the same cylinder had 47738 points of its surface upright and 29468 turned).  The cell of the world's region is
+// taken (`refSide` over the power of two that gets it below `minFeature`), and the region is a cube round the box, of that cell times a power of two, so the mesher ends on the same cell
+static libfive::Region<3> sameCellRegion(const libfive::Region<3>& local, double refSide, double minFeature)
+{
+    // (the cell is `minFeature` itself, whatever the scene's region is -- the user, 2026-11-04, H146, after the first try went the other way when the region grew with the turn: "It should just be
+    // dependent on the [part], so it measures the same value for the geometries, no matter the rotation".  The side of the cube is `minFeature` times a power of two, so the mesher ends on a cell of
+    // exactly `minFeature`; `refSide` is no longer used)
+    (void)refSide;
+    if (!(minFeature > 0)) return local;
+    const double need = double((local.upper - local.lower).maxCoeff());
+    const int k = std::max(0, int(std::ceil(std::log2(std::max(need, minFeature) / minFeature) - 1e-9)));
+    const double side = minFeature * std::ldexp(1.0, k);
+    const Eigen::Vector3d c = 0.5 * (local.lower + local.upper);
+    libfive::Region<3> out = local;
+    out.lower = c - Eigen::Vector3d::Constant(0.5 * side);
+    out.upper = c + Eigen::Vector3d::Constant(0.5 * side);
+    return out;
+}
+
+static void intoWorld(std::unique_ptr<libfive::Mesh>& m, const QMatrix4x4& M)
+{
+    if (!m) return;
+    for (auto& v : m->verts)
+    {
+        const QVector3D w = M.map(QVector3D(v.x(), v.y(), v.z()));
+        v = Eigen::Vector3f(w.x(), w.y(), w.z());
+    }
+}
+
+bool Shape::ownFrame(QMatrix4x4& M) const
+{
+    if (!m_gizmo.present || m_flat || has_deform || m_isPoint || hasControls() || hasSweep() || hasPrism() || hasMorph() || !m_steps.empty() || m_exact) return false;
+    const GizmoNumbers now = gizmoNumbersIn(vars);
+    bool turned = false;
+    for (int a = 0; a < 3; ++a) turned = turned || std::fabs(std::remainder(now.rotate[a], 360.0f)) > 1e-4f;
+    if (!turned) return false;
+    M = gizmoMatrix(now.move, now.rotate, now.scale);
+    bool ok = false;
+    M.inverted(&ok);
+    return ok && std::fabs(M.determinant()) > 1e-12f;
+}
+
+std::unique_ptr<libfive::Mesh> Shape::renderInOwnFrame(const libfive::Region<3>& region)
+{
+    QMatrix4x4 M;
+    if (!ownFrame(M)) return libfive::Mesh::render(es.data(), sameCellRegion(region, 0, double(mesh_settings.min_feature)), mesh_settings);
+    ensureField();
+    const QMatrix4x4 Mi = M.inverted();
+    const auto savedFeature = mesh_settings.min_feature;
+    mesh_settings.min_feature = savedFeature / std::cbrt(std::fabs(double(M.determinant())));          // (the cell of the part's own size)
+    const libfive::Tree local = inFrame(tree, M);
+    std::vector<libfive::Evaluator> ev;
+    ev.reserve(8);
+    for (unsigned i = 0; i < 8; ++i) ev.emplace_back(local, vars);
+    const double refLocal = double((region.upper - region.lower).maxCoeff()) / std::cbrt(std::fabs(double(M.determinant())));
+    auto m = libfive::Mesh::render(ev.data(), sameCellRegion(localRegion(region, Mi), refLocal, double(mesh_settings.min_feature)), mesh_settings);
+    mesh_settings.min_feature = savedFeature;
+    intoWorld(m, M);
+    return m;
+}
+
+std::unique_ptr<libfive::Mesh> Shape::unsignedMesh(const libfive::Region<3>& region)
+{
+    ensureField();
+    QMatrix4x4 M;
+    if (!ownFrame(M)) return unsignedMeshWith(sameCellRegion(region, 0, double(mesh_settings.min_feature)), tree, m_facing, mesh_settings);
+    const QMatrix4x4 Mi = M.inverted();
+    const auto savedFeature = mesh_settings.min_feature;
+    mesh_settings.min_feature = savedFeature / std::cbrt(std::fabs(double(M.determinant())));          // (the cell of the part's own size)
+    const libfive::Tree T = inFrame(tree, M);
+    const libfive::Tree F = m_facing.is_valid() ? inFrame(m_facing, M) : m_facing;
+    const double refLocal = double((region.upper - region.lower).maxCoeff()) / std::cbrt(std::fabs(double(M.determinant())));
+    auto m = unsignedMeshWith(sameCellRegion(localRegion(region, Mi), refLocal, double(mesh_settings.min_feature)), T, F, mesh_settings);
+    mesh_settings.min_feature = savedFeature;
+    intoWorld(m, M);
+    return m;
+}
+
+std::unique_ptr<libfive::Mesh> Shape::unsignedMeshWith(const libfive::Region<3>& region, const libfive::Tree& T, const libfive::Tree& F, const libfive::BRepSettings& settings)
+{
+    ensureField();
+    // (the field is the distance to the sheet only where the sheet is flat: where it is steep -- a wave of a big amplitude -- the field grows |grad| times faster than the distance, so a shell cut at a fixed
+    // value of it is |grad| times thinner in space, its two layers fall in one cell and the sheet tears into strips (measured: a wave of amplitude 6 and period 10, drawn in strips with gaps, and the same after
+    // a handle drag, the user, 2026-11-04).  The steepest |grad| found at a spread of places of the region thickens the cut by that much, so the shell is as thick in space on a steep sheet as on a flat one)
+    float steep = 1.0f;
+    {
+        libfive::JacobianEvaluator probe(T, vars);
+        const Eigen::Vector3f lo(float(region.lower.x()), float(region.lower.y()), float(region.lower.z()));
+        const Eigen::Vector3f hi(float(region.upper.x()), float(region.upper.y()), float(region.upper.z()));
+        for (int k = 0; k < 2048; ++k)
+        {
+            // (a low-discrepancy spread, so that no period of a wave is sampled at one phase only)
+            const float fx = std::fmod(0.5f + float(k) * 0.7548777f, 1.0f), fy = std::fmod(0.5f + float(k) * 0.5698403f, 1.0f), fz = std::fmod(0.5f + float(k) * 0.4301597f, 1.0f);
+            const Eigen::Vector3f p = lo + (hi - lo).cwiseProduct(Eigen::Vector3f(fx, fy, fz));
+            const auto vt = probe.valueAndPush(p);
+            const auto g = probe.deriv(p, *vt.second);
+            const float len = std::sqrt(g.x() * g.x() + g.y() * g.y() + g.z() * g.z());
+            if (std::isfinite(len)) steep = std::max(steep, len);
+        }
+        steep = std::min(steep, 8.0f);
+    }
+    const libfive::Tree shell = T - libfive::Tree(1.75 * double(settings.min_feature) * double(steep));          // (a shell that is two cells thick or more: its two layers are not in one cell)
+    std::vector<libfive::Evaluator> ev;
+    ev.reserve(8);
+    for (unsigned i = 0; i < 8; ++i) ev.emplace_back(shell, vars);
+    auto m = libfive::Mesh::render(ev.data(), region, settings);
+    if (!m) return m;
+    libfive::JacobianEvaluator j(T, vars);
+    const std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>> shellVerts(m->verts.begin(), m->verts.end());
+    for (auto& v : m->verts)
+    {
+        Eigen::Vector3f p = v;
+        for (int it = 0; it < 4; ++it)
+        {
+            const auto vt = j.valueAndPush(p);
+            const auto g = j.deriv(p, *vt.second);
+            const Eigen::Vector3f gd(g.x(), g.y(), g.z());
+            const float g2 = gd.squaredNorm();
+            if (!std::isfinite(g2) || !(g2 > 1e-12f) || !std::isfinite(vt.first)) break;
+            p -= gd * (vt.first / g2);
+        }
+        v = p;
+    }
+    // The shell has two layers that are now one on the other (the side of the sheet above and the side below), and a rim that has become the edge.  One layer is the sheet: a vertex says which side of the
+    // sheet it was on by the direction it was carried in; a triangle whose corners were carried in different directions is a piece of the rim; the pieces that are left, joined by their corners,
+    // are the layers, and the biggest is drawn
+    const size_t N = m->verts.size();
+    if (F.is_valid())
+    {
+        // The layer is said by the sheet's own signed field: a vertex of the shell is on the side of the sheet where that field is positive or where it is negative, and the layer that is drawn is the positive one --
+        // every triangle with its three corners there.  A triangle across the rim has corners on both sides and goes with the other layer.  Nothing is joined into pieces and no piece is dropped, so the sheet cannot
+        // lose a part of itself, and what is left of the mesh is never both layers (the user, 2026-11-04: "the rendering is so unstable that it often just disappears or doesnt render its parts")
+        libfive::JacobianEvaluator jf(F, vars);
+        std::vector<char> positive(N, 0);
+        for (size_t i = 0; i < N; ++i)
+        {
+            const auto vt = jf.valueAndPush(shellVerts[i]);
+            positive[i] = (std::isfinite(vt.first) && vt.first > 0.0f) ? 1 : 0;
+        }
+        std::vector<Eigen::Matrix<uint32_t, 3, 1>, Eigen::aligned_allocator<Eigen::Matrix<uint32_t, 3, 1>>> layer;
+        for (const auto& tri : m->branes)
+            if (positive[tri[0]] && positive[tri[1]] && positive[tri[2]]) layer.push_back(tri);
+        if (!layer.empty())
+        {
+            m->branes = std::move(layer);
+            return m;
+        }
+    }
+    std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>> way(N, Eigen::Vector3f::Zero());
+    for (size_t i = 0; i < N; ++i)
+    {
+        const Eigen::Vector3f d = shellVerts[i] - m->verts[i];
+        const float len = d.norm();
+        if (len > 1e-12f) way[i] = d / len;
+    }
+    std::vector<uint32_t> parent(N);
+    for (size_t i = 0; i < N; ++i) parent[i] = uint32_t(i);
+    auto find = [&](uint32_t a) {
+        while (parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+        return a;
+    };
+    std::vector<char> kept(m->branes.size(), 0);
+    for (size_t k = 0; k < m->branes.size(); ++k)
+    {
+        const auto& tri = m->branes[k];
+        const Eigen::Vector3f &a = way[tri[0]], &b = way[tri[1]], &c = way[tri[2]];
+        if (!(a.squaredNorm() > 0.5f && b.squaredNorm() > 0.5f && c.squaredNorm() > 0.5f)) continue;
+        if (a.dot(b) < 0.9f || b.dot(c) < 0.9f || c.dot(a) < 0.9f) continue;
+        kept[k] = 1;
+        parent[find(tri[0])] = find(tri[1]);
+        parent[find(tri[1])] = find(tri[2]);
+    }
+    std::map<uint32_t, size_t> size;
+    for (size_t k = 0; k < m->branes.size(); ++k)
+        if (kept[k]) ++size[find(m->branes[k][0])];
+    if (size.empty()) return m;
+    uint32_t biggest = size.begin()->first;
+    for (const auto& kv : size)
+        if (kv.second > size[biggest]) biggest = kv.first;
+    std::vector<Eigen::Matrix<uint32_t, 3, 1>, Eigen::aligned_allocator<Eigen::Matrix<uint32_t, 3, 1>>> one;
+    for (size_t k = 0; k < m->branes.size(); ++k)
+        if (kept[k] && find(m->branes[k][0]) == biggest) one.push_back(m->branes[k]);
+    m->branes = std::move(one);
+    return m;
+}
+
 void Shape::ensureField() const
 {
     if (!m_field_ready.load()) const_cast<Shape*>(this)->buildField();
@@ -121,7 +350,8 @@ void Shape::buildField()
 
 void Shape::settleField()
 {
-    if (!drawnFromNumbers()) ensureField();
+    // (a point is drawn as a dot from its numbers: the optimized tree and the eight evaluators, 5 ms each, were made for each of the 884 points of an import on the thread of the window; whatever reads a field calls ensureField)
+    if (!drawnFromNumbers() && !isPoint()) ensureField();
 }
 
 Shape::~Shape()
@@ -330,8 +560,50 @@ bool Shape::dotPosition(QVector3D& p) const
     return false;
 }
 
+bool Shape::carriesParts() const
+{
+    if (m_locked || m_gizmo.present) return false;
+    for (const Gizmo& g : m_carried)
+    {
+        for (int a = 0; a < 3; ++a)
+        {
+            if (g.move[a] && vars.count(g.move[a])) return true;
+        }
+    }
+    return false;
+}
+
+QVector3D Shape::carriedPivotOf(const Gizmo& g) const
+{
+    QVector3D move;
+    for (int a = 0; a < 3; ++a)
+    {
+        const auto it = g.move[a] ? vars.find(g.move[a]) : vars.end();
+        move[a] = it != vars.end() ? it->second : 0.0f;
+    }
+    return g.about + move;
+}
+
+QVector3D Shape::carriedPivot() const
+{
+    QVector3D lo, hi;
+    bool first = true;
+    for (const Gizmo& g : m_carried)
+    {
+        bool moves = false;
+        for (int a = 0; a < 3; ++a) moves = moves || (g.move[a] && vars.count(g.move[a]));
+        if (!moves) continue;
+        const QVector3D P = carriedPivotOf(g);
+        lo = first ? P : QVector3D(std::min(lo.x(), P.x()), std::min(lo.y(), P.y()), std::min(lo.z(), P.z()));
+        hi = first ? P : QVector3D(std::max(hi.x(), P.x()), std::max(hi.y(), P.y()), std::max(hi.z(), P.z()));
+        first = false;
+    }
+    return first ? QVector3D() : 0.5f * (lo + hi);
+}
+
 bool Shape::hasMoveVars() const
 {
+    if (carriesParts()) return true;
     if (m_locked || !m_gizmo.present || m_gizmo.hidden) return false;
     for (int a = 0; a < 3; ++a)
     {
@@ -560,6 +832,47 @@ bool Shape::prismWallAt(const QVector3D& press, PrismWall& out) const
     if (out.vars.empty()) return false;
     out.direction = QVector3D(float(direction.x()), float(direction.y()), float(direction.z()));
     out.planeNormal = QVector3D(float(n.x()), float(n.y()), float(n.z()));
+    out.scales.clear();
+    return true;
+}
+
+bool Shape::prismEndAt(const QVector3D& press, PrismWall& out, bool needNumber) const
+{
+    // The END FACE of the prism that a press is on, for pulling its length (the user, E1: "the handles to drag the extrusion just straight up dont work").  The field of an extrusion of a profile of
+    // points is a mesh with a and b baked in, so the general pull of a surface has no number to follow (the kernel gives a mesh no slope along a variable); the end is pulled by its own number as a wall
+    // is: the face moves along the normal of the plane of the profile, and a (or b) changes by exactly that move.  False where the press is not on an end, or where that end is not a number of its
+    // own (a number or an expression in the call): the pull of a surface is what is left then
+    std::vector<libfive::pointshapes::Control> cs;
+    double a = 0, b = 0;
+    if (!prismNow(vars, cs, a, b)) return false;
+    std::vector<Eigen::Vector3d> where;
+    for (const auto& c : cs) where.push_back(c.pos);
+    double frame[9];
+    if (!libfive::pointshapes::planeOf(where, frame)) return false;
+    const Eigen::Vector3d o(frame[0], frame[1], frame[2]), u(frame[3], frame[4], frame[5]), w(frame[6], frame[7], frame[8]);
+    const Eigen::Vector3d n = u.cross(w).normalized();
+    const double height = n.dot(Eigen::Vector3d(press.x(), press.y(), press.z()) - o);
+    const double lo = std::min(a, b), hi = std::max(a, b);
+    if (!(hi - lo > 1e-9)) return false;
+    const double tol = 0.05 * (hi - lo) + 1e-4;                       // (the same width as prismWallAt: what is not a wall is an end)
+    const bool atA = std::fabs(height - a) <= tol, atB = std::fabs(height - b) <= tol;
+    if (!atA && !atB) return false;
+    if (!needNumber) return true;                                       // (a held press only asks whether it is on an end: the number may not be there yet, see View::replayEndPress)
+    const libfive::Tree& end = (atB && (!atA || std::fabs(height - b) <= std::fabs(height - a))) ? m_prism_b : m_prism_a;
+    // (a number of its own: the end is a variable of the script itself -- the var() that handles(extrusion, [a, b]) wrote -- and not an expression of one)
+    if (!end.is_valid() || vars.find(end.id()) == vars.end()) return false;
+    int axis = 0;
+    for (int i = 1; i < 3; ++i)
+    {
+        if (std::fabs(n[i]) > std::fabs(n[axis])) axis = i;
+    }
+    if (!(std::fabs(n[axis]) > 0.2)) return false;
+    out.vars.clear();
+    out.scales.clear();
+    out.vars.push_back({end.id(), axis});
+    out.scales.push_back(float(1.0 / n[axis]));                       // (the move along n has n[axis] of it on that axis: the number changes by the move along n)
+    out.direction = QVector3D(float(n.x()), float(n.y()), float(n.z()));
+    out.planeNormal = out.direction;
     return true;
 }
 
@@ -585,8 +898,9 @@ void Shape::setSweep(std::vector<ControlPoint> profile, bool profileDefault, std
 struct Shape::SweepNumbers
 {
     std::vector<libfive::pointshapes::Control> profile, path;
-    bool profileDefault = false, pathDefault = false, closed = false, placed = false, free = false;
+    bool profileDefault = false, pathDefault = false, closed = false, placed = false, free = false, plain = false;          // (plain: the profile carried along the path, nothing taken out -- what the viewport draws; the field gets the cleaned mesh)
     double twist = 0;                                                       // (degrees)
+    int steps = 14;                                                         // (the pieces a piece of a curve is cut in, for the outline and the path: follows the scene's resolution, see curveSteps)
     Eigen::Vector3d about = Eigen::Vector3d::Zero(), move = Eigen::Vector3d::Zero(), rotate = Eigen::Vector3d::Zero(), scale = Eigen::Vector3d::Ones();
 };
 
@@ -623,8 +937,298 @@ bool Shape::sweepNow(const std::map<libfive::Tree::Id, float>& v, SweepNumbers& 
     return true;
 }
 
+void Shape::setMorph(std::vector<libfive::Tree> controls, std::vector<uint32_t> recipeStart, std::vector<uint32_t> recipeControl, std::vector<double> recipeWeight, std::vector<uint32_t> triangles)
+{
+    m_morph_controls = std::move(controls);
+    m_morph_recipe_start = std::move(recipeStart);
+    m_morph_recipe_control = std::move(recipeControl);
+    m_morph_recipe_weight = std::move(recipeWeight);
+    m_morph_triangles = std::move(triangles);
+    std::lock_guard<std::mutex> lock(m_morph_mutex);
+    m_morph_eval.reset();
+    m_morph_last.clear();
+    m_morph_plan.reset();
+    m_morph_plan_failed = false;
+}
+
+namespace
+{
+// The numbers of the control points of a body of points, worked out DIRECTLY (H68, the user, 2026-11-02: "Also dragging Points out of the side STILL LAGS THE ENTIRE PROGRAM ... FIX THAT. IT IS VERY IMPORTANT"):
+// the expressions of all the control points are walked once (every distinct node once, leaves to root) into a list of plain operations, and a step of a drag runs through that list with the numbers of the
+// variables.  What was done before -- ONE tree, the sum over k of hat(x - k) times number k, read in batches of the evaluator's width -- ran through the WHOLE tape for each batch, so that the cost of a step went
+// with the square of the number of control points.
+struct MorphPlan
+{
+    struct Node
+    {
+        int op = 0;
+        int a = -1;
+        int b = -1;
+        double value = 0.0;
+    };
+    std::vector<Node> nodes;
+    std::vector<std::pair<int, libfive::Tree::Id>> vars;       // (the node of each variable, and its id)
+    std::vector<int> output;                                   // (the node of each number of the control points: three to a control point)
+    std::vector<double> value;
+};
+
+// The nodes of the expression `root` that are not in `slot` yet, leaves first, each once.  The walk goes only into nodes that are new, so the part that the expressions of many control points have in common
+// is entered once in all and not once for each of them: `root.walk()` for each of 432 control points of a smooth body went over its 42 000 nodes again and again and took about 600 ms (the log of the window:
+// "direct reading: 41490 operations for 1296 numbers" and the body drawn 615 ms into the level; the user, 2026-11-02, H70).  False for an operation the direct reading does not do
+bool newNodes(const libfive::Tree& root, const std::unordered_map<const void*, int>& slot, std::vector<const libfive::Tree::Data*>& order)
+{
+    namespace Op = libfive::Opcode;
+    std::unordered_map<const void*, char> seen;
+    std::vector<std::pair<const libfive::Tree::Data*, bool>> todo;          // (a node, and whether its operands have been put on the list: it is put in the order when it comes up again)
+    todo.emplace_back(root.get(), false);
+    while (!todo.empty())
+    {
+        const libfive::Tree::Data* d = todo.back().first;
+        const bool expanded = todo.back().second;
+        todo.pop_back();
+        if (expanded)
+        {
+            order.push_back(d);
+            continue;
+        }
+        if (slot.count(d) || !seen.emplace(d, 1).second) continue;
+        todo.emplace_back(d, true);
+        switch (d->op())
+        {
+            case Op::CONSTANT: case Op::VAR_FREE: break;
+            case Op::CONST_VAR: case Op::OP_SQUARE: case Op::OP_SQRT: case Op::OP_NEG: case Op::OP_SIN: case Op::OP_COS: case Op::OP_ABS: case Op::OP_RECIP:
+                todo.emplace_back(d->lhs().get(), false);
+                break;
+            case Op::OP_ADD: case Op::OP_SUB: case Op::OP_MUL: case Op::OP_DIV: case Op::OP_MIN: case Op::OP_MAX:
+                todo.emplace_back(d->rhs().get(), false);
+                todo.emplace_back(d->lhs().get(), false);
+                break;
+            default: return false;
+        }
+    }
+    return true;
+}
+
+std::shared_ptr<MorphPlan> makeMorphPlan(const std::vector<libfive::Tree>& controls)
+{
+    namespace Op = libfive::Opcode;
+    auto plan = std::make_shared<MorphPlan>();
+    std::unordered_map<const void*, int> slot;
+    try
+    {
+        for (const libfive::Tree& root : controls)
+        {
+            if (!root.is_valid()) return nullptr;
+            std::vector<const libfive::Tree::Data*> order;
+            if (!newNodes(root, slot, order)) return nullptr;
+            for (const libfive::Tree::Data* d : order)
+            {
+                if (slot.count(d)) continue;
+                MorphPlan::Node n;
+                n.op = int(d->op());
+                switch (d->op())
+                {
+                    case Op::CONSTANT: n.value = double(d->value()); break;
+                    case Op::VAR_FREE: break;
+                    case Op::CONST_VAR: case Op::OP_SQUARE: case Op::OP_SQRT: case Op::OP_NEG: case Op::OP_SIN: case Op::OP_COS: case Op::OP_ABS: case Op::OP_RECIP:
+                        n.a = slot.at(d->lhs().id());
+                        break;
+                    case Op::OP_ADD: case Op::OP_SUB: case Op::OP_MUL: case Op::OP_DIV: case Op::OP_MIN: case Op::OP_MAX:
+                        n.a = slot.at(d->lhs().id());
+                        n.b = slot.at(d->rhs().id());
+                        break;
+                    default: return nullptr;                  // (an operation the direct reading does not do: the evaluator reads them)
+                }
+                const int index = int(plan->nodes.size());
+                slot[d] = index;
+                if (d->op() == Op::VAR_FREE) plan->vars.emplace_back(index, static_cast<libfive::Tree::Id>(d));
+                plan->nodes.push_back(n);
+            }
+            plan->output.push_back(slot.at(root.get()));
+        }
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;
+    }
+    plan->value.assign(plan->nodes.size(), 0.0);
+    for (size_t i = 0; i < plan->nodes.size(); ++i)
+        if (plan->nodes[i].op == int(Op::CONSTANT)) plan->value[i] = plan->nodes[i].value;
+    return plan;
+}
+}
+
+bool Shape::morphDirect(const std::map<libfive::Tree::Id, float>& v, std::vector<Eigen::Vector3d>& at) const
+{
+    namespace Op = libfive::Opcode;
+    static const bool legacy = std::getenv("FIELDES_MORPH_LEGACY") != nullptr;          // (for comparing with the evaluator that read them before)
+    if (legacy || m_morph_plan_failed) return false;
+    if (!m_morph_plan)
+    {
+        std::shared_ptr<MorphPlan> made = makeMorphPlan(m_morph_controls);
+        if (!made)
+        {
+            m_morph_plan_failed = true;
+            return false;
+        }
+        m_morph_plan = made;
+        if (std::getenv("FIELDES_TIMING")) fprintf(stderr, "[morph] direct reading: %zu operations for %zu numbers\n", made->nodes.size(), made->output.size());
+    }
+    MorphPlan& plan = *static_cast<MorphPlan*>(m_morph_plan.get());
+    for (const auto& var : plan.vars)
+    {
+        const auto it = v.find(var.second);
+        if (it == v.end())                                       // (a number the evaluator above would have been told about: it reads them this time)
+        {
+            static bool told = false;
+            if (!told && std::getenv("FIELDES_TIMING")) { told = true; fprintf(stderr, "[morph] direct reading: a variable of the control points is not in the map of numbers (%zu variables in the plan, %zu in the map): the evaluator reads them\n", plan.vars.size(), v.size()); }
+            return false;
+        }
+        plan.value[size_t(var.first)] = double(it->second);
+    }
+    double* val = plan.value.data();
+    const size_t count = plan.nodes.size();
+    for (size_t i = 0; i < count; ++i)
+    {
+        const MorphPlan::Node& n = plan.nodes[i];
+        switch (n.op)
+        {
+            case Op::CONSTANT: case Op::VAR_FREE: break;
+            case Op::CONST_VAR: val[i] = val[n.a]; break;
+            case Op::OP_SQUARE: val[i] = val[n.a] * val[n.a]; break;
+            case Op::OP_SQRT: val[i] = std::sqrt(val[n.a]); break;
+            case Op::OP_NEG: val[i] = -val[n.a]; break;
+            case Op::OP_SIN: val[i] = std::sin(val[n.a]); break;
+            case Op::OP_COS: val[i] = std::cos(val[n.a]); break;
+            case Op::OP_ABS: val[i] = std::fabs(val[n.a]); break;
+            case Op::OP_RECIP: val[i] = 1.0 / val[n.a]; break;
+            case Op::OP_ADD: val[i] = val[n.a] + val[n.b]; break;
+            case Op::OP_SUB: val[i] = val[n.a] - val[n.b]; break;
+            case Op::OP_MUL: val[i] = val[n.a] * val[n.b]; break;
+            case Op::OP_DIV: val[i] = val[n.a] / val[n.b]; break;
+            case Op::OP_MIN: val[i] = val[n.a] < val[n.b] ? val[n.a] : val[n.b]; break;
+            case Op::OP_MAX: val[i] = val[n.a] > val[n.b] ? val[n.a] : val[n.b]; break;
+            default: return false;
+        }
+    }
+    for (size_t k = 0; k < plan.output.size(); ++k)
+    {
+        const double x = val[plan.output[k]];
+        if (!std::isfinite(x)) return false;
+        at[k / 3][int(k % 3)] = x;
+    }
+    return true;
+}
+
+bool Shape::morphNow(const std::map<libfive::Tree::Id, float>& v, std::vector<Eigen::Vector3f>& out) const
+{
+    static const bool off = std::getenv("FIELDES_NO_NATIVE") != nullptr;          // (for comparing with the field: every body of points is meshed from its field)
+    if (off || !hasMorph()) return false;
+    // (what colours or bends the shape is not a body of points' to draw)
+    if (color_field.is_valid() || has_result || !m_channels.empty()) return false;
+    // (each control point of the patches is worked out once; a vertex of the surface is a sum of a few of them, each times its weight)
+    const size_t controls = m_morph_controls.size() / 3;
+    std::vector<Eigen::Vector3d> at(controls);
+    {
+        // All the numbers of all the control points are the places (k, 0, 0) of ONE tree: the sum over k of hat(x - k) times number k, hat(d) = max(0, 1 - |d|), which is 1 at the whole number k and 0 at every
+        // other whole number.  The tree and its evaluator are made once and kept: a step of a drag tells it the numbers that changed (setVar) and reads all of them in one pass over its tape, in batches
+        // of the evaluator's width.  What was done before -- an evaluator for each number, built and zeroed again at each step -- cost 425 to 620 ms for a body of eight spline points.
+        std::lock_guard<std::mutex> lock(m_morph_mutex);
+        const bool direct = morphDirect(v, at);
+        if (!direct)
+        {
+        using Evaluator = libfive::ArrayEvaluator;
+        int changedNumbers = 0;                 // (how many numbers this step told the evaluator: with FIELDES_TIMING it is printed, to see whether the ring of an influence is among them)
+        // (the evaluator is made again only when a number that the control points are made of was not told to it -- not whenever the map has another size: the map of a drag can hold numbers of other things,
+        // and a first step that made the evaluator again cost 200 to 770 ms, measured in the timing logs of the window runs: the lag at the start of a drag, the user, 2026-11-02, H56)
+        bool remake = !m_morph_eval;
+        if (!remake)
+        {
+            for (const auto& kv : v)
+            {
+                if (m_morph_last.count(kv.first)) continue;
+                buildDeps();
+                if (m_deps.count(kv.first)) { remake = true; break; }
+            }
+        }
+        if (remake)
+        {
+            libfive::Tree sum = libfive::Tree(0.0);
+            for (size_t k = 0; k < m_morph_controls.size(); ++k)
+            {
+                const libfive::Tree hat = libfive::max(libfive::Tree(0.0), libfive::Tree(1.0) - libfive::abs(libfive::Tree::X() - libfive::Tree(double(k))));
+                sum = sum + hat * m_morph_controls[k];
+            }
+            m_morph_eval = std::make_shared<Evaluator>(sum, v);
+            m_morph_last = v;
+        }
+        else
+        {
+            Evaluator* e = static_cast<Evaluator*>(m_morph_eval.get());
+            for (const auto& kv : v)
+            {
+                auto it = m_morph_last.find(kv.first);
+                if (it == m_morph_last.end())
+                {
+                    m_morph_last[kv.first] = kv.second;           // (a number the control points are not made of: nothing to tell the evaluator)
+                    continue;
+                }
+                if (it->second != kv.second)
+                {
+                    e->setVar(kv.first, kv.second);
+                    m_morph_last[kv.first] = kv.second;
+                    ++changedNumbers;
+                }
+            }
+        }
+        if (changedNumbers > 0 && std::getenv("FIELDES_TIMING")) fprintf(stderr, "[morph] a step changed %d numbers\n", changedNumbers);
+        Evaluator* e = static_cast<Evaluator*>(m_morph_eval.get());
+        const size_t total = m_morph_controls.size();
+        for (size_t start = 0; start < total; start += Evaluator::N)
+        {
+            const size_t count = std::min<size_t>(Evaluator::N, total - start);
+            for (size_t j = 0; j < count; ++j) e->set(Eigen::Vector3f(float(start + j), 0.0f, 0.0f), j);
+            const auto values = e->values(count);
+            for (size_t j = 0; j < count; ++j)
+            {
+                const size_t k = start + j;
+                const double x = double(values(Eigen::Index(j)));
+                if (!std::isfinite(x)) return false;
+                at[k / 3][int(k % 3)] = x;
+            }
+        }
+        }       // (the evaluator above reads them only when the direct reading could not)
+    }
+    const size_t count = m_morph_recipe_start.size() - 1;
+    out.resize(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+        for (uint32_t k = m_morph_recipe_start[i]; k < m_morph_recipe_start[i + 1]; ++k) sum += m_morph_recipe_weight[k] * at[m_morph_recipe_control[k]];
+        out[i] = Eigen::Vector3f(float(sum.x()), float(sum.y()), float(sum.z()));
+    }
+    return true;
+}
+
+// The mesh of a body of points: the vertices of its surface as the numbers are now, and the triangles between them (the library wrote them counterclockwise seen from outside)
+std::unique_ptr<libfive::Mesh> Shape::morphMesh(const std::vector<Eigen::Vector3f>& vertices, const std::vector<uint32_t>& triangles)
+{
+    auto out = std::make_unique<libfive::Mesh>();
+    // (the first vertex of a libfive mesh is nobody's: the vertices start after it, and so do the indices of the triangles)
+    const uint32_t off = uint32_t(out->verts.size());
+    for (const auto& p : vertices) out->verts.push_back(p);
+    using Tri = Eigen::Matrix<uint32_t, 3, 1>;
+    for (size_t t = 0; t + 2 < triangles.size(); t += 3)
+    {
+        if (triangles[t] >= vertices.size() || triangles[t + 1] >= vertices.size() || triangles[t + 2] >= vertices.size()) return nullptr;
+        out->branes.push_back(Tri(off + triangles[t], off + triangles[t + 1], off + triangles[t + 2]));
+    }
+    return out;
+}
+
 bool Shape::drawnFromNumbers() const
 {
+    if (hasMorph()) return !(color_field.is_valid() || has_result || !m_channels.empty());
     if (hasPrism())
     {
         std::vector<libfive::pointshapes::Control> cs;
@@ -639,11 +1243,62 @@ bool Shape::drawnFromNumbers() const
     return false;
 }
 
+// How many pieces a piece of a curve is cut in when a shape is drawn from the numbers of its points (the sweep, the prism): 14 at the scene's resolution 10, in proportion to it -- so that the resolution
+// says how fine they are drawn, as it does for a shape that is meshed from its field, and as it does for a body of points (the user, 2026-11-02: "The path extrude ALSO DOES NOT REACT TO THE RESOLUTION",
+// "you should have inferred that when you fixed it for morph shapes that that applies TO EVERYTHING").  At least 6, at most 40
+static int curveSteps(double sceneResolution)
+{
+    if (!(sceneResolution > 0)) return 14;
+    return std::max(6, std::min(40, int(std::lround(14.0 * sceneResolution / 10.0))));
+}
+
 // The mesh of a sweep: the outline of the profile (from the middle of its box) carried along the path, a ring of it at both ends of every piece of the path -- in the frame
 // that piece has (the one the field of `path_extrude` has: carried along without turning about the path, turned by the points' rotations, scaled by their thickness) and cut
 // by the planes that bisect the corners (square at the ends of an open path) -- and the walls between the rings; the profile's face closes an open path's ends
+// THE FIELD OF A SWEEP AND OF A PRISM (H63, the user, 2026-11-02: "UNDERLYING SHOULD ALWAYS BE A FUNCTIONING FIELD THAT CAN BE INTERACTED WITH PROPERLY", and of the field of the path extrude: "THAT THE FIELD IS WAY TOO HEAVY
+// AND YOU SHOULD IMPROVE IT ... I ACTUALLY MENTIONED SPECIFICALLY THAT YOU SHOULD IMPROVE THE PATH EXTRUDE AS WELL"): the mesh that the viewport draws a path extrude or an extrude from, as the vertices and triangles that
+// libfive_mesh_from_arrays makes the exact distance field of the triangles of -- the field of a body of points is made so (morph.py _native_field).  An operation on the shape (a union, an offset, round_edges, the selection
+// of an edge) reads that field, and the expression of the shape is not meshed.  The numbers are those the script has when it runs: a number that is dragged moves the picture of the viewport at once, and the field when the script
+// runs again, as it does for a body of points
+bool Shape::nativeMeshArrays(const std::map<libfive::Tree::Id, float>& v, std::vector<float>& xyz, std::vector<uint32_t>& tri) const
+{
+    std::unique_ptr<libfive::Mesh> m;
+    if (hasSweep())
+    {
+        SweepNumbers sn;
+        if (sweepNow(v, sn))
+        {
+            sn.steps = curveSteps(20.0);
+            m = sweepMesh(sn);
+        }
+    }
+    else if (hasPrism())
+    {
+        std::vector<libfive::pointshapes::Control> cs;
+        double a = 0.0, b = 0.0;
+        if (prismNow(v, cs, a, b)) m = prismMesh(cs, m_prism_default, a, b, curveSteps(20.0));
+    }
+    if (!m || m->verts.size() < 5 || m->branes.empty()) return false;
+    // (the first vertex of a libfive mesh is nobody's: the vertices start after it, and so do the indices of the triangles)
+    for (size_t i = 1; i < m->verts.size(); ++i)
+    {
+        xyz.push_back(m->verts[i].x());
+        xyz.push_back(m->verts[i].y());
+        xyz.push_back(m->verts[i].z());
+    }
+    for (const auto& t : m->branes)
+    {
+        if (t[0] == 0 || t[1] == 0 || t[2] == 0) continue;
+        tri.push_back(t[0] - 1);
+        tri.push_back(t[1] - 1);
+        tri.push_back(t[2] - 1);
+    }
+    return !tri.empty();
+}
+
 std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
 {
+    const auto sweepStart = std::chrono::steady_clock::now();          // (the time of one sweep, printed at its end under FIELDES_SWEEP_DEBUG or FIELDES_TIMING: what a frame of a drag of a swept shape costs -- 2026-11-03, H52c: the cut made it 1.3 s and nothing showed in the log)
     using Vec = Eigen::Vector3d;
     // The profile in the coordinates of its own plane, from the middle of the box of its outline
     std::vector<Vec> where;
@@ -652,7 +1307,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
     double frame[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
     if (!in.free && !libfive::pointshapes::planeOf(where, frame)) return nullptr;
     const Vec o(frame[0], frame[1], frame[2]), pu(frame[3], frame[4], frame[5]), pv(frame[6], frame[7], frame[8]);
-    const auto outline = libfive::pointshapes::polyline(in.profile, in.profileDefault, true, 14);
+    const auto outline = libfive::pointshapes::polyline(in.profile, in.profileDefault, true, in.steps);
     if (outline.size() < 3) return nullptr;
     std::vector<Eigen::Vector2d> prof;
     double lox = 1e300, hix = -1e300, loy = 1e300, hiy = -1e300;
@@ -683,7 +1338,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
 
     // The path
     std::vector<std::pair<int, double>> owners;
-    auto V = libfive::pointshapes::polyline(in.path, in.pathDefault, in.closed, 14, &owners);
+    auto V = libfive::pointshapes::polyline(in.path, in.pathDefault, in.closed, in.steps, &owners);
     const int n = int(V.size());
     if (n < 2) return nullptr;
     // The sweep starts at the profile: the path says how it travels, not where from.  The first point of the path is the middle of the box of the profile (path_extrude of profile.py
@@ -702,6 +1357,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
         const double l = d.norm();
         T[size_t(k)] = l > 1e-12 ? Vec(d / l) : (k > 0 ? T[size_t(k - 1)] : Vec(Vec::UnitZ()));
     }
+    // (what a bend does to the section is dealt with below, once the rings are made: the excess material is taken out of them)
     auto tangentAt = [&](int k) -> Vec {
         Vec t;
         if (closed) t = T[size_t((k + pieces - 1) % pieces)] + T[size_t(k % pieces)];
@@ -802,6 +1458,13 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
 
     auto out = std::make_unique<libfive::Mesh>();
     using Tri = Eigen::Matrix<uint32_t, 3, 1>;
+    // The rings.  Two pieces that meet at a vertex of the path each have a ring there -- the profile in the frame of that piece, slid along the piece onto the plane that bisects the corner -- and the two are the
+    // same only for a profile that is its own mirror image: the frames are carried along the path, not mirrored.  They used to be two sets of vertices, and where they differ the walls of the two pieces cross
+    // or leave a slit: the thin dark lines inside the bends of a horn (measured in a window picture, 2026-11-02; the user, A8: "THERE SHOULD NOT BE A VISUAL INTERRUPTION HERE").  The surface is built on ONE
+    // ring at each vertex of the path -- the mean of the two -- so that it is whole by construction, and the walls of a piece run from the ring at its start to the ring at its end
+    std::vector<Vec> ringStart(size_t(pieces) * E), ringEnd(size_t(pieces) * E);
+    std::vector<double> facingOf(size_t(pieces), 1.0);
+    std::vector<Vec> planeNormal(size_t(pieces), Vec(0.0, 0.0, 1.0));       // (the normal of the plane of the profile in the frame of each piece: the plane of the rings at the ends of the path)
     for (int k = 0; k < pieces; ++k)
     {
         const int j = (k + 1) % n;
@@ -810,11 +1473,12 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
         const Vec Tk = T[size_t(k)];
         const Vec nk = turned(Uf[size_t(k)], Tk, cs, sn), bk = turned(Wf[size_t(k)], Tk, cs, sn);
         // (which way the profile faces along the path: a profile that the path leaves backwards is swept the other way round)
-        const double facing = nk.cross(bk).dot(Tk) >= 0 ? 1.0 : -1.0;
-        const uint32_t base = uint32_t(out->verts.size());
+        facingOf[size_t(k)] = nk.cross(bk).dot(Tk) >= 0 ? 1.0 : -1.0;
+        planeNormal[size_t(k)] = nk.cross(bk).normalized();
         // (the ring at the start of the piece, then the one at its end: the profile in this piece's frame, slid along the piece onto the plane that bisects the corner)
         for (int end = 0; end < 2; ++end)
         {
+            std::vector<Vec>& ring = end == 0 ? ringStart : ringEnd;
             const int at = end == 0 ? k : j;
             const Vec centre = V[size_t(at)];
             const double size = sizeAt(at);
@@ -822,16 +1486,301 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
             const double slope = cut.dot(Tk);
             // (the ends of an open path are the profile itself -- the profile at the start, its copy at the end -- not cut square across the path)
             const bool freeEnd = !closed && ((end == 0 && k == 0) || (end == 1 && k == pieces - 1));
+            size_t i = 0;
             for (const auto& q : prof)
             {
-                Vec p = centre + (nk * q.x() + bk * q.y()) * size;
+                Vec off = (nk * q.x() + bk * q.y()) * size;
+                Vec p = centre + off;
                 if (!freeEnd && std::fabs(slope) > 1e-6) p -= Tk * (cut.dot(p - centre) / slope);
-                out->verts.push_back(Eigen::Vector3f(float(p.x()), float(p.y()), float(p.z())));
+                ring[size_t(k) * E + i] = p;
+                ++i;
             }
         }
+    }
+    // THE EXCESS MATERIAL AT A TIGHT BEND IS TAKEN OUT AND THE SURFACE IS BUILT AROUND IT (the user, 2026-11-02, H52: "THE SOLUTION IS REMOVING THE ACCESS MATERIAL AND BUILDING AROUND IT CLEANLY.  THERE SHOULD NOT BE A
+    // VISUAL INTERRUPTION HERE.  THAT IS THE REQUEST."; H52b: "THE APPROACH IS WRONG ... REDO IT" and "THE ISSUE IS WITH THE TASK THAT WAS GIVEN TO YOU" -- after a cap, a relaxation and a soft limit, which all press the
+    // section to fit the bend and leave the material where it is).  Each point of the profile travels along the path as a line for each piece: its wall in that piece is the stretch of that line between the ring at the
+    // start of the piece and the ring at its end.  Where the section is wider than the bend, the wall of a piece for the points inside the bend runs backwards or has hardly any length: that stretch is the excess, the
+    // material of the section that lies inside the sections of the pieces next to it and is no part of the surface.  It is taken out: the piece has no wall for that point, and the lines of the piece before it and of the
+    // piece after it meet in one point, where both rings have that point (the offset of a polyline with its backward stretches taken out, as the offset of an outline is cleaned).  What stays is the surface of the union
+    // of the sections as far as the pieces next to each other go: no fold, no crease, nothing pressed flat.  The first and the last piece of an open path have nothing on their other side to be joined to; the cut
+    // below holds those
+    if (!in.plain && !std::getenv("FIELDES_SWEEP_RAW"))         // (a measurement: with it set the sweep is drawn as the profile carried along the path, nothing taken out, to put next to the result)
+    {
+        const std::vector<Vec> ringStart0 = ringStart, ringEnd0 = ringEnd;
+        // Where the line of the piece `before` and the line of the piece `after` meet for the point `i` of the profile (the middle of their nearest points when they do not quite meet); false when they do
+        // not meet, or meet far away (no spike is made of them).  `reach` is how far the pieces between them and next to them reach
+        auto meet = [&](size_t i, int before, int after, double reach, Vec& point) -> bool {
+            const Vec p1 = ringEnd[size_t(before) * E + i], p2 = ringStart[size_t(after) * E + i];
+            const Vec t1 = T[size_t(before)], t2 = T[size_t(after)];
+            const double cs = t1.dot(t2), det = cs * cs - 1.0;
+            if (std::fabs(det) < 1e-9) return false;
+            const Vec w = p2 - p1;
+            const double u = (w.dot(t2) - cs * w.dot(t1)) / det;
+            const double s = w.dot(t1) + cs * u;
+            point = 0.5 * ((p1 + t1 * s) + (p2 + t2 * u));
+            return (point - 0.5 * (p1 + p2)).norm() <= 3.0 * reach;
+        };
+        auto pieceLength = [&](int k) { return (V[size_t((k + 1) % n)] - V[size_t(k)]).norm(); };
+        std::vector<std::vector<char>> goneAt(E, std::vector<char>(size_t(pieces), 0));
         for (size_t i = 0; i < E; ++i)
         {
-            const uint32_t a = base + uint32_t(i), b = base + uint32_t((i + 1) % E), c = base + uint32_t(E) + uint32_t((i + 1) % E), d = base + uint32_t(E) + uint32_t(i);
+            std::vector<char>& gone = goneAt[i];
+            std::vector<int> work;
+            for (int k = pieces - 1; k >= 0; --k) work.push_back(k);
+            long guard = 0;
+            while (!work.empty() && guard++ < 400000)
+            {
+                const int k = work.back();
+                work.pop_back();
+                if (gone[size_t(k)]) continue;
+                const double length = pieceLength(k);
+                const Vec a = ringStart[size_t(k) * E + i], b = ringEnd[size_t(k) * E + i];
+                if ((b - a).dot(T[size_t(k)]) > 0.05 * length) continue;
+                // (the nearest pieces before and after this one that are still there)
+                int before = -1, after = -1;
+                for (int d = 1; d < pieces && before < 0; ++d)
+                {
+                    int p = k - d;
+                    if (closed) p = ((p % pieces) + pieces) % pieces;
+                    else if (p < 0) break;
+                    if (!gone[size_t(p)]) before = p;
+                }
+                for (int d = 1; d < pieces && after < 0; ++d)
+                {
+                    int q = k + d;
+                    if (closed) q %= pieces;
+                    else if (q >= pieces) break;
+                    if (!gone[size_t(q)]) after = q;
+                }
+                if (before < 0 || after < 0 || before == after) continue;
+                // (where the line of the piece before and the line of the piece after meet)
+                Vec M;
+                if (!meet(i, before, after, length + pieceLength(before) + pieceLength(after), M)) continue;
+                ringEnd[size_t(before) * E + i] = M;
+                ringStart[size_t(after) * E + i] = M;
+                for (int r = (before + 1) % pieces; r != after; r = (r + 1) % pieces)
+                {
+                    ringStart[size_t(r) * E + i] = M;
+                    ringEnd[size_t(r) * E + i] = M;
+                    gone[size_t(r)] = 1;
+                }
+                work.push_back(before);
+                work.push_back(after);
+            }
+        }
+        // THE POINTS OF THE PROFILE NEXT TO EACH OTHER TAKE OUT THE SAME PIECES (the user, 2026-11-03, H52c: "The scarring looks just as ugly on this.  You did not improve it, still needs fixing."; measured on the horn, 416 pairs
+        // of triangles that cross and a serrated band of teeth on the inner tube of the tight curl).  What is taken out was decided for each point of the profile on its own, so that a piece one point drops and its
+        // neighbour keeps -- a hole in the mask of removed pieces, or one piece of it -- leaves the strip of walls between the two points to run from one line to another that are not the same: a fan of slivers, a tooth.  The
+        // mask is made the median of three along the profile (a piece is out for a point when it is out for two of the three points about it), and every point whose pieces change is taken out again from its own
+        // rings as they were made
+        if (E >= 3)
+        {
+            std::vector<std::vector<char>> want = goneAt;
+            long changed = 0;
+            for (size_t i = 0; i < E; ++i)
+            {
+                for (int k = 0; k < pieces; ++k)
+                {
+                    const int votes = int(goneAt[(i + E - 1) % E][size_t(k)]) + int(goneAt[i][size_t(k)]) + int(goneAt[(i + 1) % E][size_t(k)]);
+                    want[i][size_t(k)] = votes >= 2 ? 1 : 0;
+                    if (want[i][size_t(k)] != goneAt[i][size_t(k)]) ++changed;
+                }
+            }
+            if (changed)
+            {
+                for (size_t i = 0; i < E; ++i)
+                {
+                    if (want[i] == goneAt[i]) continue;
+                    for (int k = 0; k < pieces; ++k)
+                    {
+                        ringStart[size_t(k) * E + i] = ringStart0[size_t(k) * E + i];
+                        ringEnd[size_t(k) * E + i] = ringEnd0[size_t(k) * E + i];
+                    }
+                    const std::vector<char>& drop = want[i];
+                    for (int k = 0; k < pieces; ++k)
+                    {
+                        if (!drop[size_t(k)]) continue;
+                        const int prev = closed ? (k + pieces - 1) % pieces : k - 1;
+                        if (prev >= 0 && drop[size_t(prev)]) continue;                 // (not the first piece of its run)
+                        int last = k;
+                        double reach = pieceLength(k);
+                        while (true)
+                        {
+                            const int next = closed ? (last + 1) % pieces : last + 1;
+                            if (next >= pieces || next == k || !drop[size_t(next)]) break;
+                            last = next;
+                            reach += pieceLength(last);
+                        }
+                        const int before = closed ? (k + pieces - 1) % pieces : k - 1;
+                        const int after = closed ? (last + 1) % pieces : last + 1;
+                        if (before < 0 || after >= pieces || before == after || drop[size_t(before)] || drop[size_t(after)]) continue;
+                        Vec M;
+                        if (!meet(i, before, after, reach + pieceLength(before) + pieceLength(after), M)) continue;
+                        ringEnd[size_t(before) * E + i] = M;
+                        ringStart[size_t(after) * E + i] = M;
+                        for (int r = k;; r = (r + 1) % pieces)
+                        {
+                            ringStart[size_t(r) * E + i] = M;
+                            ringEnd[size_t(r) * E + i] = M;
+                            if (r == last) break;
+                        }
+                    }
+                }
+            }
+            if (changed && std::getenv("FIELDES_SWEEP_DEBUG")) fprintf(stderr, "[sweep] %ld pieces were taken out (or kept) as the points of the profile about them do\n", changed);
+            if (std::getenv("FIELDES_SWEEP_DEBUG"))
+            {
+                // (a measurement: for each point of the profile the runs of pieces that are out, "first-last"; a run that one point has and its neighbour has not is a hole in the mask, where a tooth can come from)
+                for (size_t i = 0; i < E; ++i)
+                {
+                    std::string runs;
+                    for (int k = 0; k < pieces; ++k)
+                        if (want[i][size_t(k)] && (k == 0 || !want[i][size_t(k - 1)]))
+                        {
+                            int last = k;
+                            while (last + 1 < pieces && want[i][size_t(last + 1)]) ++last;
+                            runs += " " + std::to_string(k) + "-" + std::to_string(last);
+                        }
+                    fprintf(stderr, "[sweep] column %zu: pieces out:%s\n", i, runs.empty() ? " none" : runs.c_str());
+                }
+            }
+        }
+    }
+    // (the ring at each vertex of the path: the mean of the end ring of the piece before it and the start ring of the piece after it; the two ends of an open path have the one they have)
+    std::vector<uint32_t> ringBase = std::vector<uint32_t>(size_t(n));
+    for (int v = 0; v < n; ++v)
+    {
+        ringBase[size_t(v)] = uint32_t(out->verts.size());
+        const int before = closed ? (v + pieces - 1) % pieces : v - 1;
+        const int after = closed ? v % pieces : v;
+        for (size_t i = 0; i < E; ++i)
+        {
+            Vec p;
+            if (before >= 0 && after < pieces) p = 0.5 * (ringEnd[size_t(before) * E + i] + ringStart[size_t(after) * E + i]);
+            else if (after < pieces) p = ringStart[size_t(after) * E + i];
+            else p = ringEnd[size_t(before) * E + i];
+            out->verts.push_back(Eigen::Vector3f(float(p.x()), float(p.y()), float(p.z())));
+        }
+    }
+    // What is left of a fold: a wall that the removal above could not take out -- the first or the last piece of an open path, with no piece on its other side to be joined to -- is not let run backwards: no point of a
+    // ring is let lie behind the same point of the ring before it along the path.  A wall that has no length because its excess was taken out is left as it is
+    {
+        if (!closed && !std::getenv("FIELDES_SWEEP_RAW"))
+        {
+            long cut = 0;
+            // THE ENDS OF AN OPEN PATH.  The profile at the start is the profile itself, at whatever angle the path leaves it, and the rings after it are cut square across the path, so where the profile leans
+            // the rings that follow lie BEHIND the point the same column has in the first ring -- for as many rings as the lean is long (the wedge between the profile and the first section across the path).
+            // The wall of such a column would run backwards from the face, through the material, and stand out as a flat lip at the root of a horn, longer the larger the section (the user, 2026-11-03, his
+            // pictures 69 to 77; measured on his file: at twice the section 38 to 78 of the 168 columns of each of the first five rings lay behind the face, up to 0.37 mm).  What is behind the face is no part of
+            // the sweep: it is put on the point of the face, so that a wall starts at the face; the same at the other end of the path, against the last ring
+            long snapped = 0;
+            if (pieces >= 2 && n >= 4)
+            {
+                const Eigen::Vector3f t0(float(T[0].x()), float(T[0].y()), float(T[0].z()));
+                const Eigen::Vector3f t1(float(T[size_t(pieces - 1)].x()), float(T[size_t(pieces - 1)].y()), float(T[size_t(pieces - 1)].z()));
+                // (a ring point put on the face is carried along the path by the way the path has gone since the face: the vertex of its ring minus the vertex of the ring the face is at)
+                auto pathShift = [&](int ring, int from) {
+                    const Vec d = V[size_t(ring)] - V[size_t(from)];
+                    return Eigen::Vector3f(float(d.x()), float(d.y()), float(d.z()));
+                };
+                const uint32_t firstRing = ringBase[0], lastRing = ringBase[size_t(n - 1)];
+                int quiet = 0;
+                for (int v = 1; v < n - 1 && v < 200 && quiet < 3; ++v)
+                {
+                    long here = 0;
+                    for (size_t i = 0; i < E; ++i)
+                        if ((out->verts[ringBase[size_t(v)] + i] - out->verts[firstRing + i]).dot(t0) < 0.0f) { out->verts[ringBase[size_t(v)] + i] = out->verts[firstRing + i] + pathShift(v, 0); ++here; }
+                    snapped += here;
+                    quiet = here ? 0 : quiet + 1;
+                }
+                quiet = 0;
+                for (int v = n - 2; v > 0 && v > n - 202 && quiet < 3; --v)
+                {
+                    long here = 0;
+                    for (size_t i = 0; i < E; ++i)
+                        if ((out->verts[lastRing + i] - out->verts[ringBase[size_t(v)] + i]).dot(t1) < 0.0f) { out->verts[ringBase[size_t(v)] + i] = out->verts[lastRing + i] + pathShift(v, n - 1); ++here; }
+                    snapped += here;
+                    quiet = here ? 0 : quiet + 1;
+                }
+            }
+            if (snapped && std::getenv("FIELDES_SWEEP_DEBUG")) fprintf(stderr, "[sweep] %ld ring points that lay behind the face at an end of the path were put on it\n", snapped);
+            for (int v = 0; v < pieces; ++v)
+            {
+                // (the plain sweep keeps its bends as the profile carries them and holds only the first and the last piece, which have no piece on their other side to be joined to: without it their walls run backwards and stand out as a flat lip at the root end of the horn, the user, 2026-11-03, his pictures 69 and 70; FIELDES_SWEEP_NOENDCUT=1 leaves them out, to put next to the result)
+                if (in.plain && ((v != 0 && v != pieces - 1) || std::getenv("FIELDES_SWEEP_NOENDCUT"))) continue;
+                const Eigen::Vector3f ahead(float(T[size_t(v)].x()), float(T[size_t(v)].y()), float(T[size_t(v)].z()));
+                const float least = 0.05f * float((V[size_t(v + 1)] - V[size_t(v)]).norm());
+                const uint32_t a = ringBase[size_t(v)], b = ringBase[size_t(v + 1)];
+                for (size_t i = 0; i < E; ++i)
+                {
+                    const float along = (out->verts[b + i] - out->verts[a + i]).dot(ahead);
+                    if (along < 0.0f)
+                    {
+                        out->verts[b + i] += ahead * (least - along);
+                        ++cut;
+                    }
+                }
+            }
+            if (cut && std::getenv("FIELDES_SWEEP_DEBUG")) fprintf(stderr, "[sweep] %ld ring points were held ahead of the ring before them (folds cut)\n", cut);
+        }
+    }
+    // The rounded ends (the user, 2026-10-28, RE1: "Spline edges at the ends of path extrusions should have rounded ends", and "If an end point is a spline point it is rounded off" -- a corner or a round corner at the end
+    // stays the flat cutoff).  The end ring of an open path whose end point is a spline point is closed by a dome: `domeRings` rings, each the end ring shrunk toward the point of the path by cos and carried on along the
+    // path by D sin, the angle running a quarter turn, the last ring one point.  D is half the thinner side of the box of the profile, times its size at the point and the influence of the point.  The ring is carried
+    // along the path -- sheared, as the walls of a slanted end run -- so that the cross-section at a distance s past the end plane is the profile shrunk by sqrt(1 - (s / D)^2): exactly what the field of path_extrude
+    // (profile.py) makes, so that the field and the mesh are the one shape.  This is done after the rings are made smooth, from the rings as they are
+    const int domeRings = 12;
+    struct Dome
+    {
+        bool on = false;
+        uint32_t first = 0;             // (the first vertex of the first ring after the end ring; the rings follow one another, `E` vertices each)
+        uint32_t apex = 0;
+    };
+    Dome dome[2];                       // (0: the start of the path, 1: its end)
+    if (!closed)
+    {
+        const double thin = 0.5 * std::min(hix - lox, hiy - loy);
+        for (int e = 0; e < 2; ++e)
+        {
+            const int v = e == 0 ? 0 : n - 1;
+            const int piece = e == 0 ? 0 : pieces - 1;
+            const auto& endPoint = in.path[e == 0 ? size_t(0) : in.path.size() - 1];
+            const bool spline = endPoint.smooth == 1 || (endPoint.smooth < 0 && in.pathDefault);
+            const double depth = thin * sizeAt(v) * std::max(0.0, endPoint.influence);
+            if (!spline || !(depth > 1e-9)) continue;
+            // (the normal of the end plane that leaves the sweep: forward at the end of the path, backward at its start)
+            Vec outward = planeNormal[size_t(piece)];
+            if (outward.dot(T[size_t(piece)]) < 0) outward = -outward;
+            if (e == 0) outward = -outward;
+            const double lean = std::max(0.1, std::fabs(T[size_t(piece)].dot(outward)));
+            const Vec advance = (e == 0 ? Vec(-T[size_t(piece)]) : Vec(T[size_t(piece)])) / lean;
+            dome[e].on = true;
+            dome[e].first = uint32_t(out->verts.size());
+            for (int j = 1; j < domeRings; ++j)
+            {
+                const double angle = 0.5 * M_PI * double(j) / double(domeRings);
+                const double shrink = std::cos(angle), height = depth * std::sin(angle);
+                for (size_t i = 0; i < E; ++i)
+                {
+                    const Eigen::Vector3f r = out->verts[ringBase[size_t(v)] + i];
+                    const Vec q = Vec(double(r.x()), double(r.y()), double(r.z())) - V[size_t(v)];
+                    const Vec p = V[size_t(v)] + q * shrink + advance * height;
+                    out->verts.push_back(Eigen::Vector3f(float(p.x()), float(p.y()), float(p.z())));
+                }
+            }
+            dome[e].apex = uint32_t(out->verts.size());
+            const Vec tip = V[size_t(v)] + advance * depth;
+            out->verts.push_back(Eigen::Vector3f(float(tip.x()), float(tip.y()), float(tip.z())));
+        }
+    }
+    for (int k = 0; k < pieces; ++k)
+    {
+        const double facing = facingOf[size_t(k)];
+        const uint32_t base = ringBase[size_t(k)], next = ringBase[size_t((k + 1) % n)];
+        for (size_t i = 0; i < E; ++i)
+        {
+            const uint32_t a = base + uint32_t(i), b = base + uint32_t((i + 1) % E), c = next + uint32_t((i + 1) % E), d = next + uint32_t(i);
             if (area * facing >= 0)
             {
                 out->branes.push_back(Tri(a, b, c));
@@ -844,14 +1793,190 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
             }
         }
         // (the triangles of the face face the way the profile's own normal does: the start cap faces back along the path, the end cap on along it)
-        if (!closed && k == 0)
+        if (!closed && k == 0 && !dome[0].on)
             for (const Tri& t : cap->branes)
                 out->branes.push_back(facing > 0 ? Tri(base + t[0] - capFirst, base + t[2] - capFirst, base + t[1] - capFirst)
                                                  : Tri(base + t[0] - capFirst, base + t[1] - capFirst, base + t[2] - capFirst));
-        if (!closed && k == pieces - 1)
+        if (!closed && k == pieces - 1 && !dome[1].on)
             for (const Tri& t : cap->branes)
-                out->branes.push_back(facing > 0 ? Tri(base + uint32_t(E) + t[0] - capFirst, base + uint32_t(E) + t[1] - capFirst, base + uint32_t(E) + t[2] - capFirst)
-                                                 : Tri(base + uint32_t(E) + t[0] - capFirst, base + uint32_t(E) + t[2] - capFirst, base + uint32_t(E) + t[1] - capFirst));
+                out->branes.push_back(facing > 0 ? Tri(next + t[0] - capFirst, next + t[1] - capFirst, next + t[2] - capFirst)
+                                                 : Tri(next + t[0] - capFirst, next + t[2] - capFirst, next + t[1] - capFirst));
+    }
+    // The triangles of the domes: a strip of walls between each two rings, in the order of the path (at its start the rings are taken from the tip back to the start ring), so that they face as the walls of the piece do,
+    // and a fan between the last ring and the tip
+    auto strip = [&](uint32_t base, uint32_t next, double facing) {
+        for (size_t i = 0; i < E; ++i)
+        {
+            const uint32_t a = base + uint32_t(i), b = base + uint32_t((i + 1) % E), c = next + uint32_t((i + 1) % E), d = next + uint32_t(i);
+            if (area * facing >= 0)
+            {
+                out->branes.push_back(Tri(a, b, c));
+                out->branes.push_back(Tri(a, c, d));
+            }
+            else
+            {
+                out->branes.push_back(Tri(a, c, b));
+                out->branes.push_back(Tri(a, d, c));
+            }
+        }
+    };
+    for (int e = 0; e < 2; ++e)
+    {
+        if (!dome[e].on) continue;
+        const int v = e == 0 ? 0 : n - 1;
+        const double facing = facingOf[size_t(e == 0 ? 0 : pieces - 1)];
+        const bool forward = area * facing >= 0;
+        std::vector<uint32_t> ringsAlong;
+        ringsAlong.push_back(ringBase[size_t(v)]);
+        for (int j = 1; j < domeRings; ++j) ringsAlong.push_back(dome[e].first + uint32_t(size_t(j - 1) * E));
+        if (e == 0) std::reverse(ringsAlong.begin(), ringsAlong.end());
+        for (size_t j = 0; j + 1 < ringsAlong.size(); ++j) strip(ringsAlong[j], ringsAlong[j + 1], facing);
+        if (e == 1)
+        {
+            const uint32_t last = ringsAlong.back();
+            for (size_t i = 0; i < E; ++i)
+            {
+                const uint32_t a = last + uint32_t(i), b = last + uint32_t((i + 1) % E);
+                out->branes.push_back(forward ? Tri(a, b, dome[e].apex) : Tri(a, dome[e].apex, b));
+            }
+        }
+        else
+        {
+            const uint32_t first = ringsAlong.front();
+            for (size_t i = 0; i < E; ++i)
+            {
+                const uint32_t c = first + uint32_t((i + 1) % E), d = first + uint32_t(i);
+                out->branes.push_back(forward ? Tri(dome[e].apex, c, d) : Tri(dome[e].apex, d, c));
+            }
+        }
+    }
+    // THE VERTICES THAT THE REMOVAL ABOVE PUT AT ONE POINT ARE ONE VERTEX (the user, 2026-11-02, H52b: the plain sweep has the right look and only has mesh intersections, "UNACCEPTABLE IN A FUCKING ENGINEERING SOFTWARE MADE
+    // FOR SIMULATIONS": nothing but the intersections is changed).  The rings that the removal put at one point -- the same point of the profile at two rings that follow each other, the same position -- are welded, and a
+    // triangle that is left with two corners at one vertex is no triangle and is dropped: the mesh stays one closed surface and has no face of no area.  Nothing else moves
+    {
+        std::vector<uint32_t> same(out->verts.size());
+        for (uint32_t v = 0; v < uint32_t(same.size()); ++v) same[v] = v;
+        // (H52c, the serrated band of teeth on the inside of the tight curl of the horn: where the tube bends tighter than it is wide the rings pile up on the inside and the strip of walls between two rings is a row of
+        // slivers -- long along the profile, almost nothing along the path.  A ring pair whose rings are at some points of the profile much closer than at most of them -- under 0.3 of the median distance of
+        // the pair -- is welded there as well, so that a sliver is no triangle and is dropped below; FIELDES_SWEEP_NOSLIVER=1 leaves it out, to compare the two)
+        const bool noSliver = std::getenv("FIELDES_SWEEP_NOSLIVER") != nullptr;
+        size_t nearWelded = 0;
+        for (int k = 0; k < pieces; ++k)
+        {
+            const int j = (k + 1) % n;
+            if (j < k) continue;                                        // (the ring that closes a closed path: the first one stays)
+            std::vector<float> gap(E);
+            for (size_t i = 0; i < E; ++i) gap[i] = (out->verts[ringBase[size_t(j)] + uint32_t(i)] - out->verts[ringBase[size_t(k)] + uint32_t(i)]).norm();
+            std::vector<float> middle(gap);
+            std::nth_element(middle.begin(), middle.begin() + long(E / 2), middle.end());
+            const float close = noSliver ? 0.0f : 0.3f * middle[E / 2];
+            for (size_t i = 0; i < E; ++i)
+            {
+                const uint32_t a = ringBase[size_t(k)] + uint32_t(i), b = ringBase[size_t(j)] + uint32_t(i);
+                if (out->verts[same[a]] == out->verts[b]) same[b] = same[a];
+                else if (close > 0.0f && (out->verts[same[a]] - out->verts[b]).norm() <= close) { same[b] = same[a]; ++nearWelded; }
+            }
+        }
+        if (nearWelded && std::getenv("FIELDES_SWEEP_DEBUG")) fprintf(stderr, "[sweep] %zu vertices of rings much closer than most of their ring pair welded (the slivers of a tight bend)\n", nearWelded);
+        std::vector<Tri> kept;
+        kept.reserve(out->branes.size());
+        for (const auto& tri : out->branes)
+        {
+            const Tri m(same[tri[0]], same[tri[1]], same[tri[2]]);
+            if (m[0] != m[1] && m[1] != m[2] && m[0] != m[2]) kept.push_back(m);
+        }
+        const size_t dropped = out->branes.size() - kept.size();
+        out->branes.clear();
+        for (const Tri& m : kept) out->branes.push_back(m);
+        if (dropped && std::getenv("FIELDES_SWEEP_DEBUG")) fprintf(stderr, "[sweep] %zu triangles of no area dropped after the removal of the crossing parts\n", dropped);
+    }
+    if (std::getenv("FIELDES_SWEEP_DEBUG"))
+    {
+        // (the number of pairs of triangles that cross each other -- two that share a corner are not counted: what a simulation cannot have.  Every edge of one against the other triangle, in a grid of the boxes of the triangles)
+        const size_t count = out->branes.size();
+        if (count > 0 && count < 400000)
+        {
+            std::vector<Vec> pts(out->verts.size());
+            for (size_t v = 0; v < pts.size(); ++v) pts[v] = Vec(double(out->verts[v].x()), double(out->verts[v].y()), double(out->verts[v].z()));
+            double mean = 0.0;
+            for (const auto& tri : out->branes) mean += (pts[tri[0]] - pts[tri[1]]).norm();
+            const double cell = std::max(2.0 * mean / double(count), 1e-9);
+            std::unordered_map<long long, std::vector<uint32_t>> grid;
+            auto cellKey = [](long long x, long long y, long long z) { return (x * 73856093LL) ^ (y * 19349663LL) ^ (z * 83492791LL); };
+            for (uint32_t t = 0; t < uint32_t(count); ++t)
+            {
+                const auto& tri = out->branes[t];
+                const Vec lo = pts[tri[0]].cwiseMin(pts[tri[1]]).cwiseMin(pts[tri[2]]), hi = pts[tri[0]].cwiseMax(pts[tri[1]]).cwiseMax(pts[tri[2]]);
+                long long a[3], z[3];
+                for (int d = 0; d < 3; ++d) { a[d] = (long long)std::floor(lo[d] / cell); z[d] = std::min(a[d] + 16, (long long)std::floor(hi[d] / cell)); }
+                for (long long x = a[0]; x <= z[0]; ++x)
+                    for (long long y = a[1]; y <= z[1]; ++y)
+                        for (long long w = a[2]; w <= z[2]; ++w) grid[cellKey(x, y, w)].push_back(t);
+            }
+            auto pierces = [&](const Vec& p, const Vec& q, uint32_t tb) -> bool {
+                const auto& tri = out->branes[tb];
+                const Vec& a0 = pts[tri[0]];
+                const Vec e1 = pts[tri[1]] - a0, e2 = pts[tri[2]] - a0, d = q - p, h = d.cross(e2);
+                const double det = e1.dot(h);
+                if (std::fabs(det) < 1e-18) return false;
+                const double f = 1.0 / det;
+                const Vec s = p - a0;
+                const double u = f * s.dot(h);
+                if (u < 1e-6 || u > 1.0 - 1e-6) return false;
+                const Vec qv = s.cross(e1);
+                const double v = f * d.dot(qv);
+                if (v < 1e-6 || u + v > 1.0 - 1e-6) return false;
+                const double tt = f * e2.dot(qv);
+                return tt > 1e-6 && tt < 1.0 - 1e-6;
+            };
+            std::unordered_set<unsigned long long> seen;
+            long crossings = 0, listed = 0;
+            std::unordered_map<long, long> byRing, byColumn;       // (a measurement: where along the path and at which point of the profile the crossing pairs are, by the lowest vertex of each triangle)
+            for (const auto& cellTris : grid)
+            {
+                const auto& list = cellTris.second;
+                for (size_t x = 0; x < list.size(); ++x)
+                    for (size_t y = x + 1; y < list.size(); ++y)
+                    {
+                        const uint32_t ta = std::min(list[x], list[y]), tb = std::max(list[x], list[y]);
+                        if (ta == tb || !seen.insert((unsigned long long)ta << 32 | tb).second) continue;
+                        const auto& A = out->branes[ta];
+                        const auto& B = out->branes[tb];
+                        bool shares = false;
+                        for (int i = 0; i < 3 && !shares; ++i) for (int j = 0; j < 3; ++j) if (A[i] == B[j]) { shares = true; break; }
+                        if (shares) continue;
+                        bool cross = false;
+                        for (int i = 0; i < 3 && !cross; ++i) cross = pierces(pts[A[i]], pts[A[(i + 1) % 3]], tb) || pierces(pts[B[i]], pts[B[(i + 1) % 3]], ta);
+                        if (cross)
+                        {
+                            ++crossings;
+                            const uint32_t ia = std::min(A[0], std::min(A[1], A[2])), ib = std::min(B[0], std::min(B[1], B[2])), rings = uint32_t(n) * uint32_t(E);
+                            const long ra = ia < rings ? long(ia / E) : -1, rb = ib < rings ? long(ib / E) : -1;
+                            ++byRing[ra];
+                            ++byRing[rb];
+                            ++byColumn[ia < rings ? long(ia % E) : -1];
+                            ++byColumn[ib < rings ? long(ib % E) : -1];
+                            if (listed++ < 12)
+                            {
+                                const Vec at = (pts[A[0]] + pts[A[1]] + pts[A[2]]) / 3.0;
+                                fprintf(stderr, "[sweep]   crossing %ld: rings %ld and %ld, columns %ld and %ld, near (%.3f %.3f %.3f)\n", listed, ra, rb, ia < rings ? long(ia % E) : -1L, ib < rings ? long(ib % E) : -1L, at.x(), at.y(), at.z());
+                            }
+                        }
+                    }
+            }
+            fprintf(stderr, "[sweep] %ld pairs of triangles cross each other (of %zu triangles)\n", crossings, count);
+            if (crossings)
+            {
+                for (int which = 0; which < 2; ++which)
+                {
+                    std::vector<std::pair<long, long>> sorted((which == 0 ? byRing : byColumn).begin(), (which == 0 ? byRing : byColumn).end());
+                    std::sort(sorted.begin(), sorted.end());
+                    std::string text;
+                    for (const auto& pr : sorted) text += " " + std::to_string(pr.first) + ":" + std::to_string(pr.second);
+                    fprintf(stderr, "[sweep] crossings by %s (%s: triangles):%s\n", which == 0 ? "ring along the path" : "point of the profile", which == 0 ? "ring" : "column", text.c_str());
+                }
+            }
+        }
     }
     if (std::getenv("FIELDES_SWEEP_DEBUG"))
     {
@@ -872,6 +1997,18 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
                 highest, longest, worst, out->verts[tri[0]].x(), out->verts[tri[0]].y(), out->verts[tri[0]].z(), out->verts[tri[1]].x(), out->verts[tri[1]].y(), out->verts[tri[1]].z(),
                 out->verts[tri[2]].x(), out->verts[tri[2]].y(), out->verts[tri[2]].z(), E, pieces);
     }
+    // (FIELDES_SWEEP_DUMP=<file>: the mesh as it is, as an OBJ, to look at it outside the program -- a measurement of the teeth of H52c on the real mesh)
+    if (const char* dump = std::getenv("FIELDES_SWEEP_DUMP"))
+    {
+        static std::atomic<int> dumpCount{0};
+        const std::string dumpName = std::string(dump) + "." + std::to_string(++dumpCount) + ".obj";          // (one file for every sweep: the sweeps of one render, the shape and its mirror image, wrote one file at the same time and corrupted it)
+        if (FILE* file = fopen(dumpName.c_str(), "w"))
+        {
+            for (const auto& p : out->verts) fprintf(file, "v %.6f %.6f %.6f\n", double(p.x()), double(p.y()), double(p.z()));
+            for (const auto& t : out->branes) fprintf(file, "f %u %u %u\n", unsigned(t[0]) + 1u, unsigned(t[1]) + 1u, unsigned(t[2]) + 1u);
+            fclose(file);
+        }
+    }
     // Placed by the gizmo: scaled about its point, turned about x, then y, then z (degrees), then moved -- as the placement arguments place a shape
     if (in.placed)
     {
@@ -884,6 +2021,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
             p = Eigen::Vector3f(float(placed.x()), float(placed.y()), float(placed.z()));
         }
     }
+    if (std::getenv("FIELDES_SWEEP_DEBUG") || std::getenv("FIELDES_TIMING")) fprintf(stderr, "[sweep] sweepMesh took %.1f ms (%d rings, %zu columns, %zu triangles)\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - sweepStart).count(), int(n), size_t(E), size_t(out->branes.size()));
     return out;
 }
 
@@ -999,6 +2137,38 @@ int Shape::controlOf(const Shape* point) const
         }
     }
     return -1;
+}
+
+// Which control of this sweep -- of its profile (counted first) or of its path -- a point is: the one whose number the point's gizmo moves, or -1
+int Shape::sweepControlOf(const Shape* point) const
+{
+    if (!point || !hasSweep()) return -1;
+    const auto& g = point->gizmo();
+    int base = 0;
+    for (const auto* list : {&m_sweep_profile, &m_sweep_path})
+    {
+        for (int i = 0; i < int(list->size()); ++i)
+        {
+            for (int a = 0; a < 3; ++a)
+            {
+                if (g.move[a] && (*list)[size_t(i)].var[a] == g.move[a]) return base + i;
+            }
+        }
+        base += int(list->size());
+    }
+    return -1;
+}
+
+// Whether a point is one of the points a body of points -- morph_polyhedron, morph_body -- is made of: a number its gizmo moves is one of the numbers the control points of the body are made of
+bool Shape::morphUses(const Shape* point) const
+{
+    if (!point || !hasMorph()) return false;
+    const auto& g = point->gizmo();
+    for (int a = 0; a < 3; ++a)
+    {
+        if (g.move[a] && usesVar(g.move[a])) return true;
+    }
+    return false;
 }
 
 int Shape::controlAfterPiece(int piece) const
@@ -1134,7 +2304,7 @@ bool Shape::nativeDragOk() const
     if (m_locked) return false;
     // (a sweep has no surfaces to pull -- its numbers are the points', which have their own gizmos -- and pulling one meant making and compiling its whole field, in the GUI's
     // thread, when a click that missed a point of the path landed on the tube beside it: seconds to minutes of a window that did not answer)
-    if (hasSweep()) return false;
+    if (hasSweep() || hasMorph()) return false;
     buildDeps();
     const auto gizmo = pullMask();
     for (const void* d : m_deps)
@@ -1283,6 +2453,22 @@ Shape::GizmoNumbers Shape::gizmoNumbersIn(const std::map<libfive::Tree::Id, floa
     g.move = QVector3D(get(m_gizmo.move[0], 0.0f), get(m_gizmo.move[1], 0.0f), get(m_gizmo.move[2], 0.0f));
     g.rotate = QVector3D(get(m_gizmo.rotate[0], 0.0f), get(m_gizmo.rotate[1], 0.0f), get(m_gizmo.rotate[2], 0.0f));
     g.scale = QVector3D(get(m_gizmo.scale[0], 1.0f), get(m_gizmo.scale[1], 1.0f), get(m_gizmo.scale[2], 1.0f));
+    // An operation that carries parts and has no gizmo of its own (H96, the user: "I can still drag a union out of the visible field and it reappears only after a full render"): its one gizmo moves the numbers
+    // of its parts, all by the same amount.  Those numbers are tracked as its own move -- the first part that has one for an axis speaks for the axis -- so that it is drawn moved while it is pulled, as a shape
+    // with a gizmo of its own is, with nothing meshed and the region held by its moved box, and not meshed again at every step in a region that it has already left
+    if (!m_gizmo.present && !m_carried.empty())
+    {
+        for (int a = 0; a < 3; ++a)
+        {
+            for (const Gizmo& c : m_carried)
+            {
+                const auto it = c.move[a] ? v.find(c.move[a]) : v.end();
+                if (it == v.end()) continue;
+                g.move[a] = it->second;
+                break;
+            }
+        }
+    }
     return g;
 }
 
@@ -1325,7 +2511,7 @@ bool Shape::previewBox(QVector3D& lo, QVector3D& hi) const
 
 bool Shape::movedBox(QVector3D& lo, QVector3D& hi) const
 {
-    if (!mesh || !m_gizmo.present || m_isPoint) return false;
+    if (!mesh || (!m_gizmo.present && !carriesParts()) || m_isPoint) return false;
     const GizmoNumbers now = gizmoNumbersIn(vars);
     if (now.move == m_meshGizmo.move && now.rotate == m_meshGizmo.rotate && now.scale == m_meshGizmo.scale) return false;
     bool invertible = false;
@@ -1349,24 +2535,74 @@ bool Shape::previewGizmoVars(const std::map<libfive::Tree::Id, float>& changed, 
 {
     // Only a plain mesh of this shape can be moved as it is: with colours (they are values of a field at the places of the mesh), a result, a deformation, steps, a
     // face or a line of points, an imported part (its triangles are placed by a matrix of their own) or a mesh that is not there yet it is made again
-    if (!allowed || !m_gizmo.present || m_locked || !mesh || has_color || has_result || has_deform || m_flat || hasControls() || m_isPoint ||
+    if (!allowed || (!m_gizmo.present && !carriesParts()) || m_locked || !mesh || has_color || has_result || has_deform || m_flat || hasControls() || m_isPoint ||
         exactCurrent() || m_exact || !m_steps.empty())
+    {
+        static const bool why = std::getenv("FIELDES_TIMING") != nullptr;
+        if (why && m_unsigned)
+            fprintf(stderr, "[preview] previewGizmoVars refused (surface): allowed=%d present=%d locked=%d mesh=%d color=%d result=%d deform=%d flat=%d controls=%d exact=%d steps=%d\n", int(allowed),
+                  int(m_gizmo.present), int(m_locked), int(bool(mesh)), int(has_color), int(has_result), int(has_deform), int(m_flat), int(hasControls()), int(bool(m_exact)), int(!m_steps.empty()));
         return false;
-    const auto own = gizmoVars();
+    }
+    auto own = gizmoVars();
+    const bool carrier = !m_gizmo.present;                  // (an operation that carries parts, H96: the numbers that move its parts are what it is pulled by)
+    if (carrier)
+    {
+        for (const Gizmo& c : m_carried)
+        {
+            for (int a = 0; a < 3; ++a)
+            {
+                if (c.move[a]) own.insert(c.move[a]);
+            }
+        }
+    }
     bool affects = false;
     for (const auto& kv : changed)
     {
         const auto it = vars.find(kv.first);
         if (it == vars.end() || it->second == kv.second || !usesVar(kv.first)) continue;
-        if (!own.count(kv.first)) return false;     // (a number that is not its gizmo's changes what the shape IS: it is made again)
+        if (!own.count(kv.first))
+        {
+            if (m_unsigned && std::getenv("FIELDES_TIMING")) fprintf(stderr, "[preview] previewGizmoVars refused (surface): a changed number is not a gizmo number of it (own %d)\n", int(own.size()));
+            return false;                           // (a number that is not its gizmo's changes what the shape IS: it is made again)
+        }
         affects = true;
     }
-    if (!affects) return false;                     // (not this shape's numbers: updateVars keeps its numbers in step)
+    if (!affects)
+    {
+        if (m_unsigned && std::getenv("FIELDES_TIMING")) fprintf(stderr, "[preview] previewGizmoVars refused (surface): none of the changed numbers is used by it\n");
+        return false;                               // (not this shape's numbers: updateVars keeps its numbers in step)
+    }
     std::map<libfive::Tree::Id, float> next = vars;
     for (const auto& kv : changed)
     {
         const auto it = next.find(kv.first);
         if (it != next.end()) it->second = kv.second;
+    }
+    if (carrier)
+    {
+        // (the union is the same shape moved only if every part moves by the same amount along an axis: the pull of one part, or of a part and not the others, makes it another shape and it is made again)
+        for (int a = 0; a < 3; ++a)
+        {
+            bool have = false;
+            float step = 0.0f;
+            for (const Gizmo& c : m_carried)
+            {
+                const auto o = c.move[a] ? vars.find(c.move[a]) : vars.end();
+                const auto n = c.move[a] ? next.find(c.move[a]) : next.end();
+                if (o == vars.end() || n == next.end()) continue;
+                const float d = n->second - o->second;
+                if (!have)
+                {
+                    have = true;
+                    step = d;
+                }
+                else if (std::fabs(d - step) > 1e-4f)
+                {
+                    return false;
+                }
+            }
+        }
     }
     const GizmoNumbers now = gizmoNumbersIn(next);
     for (int a = 0; a < 3; ++a)
@@ -1377,6 +2613,7 @@ bool Shape::previewGizmoVars(const std::map<libfive::Tree::Id, float>& changed, 
         if (it != vars.end()) it->second = kv.second;
     }
     refreshPreview();
+    if (m_unsigned && std::getenv("FIELDES_TIMING")) fprintf(stderr, "[preview] previewGizmoVars accepted (surface)\n");
     return true;
 }
 
@@ -1448,7 +2685,7 @@ std::string Shape::extentWhy(const Settings& s)
     if (m_step_exact || exactCurrent()) return "it is drawn from triangles of its own";
     if (!tree.is_valid()) return "no tree";
     if (hasControls() || (m_flat && hasFlatFrame())) return "a line or a face of points";
-    if (hasSweep() || hasPrism()) return "a sweep or a prism";
+    if (hasSweep() || hasPrism() || hasMorph()) return "a sweep, a prism or a body of points";
     if (m_tree_nodes > 100000) return "a tree of " + std::to_string(m_tree_nodes) + " nodes";
     return "the search ran out of time or evaluations (" + std::to_string(m_tree_nodes) + " nodes)";
 }
@@ -1466,6 +2703,7 @@ void Shape::measureExtent(const Settings& s)
     // -- every render of a drag started with another 50 ms of looking, in the GUI's thread.  It gets a few milliseconds (a number that makes it easy is found at once) until it is
     // another tree, or the region it is looked for in is another: the first render of a script is made over the region the program starts with, before the script's own is
     // there, and a shape that is not in that one fails at once -- that must not leave it with a few milliseconds for good
+    m_ext_own_L = 0;
     const bool again = tree.is_valid() && m_ext_failed == tree.id() && m_ext_failed_lo == s.min && m_ext_failed_hi == s.max;
     const float seconds = again ? 0.004f : 0.05f;
     QVector3D lo, hi;
@@ -1482,6 +2720,46 @@ void Shape::measureExtent(const Settings& s)
         m_ext_hi = hi;
         m_ext_valid = true;
         m_ext_stale = false;
+        // A part that is placed turned has its size in its own frame too (the same search through the field taken through the part's placement, as the mesher sees it): the resolution is
+        // normed by that, and so does not change when the part is turned (H146).  The longest side is taken in world units: the own box times the cube root of the scale
+        QMatrix4x4 M;
+        if (ownFrame(M))
+        {
+            bool ok = false;
+            const QMatrix4x4 Mi = M.inverted(&ok);
+            if (ok)
+            {
+                QVector3D llo(1e30f, 1e30f, 1e30f), lhi(-1e30f, -1e30f, -1e30f);
+                for (int c = 0; c < 8; ++c)
+                {
+                    const QVector3D q = Mi.map(QVector3D((c & 1) ? s.max.x() : s.min.x(), (c & 2) ? s.max.y() : s.min.y(), (c & 4) ? s.max.z() : s.min.z()));
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        llo[a] = std::min(llo[a], q[a]);
+                        lhi[a] = std::max(lhi[a], q[a]);
+                    }
+                }
+                const libfive::Tree local = inFrame(tree, M);
+                std::vector<libfive_tree> var_trees;
+                std::vector<float> values;
+                for (const auto& kv : vars)
+                {
+                    var_trees.push_back(reinterpret_cast<libfive_tree>(kv.first));
+                    values.push_back(kv.second);
+                }
+                libfive_region3 search;
+                search.X = {llo.x(), lhi.x()};
+                search.Y = {llo.y(), lhi.y()};
+                search.Z = {llo.z(), lhi.z()};
+                libfive_region3 outBox;
+                int openCells = 0;
+                if (libfive_tree_bounds_vars(reinterpret_cast<libfive_tree>(local.id()), search, 20000, 0.05f, &outBox, &openCells, var_trees.data(), values.data(), int(var_trees.size())))
+                {
+                    const float dx = outBox.X.upper - outBox.X.lower, dy = outBox.Y.upper - outBox.Y.lower, dz = outBox.Z.upper - outBox.Z.lower;
+                    if (dx >= 0 && dy >= 0 && dz >= 0) m_ext_own_L = double(std::max(dx, std::max(dy, dz))) * std::cbrt(std::fabs(double(M.determinant())));
+                }
+            }
+        }
         return;
     }
     // A shape made with var()s -- a primitive that has been given handles when it was selected -- is not found by a search of 50 ms (the script's own search, which has hundreds of
@@ -1527,7 +2805,7 @@ bool Shape::scriptBoxFresh() const
 
 bool Shape::extentSearchable() const
 {
-    return tree.is_valid() && !has_hint && !has_result && !m_step_exact && !exactCurrent() && !hasControls() && !(m_flat && hasFlatFrame()) && !hasSweep() && !hasPrism() &&
+    return tree.is_valid() && !has_hint && !has_result && !m_step_exact && !exactCurrent() && !hasControls() && !(m_flat && hasFlatFrame()) && !hasSweep() && !hasPrism() && !hasMorph() &&
            m_tree_nodes <= 100000;
 }
 
@@ -1550,7 +2828,7 @@ bool Shape::searchExtent(const std::map<libfive::Tree::Id, float>& numbers, cons
     if (hasControls() || (m_flat && hasFlatFrame())) return false;          // (a line or a face of points, or a face in a plane of its own: no extent is measured)
     // (a sweep or a prism: it is drawn from the numbers of its points, and a search through the field of a sweep -- a piece for every piece of the path -- took seconds, in the
     // GUI's thread, for an extent only the field's own render could use; if it has to be meshed from its field it is at the scene's resolution)
-    if (hasSweep() || hasPrism()) return false;
+    if (hasSweep() || hasPrism() || hasMorph()) return false;
     ensureField();
     // (a tree of more than 100000 nodes -- anything made of a sweep's field -- costs more to be made ready for the search, in the GUI's thread, than the extent is worth: it is
     // not searched, and the shape is rendered at the scene's resolution)
@@ -1580,21 +2858,82 @@ bool Shape::searchExtent(const std::map<libfive::Tree::Id, float>& numbers, cons
     return hi.x() >= lo.x() && hi.y() >= lo.y() && hi.z() >= lo.z();
 }
 
+double Shape::finestFeature() const
+{
+    if (!(m_feature > 0)) return 0.0;
+    // (the placement's scale makes the feature as much larger or smaller as it does the shape)
+    double k = 1.0;
+    if (m_gizmo.present)
+    {
+        const QVector3D g = gizmoScale();
+        k = std::min(std::fabs(double(g.x())), std::min(std::fabs(double(g.y())), std::fabs(double(g.z()))));
+    }
+    return k > 1e-9 ? double(m_feature) * k : 0.0;
+}
+
 double Shape::autoResolution(const Settings& s) const
+{
+    const double res = scaledResolution(s);
+    const double feature = finestFeature();
+    if (!(feature > 0) || !m_ext_valid) return res;
+    // (a shape that says the size of its smallest feature -- the pitch of a thread -- is meshed at ten samples to it at the finest level, so that its turns are turns; not past 2000 across its
+    // box, which is what a huge number of turns would ask)
+    double want = 10.0 / feature;
+    const QVector3D size = m_ext_hi - m_ext_lo;
+    const double L = std::max(size.x(), std::max(size.y(), size.z()));
+    if (L > 1e-6) want = std::min(want, 2000.0 / L);
+    return std::max(res, want);
+}
+
+double Shape::scaledResolution(const Settings& s) const
 {
     // (a body with a resolution of its own -- custom_resolution -- has it in the place of the scene's, and is scaled by its size as the scene's is)
     const double base = m_res_override > 0 ? double(m_res_override) : double(s.res);
-    if (!s.autoScale || !m_ext_valid || has_hint || has_result) return base;
-    const QVector3D region = s.max - s.min, size = m_ext_hi - m_ext_lo;
-    const double R = std::max(region.x(), std::max(region.y(), region.z()));
-    const double L = std::max(size.x(), std::max(size.y(), size.z()));
-    if (!(R > 0) || !(L > 1e-6)) return base;
-    double res = base * std::sqrt(std::max(1.0, R / L));
-    res = std::min(res, 2000.0 / L);
+    // (a point is not painted -- its dot is drawn where its numbers say -- so its mesh is seen by nobody: it is meshed at the scene's plain resolution, not at a hundred samples across its little ball, which
+    // made a script of forty points cost half a minute: the user's sheep horn, 2026-10-29, "just way slower")
+    // (a result that is drawn from the elements of a solver is meshed at the scene's resolution: its colours are read from them.  One whose fields are expressions -- the optimization of a
+    // topology, a check of a process: no grid and no mesh of elements -- is a body like any other and is normed like one.  At the scene's plain 20 to the mm the optimized beam of the tour was
+    // 1200 samples across its 60 mm, where a part of that size gets 200: six times finer in each direction, 8.8 s for the second finest level and minutes for the finest, and the step "Allow less
+    // material" never finished drawing (the user, 2026-11-03, H105: "STILL BROKEN NOT RENDERING"))
+    const bool fromElements = has_result && (m_grid.isMesh || !m_grid.fraction.empty());
+    if (!s.autoScale || has_hint || fromElements || (m_isPoint && no_paint)) return base;
+    // The resolution is NORMED by the size of the part (the user, 2026-10-29: "Make resolution be normed by the bounding box size of the part ... so that when you scale the same part it does not change its
+    // amount of triangles and when you create a huge cylinder next to a small one, they both have the same amount of vertices"): the setting says how many samples go across the longest side of the part's
+    // box -- ten for every unit of it, a hundred at the default 10 -- whatever the size of the part in mm and whatever is beside it.  The sqrt(R / L) of before made a part finer the smaller it was
+    // next to the region, and a big one cost as many samples per mm as a small one: a cube of 50 mm at "10" was 500 samples across, and took seconds
+    constexpr double kAcross = 10.0;
+    double L = 0;
+    QVector3D lo, hi;
+    if (m_ext_valid)
+    {
+        const QVector3D size = m_ext_hi - m_ext_lo;
+        L = std::max(size.x(), std::max(size.y(), size.z()));
+        // (a part that is placed turned is normed by the box it has in its own frame, not by the box it fills in the world's axes, which is larger the more it is turned: its resolution is the
+        // same however it stands -- the user, 2026-11-04, H146: "When you rotate an object, its meshing keeps the meshing direction correctly, but its resolution changes ... the render should not change")
+        // (where the search through the field could not measure that box, the script says it: the box the part had before it was placed)
+        double ownL = m_ext_own_L;
+        QMatrix4x4 placedAs;
+        if (ownL <= 0 && m_script_own_L > 0 && !m_ext_stale && ownFrame(placedAs)) ownL = m_script_own_L;
+        if (ownL > 0 && (m_ext_own_L > 0 || !m_ext_stale)) L = ownL;
+    }
+    else if (meshSize(lo, hi))
+    {
+        // (the box that the search through the formula did not find -- a shape drawn from its points, a formula too large or too slow to search -- is the box of the mesh it has)
+        const QVector3D size = hi - lo;
+        L = std::max(size.x(), std::max(size.y(), size.z()));
+    }
+    if (!(L > 1e-6))
+    {
+        // (a part that has no box and no mesh yet -- its first picture: the region, which follows the models, is what there is to norm it by)
+        const QVector3D region = s.max - s.min;
+        L = std::max(region.x(), std::max(region.y(), region.z()));
+    }
+    if (!(L > 1e-6)) return base;
+    double res = std::min(base * kAcross / L, 2000.0 / L);              // (at most 2000 samples across)
     // (the script's box of a shape whose surface is being pulled is the box it had before: the shape is larger, or smaller, than it says, and the region has grown to hold it -- the box
     // would make it finer at every move.  It is meshed as finely as it was, and the script, which says the box again when the pull is let go, sizes it then)
     if (m_ext_stale && m_geometry_known && m_geometry.res > 0) res = std::min(res, double(m_geometry.res));
-    return m_res_override > 0 ? res : std::max(res, double(s.res));       // (the resolution of its own may be coarser than the scene's)
+    return res;
 }
 
 bool Shape::meshSize(QVector3D& lo, QVector3D& hi) const
@@ -1620,6 +2959,20 @@ void Shape::sizeFirstLevel(const Settings& s)
 }
 
 int Shape::defaultDivFor(const Settings& s)
+{
+    int div = sizedDivFor(s);
+    const double feature = finestFeature();
+    if (div > 0 && feature > 0 && m_ext_valid)
+    {
+        // (the first level -- the picture a drag shows, and what a long render starts with -- has cells of at most a fifth of the smallest feature of the surface: a coarser one draws a thread as the
+        // random spikes of a grid it does not fit, which changes at every move of the hand.  The user, 2026-10-28: "super weird lower res renders when changing it in real time ... nauseating")
+        const int fine = int(std::floor(std::log2(std::max(1.0, autoResolution(s) * feature / 5.0))));
+        div = std::min(div, std::max(0, fine));
+    }
+    return div;
+}
+
+int Shape::sizedDivFor(const Settings& s)
 {
     // (a shape that is drawn from the numbers of its points is meshed in a moment: there is no coarse picture to show first, one pass at the finest level is all it needs)
     if (drawnFromNumbers()) return 0;
@@ -2492,8 +3845,15 @@ void Shape::setDeformScale(float s)
     emit(redraw());
 }
 
+void Shape::setCellsOnly(bool b)
+{
+    m_cells_only = b;
+    if (b) setShowElements(true);
+}
+
 void Shape::setShowElements(bool b)
 {
+    if (m_cells_only) b = true;
     if (b == m_show_elements) return;
     m_show_elements = b;
     elem_dirty = true;
@@ -2968,7 +4328,22 @@ void Shape::drawElements(const QMatrix4x4& M, bool monochrome, QColor color)
     if (wholeElements() && clipping) glEnable(GL_CLIP_DISTANCE0);
 }
 
-bool Shape::updateFrom(const Shape* other)
+// The numbers of the script, copied into a shape that has them already.  Every shape of a run has all the numbers of the script (3321 of them for the 1107 points of a mesh) and the ids are the same
+// in the same order from run to run, so the values are written in place: no node of the map is made or freed (the copy of the map made 1107 x 3321 of them at every release of a drag: with the
+// find for each number in updateVars it was 1.4 ms a shape, 1.5 s on the window's thread, H90, the stall test of 2026-11-03)
+static void assignNumbers(std::map<libfive::Tree::Id, float>& into, const std::map<libfive::Tree::Id, float>& from)
+{
+    if (into.size() == from.size())
+    {
+        auto a = into.begin();
+        auto b = from.begin();
+        for (; a != into.end() && a->first == b->first; ++a, ++b) a->second = b->second;
+        if (a == into.end()) return;
+    }
+    into = from;
+}
+
+bool Shape::updateFrom(Shape* other)
 {
     assert(other->id() == id());
     // (the same tree: only whether its gizmo is shown, and its pivot,
@@ -3020,6 +4395,17 @@ bool Shape::updateFrom(const Shape* other)
             started = true;
         }
     }
+    // ...and so is the size of its smallest feature (the pitch of a thread made thinner by a handle)
+    if (other->m_feature != m_feature)
+    {
+        setFeatureSize(other->m_feature);
+        m_div_sized = false;                    // (its level is chosen again: it is capped by the feature)
+        if (!started && m_geometry_known && wouldRenderDifferently(m_last_settings))
+        {
+            startRender(RenderSettings { m_last_settings, defaultDivFor(m_last_settings), m_last_alg });
+            started = true;
+        }
+    }
     // The triangles a part is drawn from are what the script says NOW (moved, or the file imported again): if they changed, it is
     // drawn again (after the numbers below are the script's: they are part of what the triangles are)
     const bool exactChanged = other->m_exact != m_exact ||
@@ -3042,9 +4428,20 @@ bool Shape::updateFrom(const Shape* other)
     m_script_box_valid = other->m_script_box_valid;
     m_script_lo = other->m_script_lo;
     m_script_hi = other->m_script_hi;
-    m_script_vars = other->vars;
-    m_script_vars_known = true;
-    const bool varsChanged = updateVars(other->vars);
+    bool varsChanged = false;
+    if (m_isPoint && no_paint)
+    {
+        // A point is not drawn from them and renders nothing, whichever of them changed: it takes the numbers that the new shape of this run was made with -- the map of 3321 numbers of a mesh of 1107
+        // points -- as they are, by swapping, with no walk over them (the walk was 0.4 ms a shape, 0.5 s of every release of a dragged point, H90).  The new shape is discarded after this and takes the
+        // old numbers with it
+        vars.swap(other->vars);
+    }
+    else
+    {
+        assignNumbers(m_script_vars, other->vars);
+        m_script_vars_known = true;
+        varsChanged = updateVars(other->vars);
+    }
     if (exactChanged && !varsChanged && !started && m_geometry_known && wouldRenderDifferently(m_last_settings))
     {
         startRender(RenderSettings { m_last_settings, defaultDivFor(m_last_settings), m_last_alg });
@@ -3076,11 +4473,25 @@ void Shape::buildDeps() const
             }
         };
         // (the field of a sweep or a prism that is not made is not walked: the numbers it is made of are the ones of its points, which are below)
-        if (m_field_ready.load() || !(hasSweep() || hasPrism()))
+        if (m_field_ready.load() || !(hasSweep() || hasPrism() || hasMorph()))
         {
             ensureField();
             add(tree);
         }
+        // (a body of points: the numbers its control points are made of.  They are read from the plan of the direct reading, which walks every node once: a tree for each of the 2241 numbers of a mesh of 747
+        // points was flattened and walked one by one, which is what the first step of a drag waited for, 714 ms in the log of the window, H90.  A control that has an operation the plan does not do -- an oracle --
+        // is walked tree by tree as before)
+        bool controlsKnown = false;
+        if (!m_morph_controls.empty())
+        {
+            if (const std::shared_ptr<MorphPlan> plan = makeMorphPlan(m_morph_controls))
+            {
+                for (const auto& var : plan->vars) m_deps.insert(var.second);
+                controlsKnown = true;
+            }
+        }
+        if (!controlsKnown)
+            for (const auto& t : m_morph_controls) add(t);
         add(color_field);
         for (const ControlPoint& c : m_controls)
         {
@@ -3160,13 +4571,41 @@ bool Shape::updateVars(const std::map<libfive::Tree::Id, float>& vs)
     int div = MESH_DIV_NEW_VARS_SMALL;
     std::vector<libfive::Tree::Id> used;            // (the numbers this shape uses that changed)
 
-    for (auto& v : vs)
+    // The numbers of the script that this shape has and that are not what it has: found by walking the two maps side by side when they hold the same ids (they do, for every shape of a run: a find
+    // for each of the 3321 numbers of a mesh of 1107 points was most of the 1.4 ms a shape took, H90), by a find for each when they do not
+    std::vector<std::pair<std::map<libfive::Tree::Id, float>::iterator, float>> differing;
     {
-        auto va = vars.find(v.first);
-        if (va != vars.end() && va->second != v.second)
+        bool sameIds = vs.size() == vars.size();
+        if (sameIds)
+        {
+            auto a = vars.begin();
+            auto b = vs.begin();
+            for (; a != vars.end(); ++a, ++b)
+            {
+                if (a->first != b->first) { sameIds = false; break; }
+                if (a->second != b->second) differing.emplace_back(a, b->second);
+            }
+        }
+        if (!sameIds)
+        {
+            differing.clear();
+            for (const auto& entry : vs)
+            {
+                const auto found = vars.find(entry.first);
+                if (found != vars.end() && found->second != entry.second) differing.emplace_back(found, entry.second);
+            }
+        }
+    }
+    for (const auto& d : differing)
+    {
+        const auto va = d.first;
+        const std::pair<const libfive::Tree::Id, float> v(va->first, d.second);
         {
             const float before = va->second;
             va->second = v.second;      // (kept: the next render takes the whole map)
+            // A point is not painted: its number is kept and nothing is rendered, whichever numbers it uses.  Asking which it uses builds its field, 1 ms for each of the 1107 points of a mesh, which is the
+            // 1.1 s that the first step of a drag waited for on the window's thread (H90, the stall test of 2026-11-03)
+            if (m_isPoint && no_paint) continue;
             // ...but only a variable this shape uses makes it render again
             if (!usesVar(v.first))
             {
@@ -3236,7 +4675,7 @@ void Shape::linkSource(Shape* source)
 bool Shape::plainMesh() const
 {
     return mesh && !has_color && !has_result && !has_deform && !m_flat && !hasControls() && !m_isPoint && !exactCurrent() && !m_exact && m_steps.empty() &&
-           !hasSweep() && !hasPrism();
+           !hasSweep() && !hasPrism() && !hasMorph();
 }
 
 bool Shape::canFollow(const std::vector<libfive::Tree::Id>& changed) const
@@ -3543,6 +4982,22 @@ void Shape::drawMonochrome(const QMatrix4x4& M, QColor color)
 
 void Shape::startRender(Settings s, libfive::BRepAlgorithm alg)
 {
+    // A point is not painted -- its dot is drawn where its numbers say -- so nobody sees its mesh: its extent is not searched for and it is not meshed at all.  The 692 points of a mesh that is imported as a body
+    // of points (the user, 2026-11-03, H90: "it took a long time and when dragging points it sometimes froze the program") cost 20 s of the extent search and 56 s of the mesher's time -- 28 s of a window
+    // that did not answer, again after every edit of the script, which a point let go of is -- for balls that nothing draws.  Such a shape has no render to wait for: done() is true, as it is for a shape
+    // that has not been asked to render yet
+    if (m_isPoint && no_paint)
+    {
+        if (std::getenv("FIELDES_TIMING")) fprintf(stderr, "[shape] line %d: a point is not rendered (no extent, no mesh)\n", source_line + 1);
+        // (done() is `next.div == MESH_DIV_EMPTY && mesh_future.isFinished()`: a shape that never rendered has neither said: the first build with this change left every point not done, the bar "Rendering" for ever and the
+        // window at the whole of a core -- bar-render: shapes 9 done 1 unknown 8.  A point has no render: nothing is waiting and nothing is running)
+        if (!running)
+        {
+            next.div = MESH_DIV_EMPTY;
+            mesh_future = QFuture<BoundedMesh>();
+        }
+        return;
+    }
     const auto t0 = std::chrono::steady_clock::now();
     measureExtent(s);
     if (std::getenv("FIELDES_TIMING"))
@@ -3677,7 +5132,7 @@ void Shape::startRender(RenderSettings s)
             const double expected = mesh_verts > 0 ? double(mesh_verts) * (s.div < mesh_div ? 4.0 : 1.0) : 0.0;
             run_heavy = force_low || expected > 150000.0;
         }
-        if (m_flat || hasControls() || hasPrism() || hasSweep()) run_flat_vars = vars;
+        if (m_flat || hasControls() || hasPrism() || hasSweep() || hasMorph()) run_flat_vars = vars;
         m_run_virtual_on = m_virtual_on;
         m_run_virtual_after = m_virtual_after;
         m_run_virtual_pos = m_virtual_pos;
@@ -3783,14 +5238,22 @@ void Shape::setHover(bool h)
 std::map<libfive::Tree::Id, float> Shape::dragWeights() const
 {
     ensureField();
-    return libfive::dragWeights(tree);
+    return libfive::dragWeights(pullField());
 }
 
 std::pair<libfive::JacobianEvaluator*, libfive::Tape::Handle>
 Shape::dragFrom(const QVector3D& v)
 {
     ensureField();
-    auto e = new libfive::JacobianEvaluator(tree, vars);
+    // A surface is pulled by a signed field: near its end (within the band the view gives: a few pixels) by the way past the end, so that the size changes, elsewhere by the side of the sheet
+    m_pullEdge = false;
+    if (m_unsigned && m_limit.is_valid() && m_pullBand > 0.0f)
+    {
+        libfive::JacobianEvaluator probe(m_limit, vars);
+        const auto at = probe.valueAndPush({v.x(), v.y(), v.z()});
+        m_pullEdge = std::fabs(at.first) < m_pullBand;
+    }
+    auto e = new libfive::JacobianEvaluator(pullField(), vars);
     auto o = e->valueAndPush({v.x(), v.y(), v.z()});
     return std::make_pair(e, o.second);
 }
@@ -3980,7 +5443,10 @@ libfive::Tree::Id Shape::getUniqueId(
 {
     // (a sweep or a prism whose field is not made is told from the others by its points and by the tree it was built as -- see identityKey --, not by a tree it
     // would have to make and co-optimise: seconds for a sweep)
-    if (!m_field_ready.load() && (hasSweep() || hasPrism())) return nullptr;
+    if (!m_field_ready.load() && (hasSweep() || hasPrism() || hasMorph())) return nullptr;
+    // (a point is drawn as a dot from its numbers, its field is not read: its own tree, made one with the other trees of the run, tells it from the others.  H90, measured in a window with an import of
+    // 1106 points: every run made the optimized tree and the eight evaluators of every point, twice (the two setShapes of a run), 4 to 12 s each time on the thread of the window)
+    if (isPoint()) return built_tree.cooptimize(canonical).id();
     ensureField();
     return base_tree.cooptimize(canonical).id();
 }
@@ -3999,6 +5465,11 @@ QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tre
             if (c.hasRadius) key += QString(",R%1").arg(pid(c.radius));            // (a round corner: its radius is a number of the shape)
         }
         key += QString(";%1,%2").arg(pid(m_prism_a)).arg(pid(m_prism_b));
+    }
+    if (hasMorph())
+    {
+        // (a body of points is told from the others by the tree it was built as and by how many vertices it has: its vertices are made from the same numbers, and a run makes new trees)
+        key += QString("|morph %1 %2|f%3").arg(m_morph_controls.size()).arg(m_morph_triangles.size()).arg(quintptr(built_tree.id()));
     }
     if (hasSweep())
     {
@@ -4070,13 +5541,13 @@ RenderIdle g_renderIdle;
 ////////////////////////////////////////////////////////////////////////////////
 // The mesh of a prism: the face of the outline the points make, at the distances a and b along the normal of its plane, and the walls between -- or null when the outline
 // cannot be cut into triangles (it crosses itself: the field's to mesh)
-std::unique_ptr<libfive::Mesh> Shape::prismMesh(const std::vector<libfive::pointshapes::Control>& cs, bool smoothDefault, double a, double b)
+std::unique_ptr<libfive::Mesh> Shape::prismMesh(const std::vector<libfive::pointshapes::Control>& cs, bool smoothDefault, double a, double b, int steps)
 {
     std::vector<Eigen::Vector3d> where;
     for (const auto& c : cs) where.push_back(c.pos);
     double frame[9];
     if (!libfive::pointshapes::planeOf(where, frame)) return nullptr;
-    const auto verts = libfive::pointshapes::polyline(cs, smoothDefault, true, 14);
+    const auto verts = libfive::pointshapes::polyline(cs, smoothDefault, true, steps);
     if (verts.size() < 3) return nullptr;
     const Eigen::Vector3d o(frame[0], frame[1], frame[2]), u(frame[3], frame[4], frame[5]), w(frame[6], frame[7], frame[8]);
     const Eigen::Vector3d normal = u.cross(w).normalized();
@@ -4180,6 +5651,9 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         }
     }
     mesh_settings.min_feature = 1 / (res / (1 << s.div));
+    // A surface is a thin shell around its sheet: at a coarse level its cells are bigger than what it bends by and the sheet comes out ragged, which a handle drag (that meshes it again from the coarsest
+    // level at every step) shows over and over (the user, 2026-11-04: "seemingly SPAZZES OUT EVEN MORE WIHT HANDLE DRAGS").  A surface is never coarser than one level above its final cell
+    if (m_unsigned) mesh_settings.min_feature = 1 / (res / (1 << std::min(s.div, 1)));
     mesh_settings.max_err = pow(10, -s.settings.quality);
     mesh_settings.alg = s.alg;
 
@@ -4194,16 +5668,32 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         std::vector<libfive::pointshapes::Control> cs;
         double pa = 0, pb = 0;
         const bool ready = prismNow(run_flat_vars, cs, pa, pb);
-        if (ready) m = prismMesh(cs, m_prism_default, pa, pb);
+        if (ready) m = prismMesh(cs, m_prism_default, pa, pb, curveSteps(double(s.settings.res)));
         if (std::getenv("FIELDES_TIMING"))
             fprintf(stderr, "[prism] line %d: %s\n", source_line + 1,
                     m ? "drawn from the numbers of its points" : ready ? "its outline cannot be cut into triangles: its field is meshed" : "its guard or its numbers do not hold: its field is meshed");
+    }
+    // A body of points -- morph_polyhedron, morph_body -- is drawn from the numbers its points have now: its vertices are evaluated and its triangles drawn, no field is meshed, so a point that is dragged is
+    // followed at once (the user, 2026-10-29: "the standard is instant real time editing like the path extrude and the profile editing")
+    if (!m && hasMorph())
+    {
+        std::vector<Eigen::Vector3f> positions;
+        const bool ready = morphNow(run_flat_vars, positions);
+        if (ready) m = morphMesh(positions, m_morph_triangles);
+        if (std::getenv("FIELDES_TIMING"))
+            fprintf(stderr, "[morph] line %d: %s (%.1f ms into the level)\n", source_line + 1,
+                    m ? "drawn from the numbers of its points" : ready ? "its triangles cannot be drawn: its field is meshed" : "its numbers cannot be read: its field is meshed",
+                    1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tLevel).count());
     }
     if (!m && hasSweep())
     {
         SweepNumbers sn;
         const bool ready = sweepNow(run_flat_vars, sn);
-        if (ready) m = sweepMesh(sn);
+        if (ready)
+        {
+            sn.steps = curveSteps(double(s.settings.res)); sn.plain = true;          /* (H52c, 2026-11-03, put back at 21:40: the viewport draws the PLAIN sweep, which is what he judged better than the cleaned one -- the cleaning makes long teeth at a tight bend of a thick tube; the field, nativeMeshArrays, keeps the cleaned mesh) */          // (the resolution of the scene says how finely it is cut, as it does for what is meshed)
+            m = sweepMesh(sn);
+        }
         if (std::getenv("FIELDES_TIMING"))
             fprintf(stderr, "[sweep] line %d: %s (%.0f ms into the level)\n", source_line + 1,
                     m ? "drawn from the numbers of its points" : ready ? "its profile cannot be cut into triangles: its field is meshed" : "its numbers cannot be read: its field is meshed",
@@ -4362,7 +5852,8 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
           : exactCurrent() ? exactMeshIn(r)
           : m_flat ? libfive::Mesh::renderFlat(tree, run_flat_vars, mesh_region, run_has_frame ? run_frame : nullptr, mesh_settings,
                                                &flat_outlines)
-          : libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
+          : m_unsigned ? unsignedMesh(mesh_region)
+          : renderInOwnFrame(mesh_region);
     }
     // A flat face is a few big triangles: a colour read at the vertices only would run across them.  Where it is coloured by a field, the
     // triangles are cut (at the middles of their edges) until they are about as small as the cells of the render
@@ -4662,10 +6153,45 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
 ////////////////////////////////////////////////////////////////////////////////
 // The render cache (see Shape::setRenderCache)
 
+// The build the program is.  fieldesBuildStamp: the time of its executable, shown at the right of the status bar so that a picture of a window says which build it is from.
+// fieldesBuildKey: the newest time of the executable and of the Python library beside it, part of the key of every mesh the render cache keeps in the user's folder, so that a mesh kept by
+// another build is never read back as this one's (2026-11-03: a mesh kept at 13:36 was read by a later build at 18:57).  Both are read the first time they are asked, the window asks when it is
+// made: a window that goes on while the next build replaces the file keeps the build it started as.
+QString fieldesBuildStamp()
+{
+    static const QString stamp = QFileInfo(QCoreApplication::applicationFilePath()).lastModified().toString("yyyy-MM-dd HH:mm");
+    return stamp;
+}
+
+std::string fieldesBuildKey()
+{
+    static const std::string key = [] {
+        qint64 newest = QFileInfo(QCoreApplication::applicationFilePath()).lastModified().toMSecsSinceEpoch();
+        QDirIterator it(QDir(QCoreApplication::applicationDirPath()).filePath("python/fieldes"), QStringList{"*.py"}, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext())
+        {
+            it.next();
+            newest = std::max(newest, it.fileInfo().lastModified().toMSecsSinceEpoch());
+        }
+        return QString::number(newest, 36).toStdString();
+    }();
+    return key;
+}
+// The script file that is open (set by the window): the meshes the render cache keeps while it is open are noted as its (owners.idx in the folder), and fieldesSweepRenderCache keeps a mesh only
+// while its script is among the recently opened files and still exists, and while the mesh has been used in the last two weeks.
+static std::mutex g_cacheOwnerMutex;
+static QString g_cacheOwner;
+
+void fieldesSetCacheOwner(const QString& path)
+{
+    std::lock_guard<std::mutex> lock(g_cacheOwnerMutex);
+    g_cacheOwner = path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
+}
+
 namespace {
 
 // Bump when what the mesher makes from the same shape changes (a mesh kept by an older one would
-// be read in its place).  Not tied to a build: a rebuild that changes no mesh keeps the meshes.
+// be read in its place).  The meshes kept in the user's folder are tied to the build (fieldesBuildKey below: the executable and the Python library by their times), so a mesh kept by another build is not read back; the meshes that come with the program (seed-cache) are keyed by this version alone.
 const char* const kRenderCacheVersion = "fdrc5";        // (5: the flank of a gusset or a teardrop is smoothed in the kernel's lattice: a mesh kept by fdrc4 has it in ribs.  4: the colour of a manufacturing check is read inside the big faces, cut as the change colour's are: a mesh kept by fdrc3 has the flat overhang of a sharp box grey under a card that says 12 %.  3: the change colour of a manufacturing result is a class read as the difference of two fields, and its triangles are cut where it changes: a mesh kept by fdrc1 or 2 has the pale red over untouched faces)
 
 const quint32 kCacheMagic = 0x43524446u;       // "FDRC"
@@ -4673,7 +6199,7 @@ const quint32 kCacheFormat = 2;         // (2: after the colour values, the valu
 
 QString cacheFile(const std::string& key)
 {
-    const QByteArray h = QCryptographicHash::hash(QByteArray::fromStdString(key), QCryptographicHash::Sha1).toHex();
+    const QByteArray h = QCryptographicHash::hash(QByteArray::fromStdString(key + "|build=" + fieldesBuildKey()), QCryptographicHash::Sha1).toHex();
     return Shape::renderCacheDir() + "/" + QString::fromLatin1(h) + ".fdmesh";
 }
 
@@ -4694,7 +6220,7 @@ qint64 cacheLimitBytes()
 {
     bool ok = false;
     const qint64 mb = qEnvironmentVariableIntValue("FIELDES_RENDER_CACHE_MB", &ok);
-    return (ok && mb > 0 ? mb : 4096) * 1024 * 1024;
+    return (ok && mb > 0 ? mb : 2048) * 1024 * 1024;
 }
 
 // The oldest kept meshes go when the folder is over its limit
@@ -4724,6 +6250,32 @@ QString Shape::renderCacheDir()
     const QString dir = !env.isEmpty() ? QString::fromLocal8Bit(env)
                                        : QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/render-cache";
     QDir().mkpath(dir);
+
+    // The meshes kept by another build go (the key of a file has the build in it, so they would only lie there and grow the folder with every build): the first time this process asks, a marker
+    // file names the build the folder belongs to, and when it is another one the older files are deleted, on a thread of their own so that the window does not wait for the disk.  Only files
+    // older than this start go: what this build writes is not touched.
+    static std::atomic<bool> cleaned{false};
+    if (!cleaned.exchange(true))
+    {
+        const QString marker = dir + "/build.key";
+        QString kept;
+        {
+            QFile f(marker);
+            if (f.open(QIODevice::ReadOnly)) kept = QString::fromUtf8(f.readAll()).trimmed();
+        }
+        const QString mine = QString::fromStdString(fieldesBuildKey());
+        if (kept != mine)
+        {
+            const QDateTime started = QDateTime::currentDateTime().addSecs(-1);
+            QFile f(marker);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(mine.toUtf8());
+            f.close();
+            std::thread([dir, started] {
+                for (const auto& old : QDir(dir).entryInfoList({"*.fdmesh", "*.fdmesh.*"}, QDir::Files))
+                    if (old.lastModified() < started) QFile::remove(old.absoluteFilePath());
+            }).detach();
+        }
+    }
     return dir;
 }
 
@@ -4817,6 +6369,7 @@ std::string Shape::renderCacheKey(const RenderSettings& s, const libfive::Region
 bool Shape::readRenderCache(const std::string& key, BoundedMesh& out) const
 {
     QFile f(cacheFile(key));
+    const bool userFile = f.exists();          // (a hit on the user's own folder sets the file time to now at the end: the time of a kept mesh is the time it was last used)
     if (!f.exists())
     {
         const QString seed = seedCacheFile(key);            // (the user's own folder first)
@@ -4899,6 +6452,15 @@ bool Shape::readRenderCache(const std::string& key, BoundedMesh& out) const
     else if (has_color && out.values.size() != nv) return false;
     out.mesh = mesh.release();
     out.region = libfive::Region<3>({box[0], box[1], box[2]}, {box[3], box[4], box[5]});
+    if (userFile)
+    {
+        QFile used(cacheFile(key));
+        if (used.open(QIODevice::ReadWrite))
+        {
+            used.setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime);
+            used.close();
+        }
+    }
     return true;
 }
 
@@ -4943,10 +6505,60 @@ bool Shape::writeRenderCache(const std::string& key, const BoundedMesh& out) con
         if (n) f.write(reinterpret_cast<const char*>(c.data()), qint64(n) * 4);
     }
     if (!f.commit()) return false;
+    {   // (which script made it: the sweep of the folder keeps a mesh only while its script is among the recently opened files)
+        QString owner;
+        {
+            std::lock_guard<std::mutex> lock(g_cacheOwnerMutex);
+            owner = g_cacheOwner;
+        }
+        if (!owner.isEmpty())
+        {
+            QFile notes(Shape::renderCacheDir() + "/owners.idx");
+            if (notes.open(QIODevice::Append | QIODevice::Text)) notes.write((QFileInfo(cacheFile(key)).fileName() + "\t" + owner + "\n").toUtf8());
+        }
+    }
     pruneRenderCache();
     return true;
 }
 
+// The sweep of the render cache folder (the window calls it a little after the start and every six hours, on a thread of its own, with the list of the recently opened files): a mesh goes when it has not
+// been used for 14 days (the file time is the time of its last use), when the script it was made for is not among the recently opened files any more or is gone, and a mesh with no script noted (made before
+// the notes, or by a script that has no file) goes after a day.  A mesh of a script that is still listed stays after the script is edited: a part that did not change still finds its mesh.
+void fieldesSweepRenderCache(const QStringList& recent)
+{
+    const QString dir = Shape::renderCacheDir();
+    std::map<QString, QString> owner;
+    {
+        QFile notes(dir + "/owners.idx");
+        if (notes.open(QIODevice::ReadOnly | QIODevice::Text))
+            for (const QByteArray& line : notes.readAll().split('\n'))
+            {
+                const int tab = line.indexOf('\t');
+                if (tab > 0) owner[QString::fromUtf8(line.left(tab))] = QString::fromUtf8(line.mid(tab + 1)).trimmed();
+            }
+    }
+    std::set<QString> listed;
+    for (const QString& r : recent) listed.insert(QFileInfo(r).absoluteFilePath());
+    const QDateTime now = QDateTime::currentDateTime();
+    std::map<QString, QString> kept;
+    for (const QFileInfo& f : QDir(dir).entryInfoList({"*.fdmesh"}, QDir::Files))
+    {
+        const qint64 idleDays = f.lastModified().daysTo(now);
+        const auto it = owner.find(f.fileName());
+        bool drop;
+        if (idleDays >= 14) drop = true;
+        else if (it == owner.end()) drop = idleDays >= 1;
+        else drop = !listed.count(it->second) || !QFileInfo::exists(it->second);
+        if (drop) QFile::remove(f.absoluteFilePath());
+        else if (it != owner.end()) kept[it->first] = it->second;
+    }
+    QSaveFile out(dir + "/owners.idx");
+    if (out.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        for (const auto& e : kept) out.write((e.first + "\t" + e.second + "\n").toUtf8());
+        out.commit();
+    }
+}
 bool Shape::keepCurrent()
 {
     if (running || !mesh || mesh_div != 0 || has_result || next.div != MESH_DIV_EMPTY) return false;

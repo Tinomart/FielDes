@@ -589,6 +589,11 @@ def _exact_follows(name):
         shown = getattr(t, '_display_field', None)
         if shown is not None:
             out._display_field = prev(shown, *args, **kwargs)
+        # (a finite surface ends where its limit is above 0, and the side it faces: both are placed the way the surface is, or a placed surface (the menu always places one) would be infinite)
+        for name in ('limit', 'facing'):
+            held = getattr(t, name, None)
+            if isinstance(held, Shape):
+                setattr(out, name, prev(held, *args, **kwargs))
         # (a tessellated part is drawn from its own triangles: they are placed the way the field is)
         display = getattr(t, '_display_mesh', None)
         if display is not None:

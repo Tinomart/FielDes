@@ -307,6 +307,12 @@ lib.libfive_import_mesh_last_message.restype = ctypes.c_char_p
 lib.libfive_tree_eval_f.argtypes = [libfive_tree, libfive_vec3_t]
 lib.libfive_tree_eval_f.restype = ctypes.c_float
 
+try:
+    lib.libfive_tree_eval_many.argtypes = [ctypes.POINTER(libfive_tree), ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
+    lib.libfive_tree_eval_many.restype = None
+except AttributeError:
+    pass    # an older library: the numbers are read one tree at a time (see curves.values_of)
+
 lib.libfive_tree_eval_r.argtypes = [libfive_tree, libfive_region_t]
 lib.libfive_tree_eval_r.restype = libfive_interval_t
 
@@ -448,6 +454,12 @@ try:
     libfive_tetfea_p = ctypes.c_void_p
     lib.libfive_tetfea_new.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float, ctypes.c_float, ctypes.c_float]
     lib.libfive_tetfea_new.restype = libfive_tetfea_p
+    # (a mesh made elsewhere in place of the one the kernel makes of the shape: stdlib/sim_mesh.py)
+    for _kind in ('tetfea', 'tetthermal', 'tetflow'):
+        _set_mesh = getattr(lib, 'libfive_%s_set_mesh' % _kind, None)
+        if _set_mesh is not None:
+            _set_mesh.argtypes = [ctypes.c_void_p, ctypes.c_int64, ctypes.POINTER(ctypes.c_double), ctypes.c_int64, ctypes.POINTER(ctypes.c_int32)]
+            _set_mesh.restype = ctypes.c_int
     lib.libfive_tetfea_add_support.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double]
     lib.libfive_tetfea_add_support.restype = None
     lib.libfive_tetfea_add_force.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_float, ctypes.c_float,

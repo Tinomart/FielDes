@@ -22,6 +22,7 @@ from fieldes.stdlib.meshing import *
 from fieldes.stdlib.solvers import *
 from fieldes.stdlib.fea import *
 from fieldes.stdlib.optimization_measures import *
+from fieldes.stdlib.analysis_results import *
 from fieldes.stdlib.boundary_conditions import *
 from fieldes.stdlib.selection import *
 from fieldes.stdlib.features import *
@@ -36,6 +37,8 @@ from fieldes.stdlib.surfaces import *
 from fieldes.stdlib.points import *
 from fieldes.stdlib.curves import *
 from fieldes.stdlib.profile import *
+from fieldes.stdlib.morph import *
+from fieldes.stdlib.mesh_edit import *
 from fieldes.stdlib.measure import *
 from fieldes.stdlib.cad import *
 from fieldes.stdlib.lattices import *

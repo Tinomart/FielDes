@@ -156,22 +156,27 @@ def _key_of(value):
         raise _No()
 
 
+_MANY_NAMES = 200            # (more names than this in a statement: it is not kept, see _key)
+
+
 def _key(p, gs, source_lines):
     names = sorted({n.id for n in ast.walk(p.value) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)})
+    # (a statement that names hundreds of models -- the body of an imported mesh names every one of its points -- is not looked up: its key is made from each of them, 1.9 ms a point, 1.4 s for the 747
+    # points of a mesh, and the statement itself is built in 0.2 s: nothing is gained by keeping it, H90)
+    if len(names) > _MANY_NAMES:
+        raise _No()
     parts = []
-    for name in names:
-        if name in gs:
-            parts.append((name, _key_of(gs[name])))
-        elif not hasattr(builtins, name):
-            continue                                  # (a name local to a comprehension or lambda)
-        else:
-            parts.append((name, ('builtin', name)))
+    from fieldes.stdlib import content_cache
+    with content_cache.frozen_vars() as frozen:        # (the numbers of the script's var()s are read once for all the names of the statement, not once for each: a statement that names 642 points took 5.4 s, H72)
+        for name in names:
+            if name in gs:
+                parts.append((name, _key_of(gs[name])))
+            elif not hasattr(builtins, name):
+                continue                                  # (a name local to a comprehension or lambda)
+            else:
+                parts.append((name, ('builtin', name)))
+    numbers = frozen[1]                                # (the numbers of the script's var()s: a field made from them depends on them)
     text = _text(p, source_lines)
-    try:
-        from fieldes.stdlib.fields import _vars_key
-        numbers = _vars_key()                          # (the numbers of the script's var()s: a field made from them depends on them)
-    except Exception:
-        numbers = None
     return hashlib.sha1(repr(('fdfc', 1, _code_identity(), text, tuple(parts), numbers)).encode('utf-8', 'surrogatepass')).hexdigest()
 
 
@@ -206,6 +211,10 @@ def _unjson(v):
 def lookup(p, gs, source_lines):
     ''' The field this statement would build, if it has been built before from the same inputs: returns (hit, key), hit being
         (Shape, text it printed) or None; the key is for store() after a miss (None: this statement is not kept) '''
+    # (a statement that only names a model -- a line `ball`, or `b = ball` -- builds nothing: there is no field to keep, and its key is the key of a shape, which is a call into the kernel for each statement:
+    # 1.8 ms for each of the 747 points of an imported mesh, 1.4 s of a run of 3 s, H90)
+    if isinstance(getattr(p, 'value', None), ast.Name):
+        return None, None
     if not _eligible(p):
         return None, None
     try:
@@ -235,6 +244,11 @@ def store(key, shape, printed, seconds):
     ''' Keeps a field this statement built (called after a miss), if it took long enough to be worth it '''
     from fieldes.shape import Shape
     if key is None or type(shape) is not Shape or seconds < _MIN_SECONDS:
+        return
+    # (a body made of points -- morph_polyhedron, morph_body: `_ctrls` -- marks the points it was made of, what each is and how long its edges are (see curves.mark): a result handed back by the cache
+    # would not mark the points of the run that asked for it, and a double click on one of them would find "not a point of a profile or a curve".  A profile and a curve are of their own types, which
+    # are not kept either.  The key could not say it: the marks are no part of the expression of a point -- the user's double click on a morph cube, 2026-11-01)
+    if getattr(shape, '_ctrls', None) is not None:
         return
     with _lock:
         _memory[key] = (shape, printed)

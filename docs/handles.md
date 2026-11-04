@@ -68,7 +68,7 @@ rows): they are all unlocked, and still selected.
 **The dot in the middle of a gizmo** drags the model freely: it follows the cursor in the plane through the gizmo
 that faces the camera (all the selected models together, for the shared gizmo).
 
-**A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **influence** -- `point(..., influence=r)`, one number, dragged with the one
+**A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **influence** -- `point(position=(..., 0, 0), influence=r)`, one number, dragged with the one
 gold ring round the dot -- is how strongly a spline leaves it, what multiplies the radius of a round corner at it, and the radius of the field round it; its **scale**, always uniform, is how thick a sweep is at it. **On a spline point of a path the ring is its
 scale (the tube gets thicker there) and Shift and the ring drag its influence**; on every other point the ring is the influence. **A point of a profile has no arrows**: its dot, pressed and dragged, moves it in the plane of the profile (several points of one profile selected
 together have just the dot too), it has one rotation ring (in the plane) when it is a spline point, and the scale handle. See [Profiles](profiles.md).
@@ -78,7 +78,7 @@ across it. So the **blue ring turns what is swept about the curve** (the twist o
 curve and the red and green move it across. The numbers written are the same three rotation angles and three position numbers as ever: a turn about one of these axes is the sum of that turn and the one the point already had.
 (The gizmo keeps the axes it was pressed with while you drag it.)
 
-A `point(...)` has no surface, so it is drawn as the dot alone, **always** -- whatever the gizmo's mode, selected or not -- while it is shown
+A `point(position=(..., 0, 0))` has no surface, so it is drawn as the dot alone, **always** -- whatever the gizmo's mode, selected or not -- while it is shown
 (its eye in the model tree: a point whose eye is off draws nothing). **Click the dot to select the point**; then its full gizmo shows (the arrows; mode *never*
 keeps the dot only) and the dot, or an arrow, drags it. A locked point is a dot that cannot be moved. In an [app](apps.md) the same: `app.viewport({'Load point': p})`
 shows the dot, with its name over it.
@@ -118,9 +118,8 @@ to zoom. It writes, into the call that makes the shape:
 
 ```python
 stand = box(
-    (0, 0, 0),
     (40, 20, 6),
-    position=(var(0), var(0), var(0)),
+    position=(var(20), var(10), var(3)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )

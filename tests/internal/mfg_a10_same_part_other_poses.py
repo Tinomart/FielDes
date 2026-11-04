@@ -21,10 +21,10 @@ from mfgkit import *
 t = Table('a10_same_part_other_poses: one part with a plate of 0.3 and one of 0.7 mm, a plate of 2 mm and a slot of 0.2 mm, held to a wall rule of 0.8 and a gap rule of 0.4: as it is, moved off the grid, turned 37 degrees, mirrored, and at half and twice the size with the rules scaled with it: the same four places must be marked and the same amounts short')
 
 def make():
-    a = box((0, 0, 0), (6, 6, 0.3))
-    b = box((9, 0, 0), (15, 6, 0.7))
-    c = box((18, 0, 0), (24, 6, 2.0))
-    d = difference(box((27, 0, 0), (36, 6, 4)), box((31, -1, 1), (31.2, 7, 5)))
+    a = box((6, 6, 0.3), position=(3, 3, 0.15))
+    b = box((6, 6, 0.7), position=(12, 3, 0.35))
+    c = box((6, 6, 2), position=(21, 3, 1))
+    d = difference(box((9, 6, 4), position=(31.5, 3, 2)), box((0.2, 8, 4), position=(31.1, 3, 3)))
     return union(union(union(a, b), c), d)
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 probes = [(3.0, 3.0, 0.3), (12.0, 3.0, 0.7), (21.0, 3.0, 2.0), (31.0, 3.0, 2.5)]        # (a face of each: the 0.3 plate, the 0.7 plate, the 2 mm plate, a wall of the slot)

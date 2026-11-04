@@ -160,6 +160,11 @@ public:
      *  optimization  */
     void setOrder(int order);
 
+    /*  A mesh made elsewhere (meshFromArrays) in place of the one prepare() makes from the shape: the part, the conditions and the material are as they were, only
+     *  the elements are the user's.  The shape stays what the 10-node element's curved edges are measured against, and `h` of the constructor is then the size a
+     *  node's distance to a region is measured in (a twentieth of it).  Before prepare  */
+    void setMesh(std::shared_ptr<const TetMesh> mesh) { m_given = std::move(mesh); m_prepared = false; }
+
     /*  Meshes the part and resolves the supports and loads; false with a
      *  message if the problem can't be solved as given  */
     bool prepare(std::string& error);
@@ -261,6 +266,7 @@ private:
     Tree m_shape;
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_E, m_nu;
+    std::shared_ptr<const TetMesh> m_given;     // (a mesh made elsewhere: see setMesh)
 
     struct Support { Tree region; bool fix[3]; int loadCase = -1; Eigen::Vector3d displacement = Eigen::Vector3d::Zero(); };
     struct Force { Tree region; Eigen::Vector3d total; int loadCase; Tree profile = Tree::invalid(); };

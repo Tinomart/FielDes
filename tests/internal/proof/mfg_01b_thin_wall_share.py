@@ -20,8 +20,8 @@ view.set_bounds([-5, -5, -5], [45, 45, 35], auto_scale=True)
 view.set_resolution(3)
 view.set_quality(8)
 
-plate = box((0, 0, 0), (40, 40, 10))
-fin = box((15, 15, 10), (15.6, 25, 30))
+plate = box((40, 40, 10), position=(20, 20, 5))
+fin = box((0.6, 10, 20), position=(15.3, 20, 20))
 part = union(plate, fin)
 
 total = 5224.0

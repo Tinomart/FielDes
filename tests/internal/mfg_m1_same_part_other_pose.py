@@ -19,12 +19,12 @@ from mfgkit import *
 t = Table('m1_same_part_other_pose: one part with a thin fin, a narrow slot and an inside corner, made 7 ways: as it is, moved off the grid, turned 37 and 90 degrees, mirrored, half the size, twice the size (the rule scaled with it): the answer must be the same')
 
 # THE PART (the same in every variant before it is moved, turned, mirrored or scaled): a plate 30 x 30 x 4, a fin 0.5 thick, a slot 0.3 wide between two blocks, an L of two walls
-plate = box((0, 0, 0), (30, 30, 4))
+plate = box((30, 30, 4), position=(15, 15, 2))
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-fin = box((3, 3, 4), (3.5, 14, 14))
-block_a = box((8, 3, 4), (13, 14, 10))
-block_b = box((13.3, 3, 4), (18.3, 14, 10))
-ell = union(box((20, 18, 4), (28, 21, 12)), box((20, 18, 4), (23, 28, 12)))
+fin = box((0.5, 11, 10), position=(3.25, 8.5, 9))
+block_a = box((5, 11, 6), position=(10.5, 8.5, 7))
+block_b = box((5, 11, 6), position=(15.8, 8.5, 7))
+ell = union(box((8, 3, 8), position=(24, 19.5, 8)), box((3, 10, 8), position=(21.5, 23, 8)))
 base = union(union(union(union(plate, fin), block_a), block_b), ell)
 # THE VARIANTS: the pose (a function of the part), the size factor of the whole part and of its rule; and where it stands in the picture (the integers: 80 mm apart)
 poses = [('as it is', lambda p: p, 1.0),

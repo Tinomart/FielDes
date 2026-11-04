@@ -196,7 +196,7 @@ distance structure of its triangles), once, and the render then evaluates it onl
 ```python
 part  = import_model("step/panel.step")[0][0]
 light = offset(part, -1.0)                          # anything made from the part
-final = exclude(light, sphere(12, center=(0, 0, 6)), source=part)
+final = exclude(light, sphere(12, position=(0, 0, 6)), source=part)
 ```
 
 - The part may be moved, rotated, scaled or mirrored after the import; the locked field follows. Dragging a

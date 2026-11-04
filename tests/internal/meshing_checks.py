@@ -76,7 +76,7 @@ def run(label, fn):
 
 # ---------------------------------------------------------------- 1. a box of tetrahedra
 stage('1. box 20 x 10 x 6, tetrahedra 2 mm')
-body = box((0, 0, 0), (20, 10, 6))
+body = box((20, 10, 6), position=(10, 5, 3))
 m = run('mesh_volume box', lambda: mesh_volume(body, 2.0))
 if m is not None:
     print(m)
@@ -116,7 +116,7 @@ print(took())
 
 # ---------------------------------------------------------------- 3. a sphere
 stage('3. sphere r 10, 1.5 mm, curved boundary')
-sph = sphere(10, (0, 0, 0))
+sph = sphere(10)
 ms = run('sphere', lambda: mesh_volume(sph, 1.5))
 if ms is not None:
     print(ms)
@@ -183,7 +183,7 @@ if gm is not None:
 
 # ---------------------------------------------------------------- 6. zones
 stage('6. zones on the box')
-zm = run('zones', lambda: mesh_volume(body, 2.0, zones={'inlet': box((-1, -1, -1), (0.01, 11, 7)), 'outlet': box((19.99, -1, -1), (21, 11, 7))}))
+zm = run('zones', lambda: mesh_volume(body, 2.0, zones={'inlet': box((1.01, 12, 8), position=(-0.495, 5, 3)), 'outlet': box((1.01, 12, 8), position=(20.495, 5, 3))}))
 if zm is not None:
     print(zm)
     names = zm.zone_names
@@ -213,9 +213,9 @@ print(took())
 
 # ---------------------------------------------------------------- 7. boundary layers
 stage('7. boundary layers on a sphere in a box of air')
-air = difference(box((-20, -20, -20), (20, 20, 20)), sphere(5, (0, 0, 0)))
-layers = inflation_layers(sphere(5, (0, 0, 0)), first_height=0.2, growth_rate=1.2, layers=4)
-bm = run('boundary layers', lambda: mesh_volume(air, 3.0, boundary_layers=layers, zones={'farfield': difference(box((-30, -30, -30), (30, 30, 30)), sphere(15, (0, 0, 0)))}))
+air = difference(box(40), sphere(5))
+layers = inflation_layers(sphere(5), first_height=0.2, growth_rate=1.2, layers=4)
+bm = run('boundary layers', lambda: mesh_volume(air, 3.0, boundary_layers=layers, zones={'farfield': difference(box(60), sphere(15))}))
 if bm is not None:
     print(bm)
     for note in bm.notes:
@@ -423,13 +423,13 @@ print(took())
 stage('10. export_mesh of a Mesh, the default element size')
 p = run('export_mesh', lambda: export_mesh(zm, os.path.join(OUT, 'via_export_mesh.vtu')))
 check('export_mesh writes a Mesh', p is not None and os.path.exists(p))
-dm = run('default size', lambda: mesh_volume(box((0, 0, 0), (60, 40, 6))))
+dm = run('default size', lambda: mesh_volume(box((60, 40, 6), position=(30, 20, 3))))
 if dm is not None:
     print(dm)
     check('default size: about 40 along the longest side', 1.2 < dm.element_size < 1.8, '{:.3f}'.format(dm.element_size))
 # (a fat body is held by the budget: a 10 mm cube is about 0.49 mm, 107,000 tetrahedra measured -- a mesh the viewer draws, with its quality numbers -- and not the 0.29 mm, half a million, that it was)
 from fieldes.stdlib.element_size import default_element_size
-cube_size = run('default size of a cube', lambda: default_element_size(box((0, 0, 0), (10, 10, 10)), (0, 0, 0), (10, 10, 10), 40.0, meshing.DEFAULT_ELEMENTS))
+cube_size = run('default size of a cube', lambda: default_element_size(box(10, position=(5, 5, 5)), (0, 0, 0), (10, 10, 10), 40.0, meshing.DEFAULT_ELEMENTS))
 check('default size: a cube is held by the budget of 100,000 tetrahedra (0.4 to 0.6 mm)', cube_size is not None and 0.4 < cube_size < 0.6 and meshing.DEFAULT_ELEMENTS <= meshing.MAX_DISPLAYED,
       '{} mm, budget {}, drawn up to {}'.format(cube_size, meshing.DEFAULT_ELEMENTS, meshing.MAX_DISPLAYED))
 print(took())

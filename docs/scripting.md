@@ -53,7 +53,7 @@ After the script runs the viewport shows:
 
 ```python
 ball = sphere(5)
-hole = cylinder(1, 12, (0, 0, -6))
+hole = cylinder(1, 12, position=(0, 0, 0))
 # hidden: hole
 difference(ball, hole)          # displayed
 ball                            # also displayed: a second model
@@ -83,14 +83,14 @@ Every object that is made by a call -- a shape, the result of an operation, a co
 
 | argument | what it says |
 |---|---|
-| `position=(x, y, z)` | mm: how far the object is moved from where its definition puts it (0 is where it is made) |
-| `rotation=(x, y, z)` | degrees: how it is turned about the middle of its box, x first, then y, then z |
-| `scale=(x, y, z)` or one number | factors: how big it is, about the middle of its box |
+| `position=(x, y, z)` | mm: **where the object is** -- the one position of every object, and it is global, in the world. A shape that is made by its size alone (`box((20, 10, 5))`, `sphere(5)`, `cylinder(4, 20)`) is made at the origin and moved there: not written, it stands at (0, 0, 0) (a cone and a pyramid stand on their base); the result of an operation, a copy, a lattice or an import stands where its parts put it, and `position` says where the middle of its box is (not written: where it is made) |
+| `rotation=(x, y, z)` | degrees: how it is turned about its origin (not written: its position), x first, then y, then z |
+| `scale=(x, y, z)` or one number | factors: how big it is, about its origin (not written: its position) |
 | `alpha=` | 0 to 1: how solid it is drawn (1 is solid, 0 is a ghost, 5 % solid at the least); the object is the same in every other way |
-| `origin=(x, y, z)` | mm, in the place its definition puts it: **the origin of the object** -- the point it is turned and scaled about and where its gizmo is. Not written: the middle of its box. FielDes writes it when you select the object and a point and press **O**: the point becomes the origin and the object stays where it is (`position` is made up for it when the object is turned or scaled) |
+| `origin=(x, y, z)` | mm, in the place the object is made (before its position moves it): **the origin of the object** -- the point it is turned and scaled about and where its gizmo is. Not written: its position. FielDes writes it when you select the object and a point and press **O**: the point becomes the origin and the object stays where it is (`position` is made up for it when the object is turned or scaled) |
 
 ```python
-part = box((0, 0, 0), (20, 10, 5), position=(40, 0, 0), rotation=(0, 0, 30), alpha=0.5)
+part = box((20, 10, 5), position=(40, 0, 0), rotation=(0, 0, 30), alpha=0.5)
 ```
 
 None of them is needed: an object without them stands where its definition puts it. They are ordinary arguments of the call: **the model tree shows all four inside every object**, written or not (the ones that
@@ -105,7 +105,7 @@ part = place(part, position=(40, 0, 0))
 ```
 
 A function that has an argument of that name of its own (`hole(position=...)`, `lattice(scale=...)`) keeps it and takes no placement arguments: a model it makes is placed with `place`. A profile, a polyline or a spline is
-placed through its points, which are what the gizmo drags. Copies: [`instance`](handles.md#copies-shiftd-and-ctrld) takes `position` and `rotation`.
+placed through its points, which are what the gizmo drags. Copies: [`instance`](handles.md#copies-shiftd-and-ctrld) takes `position` and `rotation`. Objects that depend on each other -- an operation and the parts it is made of -- are linked in the background: when one is moved, turned or scaled the others go with it as one group, and nothing of it is written in the script or shown in the tree.
 
 ## Viewport settings
 
@@ -135,12 +135,12 @@ its own); see [Region and resolution](step-import.md#region-and-resolution).
 `curve`); `extrude` turns a 2D shape into a solid and `path_extrude` sweeps it along a curve; `text` makes lettering; `emptiness` is the empty
 shape. Free-form and analytic surfaces: `ellipsoid`, `elliptic_cylinder`, `hyperboloid`, `paraboloid`,
 `quadric`, `extruded_curve`, `revolved_curve`, `helical_curve`, `helical_sweep`, `helical_revolve`,
-`coil_spring`, `wave_block`. `half_space(norm, point)` is the solid on one side of a plane, with no end: not a shape to look at, and not in the menus, but what `intersection` and `difference` cut a body by
+`coil_spring`, `wave_block`. `half_space(norm, position=point)` is the solid on one side of a plane, with no end: not a shape to look at, and not in the menus, but what `intersection` and `difference` cut a body by
 (Operations > Combining > cut_plane does that from the menus) and a region of a mesh zone, a support or a load.
 
-**Every shape has one primitive, with that shape and nothing else.** `box(a, b)` is the box between two opposite corners (a true distance
+**Every shape has one primitive, with that shape and nothing else.** `box(tuple(q - p for p, q in zip(a, b)), position=tuple((p + q) / 2 for p, q in zip(a, b)))` is the box between two opposite corners (a true distance
 outside it, which matters for offsets and analyses); there is no centred box, no cube, no mitered box -- a `box` is a box. The 3D shapes stand
-along z (`cylinder(radius, height, base)` stands on `base`), the 2D shapes lie in the plane z = 0; one that stands another way is turned with
+along z (a `cylinder` is centred on its `position`, a `cone` stands on it), the 2D shapes lie in the plane z = 0; one that stands another way is turned with
 `rotate_x` / `rotate_y` / `rotate_z`, one that sits somewhere else is moved with `move`.
 
 ## Combining shapes
@@ -173,15 +173,15 @@ bodies**, in the order you select them, and the **first** body -- the one the fi
   each body, the turn about that contact lines them up as well (two flat faces of a box on the table's edge);
 - **no face on one of the bodies:** the edges are made parallel (the least turn), and a place is only moved;
 - **the points:** the body is moved so that its point is on the other body's point; a face or an edge that has no point of its own is met by its middle, so two faces alone meet middle to middle (a cone's base put on a cylinder's end, on its axis);
-- **a feature that is on no body** -- a `point(...)` of the scene -- is a place of the second body.
+- **a feature that is on no body** -- a `point(position=(..., 0, 0))` of the scene -- is a place of the second body.
 
 **A snap is a move, so nothing new is made.** The move is written where the gizmo writes one -- into the body's own `position=` and `rotation=` (see [Placement](#placement-where-an-object-is-how-it-is-turned-how-big-and-how-see-through)),
 on top of the placement the body has -- so the mesh that is drawn is simply carried to its new place: no new model, no new calculation, and one undo takes it back. The numbers are `var()` numbers like the gizmo's, so the
 gizmo drags them afterwards: a clearance between the faces, or a turn about the line they touch along, is that drag (or typing the numbers).
 
 ```python
-bracket = box((0, 0, 0), (20, 10, 5))
-plate = box((0, 0, 0), (60, 40, 10))
+bracket = box((20, 10, 5), position=(10, 5, 2.5))
+plate = box((60, 40, 10), position=(30, 20, 5))
 foot = select_surface(bracket, seed=(10, 5, 0), angle=5)       # the bottom of the bracket
 foot_corner = corner_at(bracket, (0, 0, 0))                     # and its corner at the origin
 top = select_surface(plate, seed=(30, 20, 10), angle=5)        # the top of the plate
@@ -191,7 +191,7 @@ plate_corner = corner_at(plate, (0, 0, 10))                     # and the plate'
 Select `foot`, `foot_corner`, `top` and `plate_corner` (in this order) and press `S`: the call of the bracket reads
 
 ```python
-bracket = box((0, 0, 0), (20, 10, 5), position=(var(0), var(0), var(10)), rotation=(var(0), var(0), var(0)), scale=(var(1), var(1), var(1)))
+bracket = box((20, 10, 5), position=(var(0), var(0), var(10)), rotation=(var(0), var(0), var(0)), scale=(var(1), var(1), var(1)))
 ```
 
 and the places of the faces and points that were made on the bracket move with it -- `seed=(10, 5, 10)`, `(0, 0, 10)` -- in the same edit, so they stay on the bracket (a place that is a name and not three numbers is left, and
@@ -220,7 +220,7 @@ thick = part - 0.02 * result.von_mises      # grow the part where it is highly s
 ```
 
 Numbers and shapes mix freely, and sequences of three numbers are points
-(`cylinder(1, 12, (0, 0, -6))`, each coordinate may be a `var()` or a field).
+(`cylinder(1, 12, position=(0, 0, 0))`, each coordinate may be a `var()` or a field).
 
 **Field × field works like number × number**, pointwise -- a number is only a field with the same value everywhere:
 
@@ -250,7 +250,7 @@ the [field viewer](interface.md#the-field-viewer), which shows its values.)
 **A field goes wherever a number goes** — that is the rule of the library, not a feature of a few functions:
 `offset(part, 1.0)` and `offset(part, ramp(z_field(), (0, 40), (0.2, 2.0)))` are written alike. See
 [Fields everywhere](fields.md#fields-everywhere) for where it holds and for the few numbers that must stay numbers (counts,
-tolerances, resolutions). A **point** (`point(x, y, z)`) is a model of its own and is accepted where a coordinate goes:
+tolerances, resolutions). A **point** (`point(position=(x, y, z))`) is a model of its own and is accepted where a coordinate goes:
 `distance_to_point(anchor)`.
 
 ## Low level: your own shapes from x, y and z

@@ -25,8 +25,8 @@ from mfgkit import *
 t = Table('v1_every_refusal: every refusal of the constraint and of the tool: an overhang of 90 or -5 degrees, a draft of 0 or 45, a wall of -1 mm or of "thin", a direction of (0, 0, 0) or of two numbers, a support without an overhang or of a kind that does not exist, a negative clearance, a fix that does not exist, no constraint, an empty part: each says what is wrong and what is allowed')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = box((0, 0, 0), (10, 10, 10))
-empty = intersection(box((0, 0, 0), (1, 1, 1)), box((5, 5, 5), (6, 6, 6)))
+part = box(10, position=(5, 5, 5))
+empty = intersection(box(1, position=(0.5, 0.5, 0.5)), box(1, position=(5.5, 5.5, 5.5)))
 lo, hi = (-3, -3, -3), (13, 13, 13)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=3)

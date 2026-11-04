@@ -7,7 +7,7 @@ surface alone, of triangles or quadrilaterals. It is in the **Engineering** menu
 ```python
 from fieldes import *
 
-part = difference(box((0, 0, 0), (60, 40, 6)), cylinder(8, 6, (30, 20, 0)))      # a plate with a hole
+part = difference(box((60, 40, 6), position=(30, 20, 3)), cylinder(8, 6, position=(30, 20, 3)))      # a plate with a hole
 mesh = mesh_volume(part, element_size=1.5)
 print(mesh)                                  # Mesh mesh: 55,880 tet4 cells (element size about 1.5 mm), 12,420 nodes; boundary 10,432 tri3; zones wall (10,432)
 print(mesh.quality().report())               # skewness, orthogonal quality, aspect ratio ... and what they mean for a solver
@@ -130,6 +130,12 @@ export_mesh(mesh, 'part.vtu')                                # the same through 
 `.msh` is Gmsh's; ask for Fluent's with `format='fluent'`. `zones=False` leaves the zones out. The cells and faces of the Fluent and OpenFOAM files are written from the cells' own faces, and
 every cell of them is checked closed (the faces' area vectors, outward, add up to zero) -- see the probe in `tests/`. The ordering of the nodes of a prism follows the usual convention (the
 first triangle's normal toward the second); **a solver that reads prisms has the last word**: open the file and look at the volumes it reports.
+
+## Solving on it in FielDes
+
+The mesh is not only for another program: `static_analysis(mesh, ...)`, `modal_analysis(mesh, ...)` and `thermal_analysis(mesh, ...)` solve on it, and `fluid_analysis(body, mesh_of_the_fluid, ...)`
+on the mesh of the fluid -- with the sizes, the grading and the mending the meshing gave it. See [A mesh of your own](analysis.md#a-mesh-of-your-own) in the analysis page. A mesh of hexahedra or with
+prism layers is for the solver of another program: FielDes' own solvers take tetrahedra.
 
 ## For CFD
 

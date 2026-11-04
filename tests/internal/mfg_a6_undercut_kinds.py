@@ -23,19 +23,19 @@ parts = []
 spot = lambda k: (22.0 * (k % 3), 22.0 * (k // 3))                        # (three to a row, 22 mm apart, the rows 22 apart)
 for k in range(6):
     cx, cy = spot(k)
-    cube = box((cx, cy, 0), (cx + 16, cy + 16, 16))
+    cube = box(((cx + 16) - cx, (cy + 16) - cy, 16), position=((cx + (cx + 16)) / 2, (cy + (cy + 16)) / 2, 8))
     if k == 0:
-        cube = difference(cube, box((cx - 1, cy + 4, 6), (cx + 8, cy + 12, 10)))
+        cube = difference(cube, box(((cx + 8) - (cx - 1), (cy + 12) - (cy + 4), 4), position=(((cx - 1) + (cx + 8)) / 2, ((cy + 4) + (cy + 12)) / 2, 8)))
     elif k == 1:
-        cube = difference(cube, box((cx + 4, cy + 4, 6), (cx + 12, cy + 12, 17)))
+        cube = difference(cube, box(((cx + 12) - (cx + 4), (cy + 12) - (cy + 4), 11), position=(((cx + 4) + (cx + 12)) / 2, ((cy + 4) + (cy + 12)) / 2, 11.5)))
     elif k == 2:
-        cube = difference(cube, cylinder(3.0, 18, (cx + 8, cy + 8, -1)))
+        cube = difference(cube, cylinder(3.0, 18, position=(cx + 8, cy + 8, -1)))
     elif k == 3:
-        cube = difference(cube, box((cx - 1, cy + 5, 5), (cx + 17, cy + 11, 11)))
+        cube = difference(cube, box(((cx + 17) - (cx - 1), (cy + 11) - (cy + 5), 6), position=(((cx - 1) + (cx + 17)) / 2, ((cy + 5) + (cy + 11)) / 2, 8)))
     elif k == 4:
-        cube = difference(cube, box((cx + 5, cy + 5, 5), (cx + 11, cy + 11, 11)))
+        cube = difference(cube, box(((cx + 11) - (cx + 5), (cy + 11) - (cy + 5), 6), position=(((cx + 5) + (cx + 11)) / 2, ((cy + 5) + (cy + 11)) / 2, 8)))
     else:
-        cube = union(box((cx, cy, 0), (cx + 6, cy + 16, 16)), box((cx, cy, 10), (cx + 16, cy + 16, 16)))
+        cube = union(box(((cx + 6) - cx, (cy + 16) - cy, 16), position=((cx + (cx + 6)) / 2, (cy + (cy + 16)) / 2, 8)), box(((cx + 16) - cx, (cy + 16) - cy, 6), position=((cx + (cx + 16)) / 2, (cy + (cy + 16)) / 2, 13)))
     parts.append(cube)
 part = parts[0]
 for p in parts[1:]:

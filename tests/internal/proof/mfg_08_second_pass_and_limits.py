@@ -13,7 +13,7 @@ view.set_bounds([-5, -55, -5], [45, 45, 45], auto_scale=True)
 view.set_resolution(3)
 view.set_quality(8)
 
-ledge = union(box((0, 0, 0), (10, 40, 40)), box((10, 0, 20), (30, 40, 25)))
+ledge = union(box((10, 40, 40), position=(5, 20, 20)), box((20, 40, 5), position=(20, 20, 22.5)))
 constraint = manufacturing_constraint(overhang=45)
 
 first = manufacturing_optimization(ledge, constraints=[constraint], max_support_height=25, max_change=0.6)
@@ -22,7 +22,7 @@ second = manufacturing_optimization(first, constraints=[constraint], max_support
 print('=== second (the result of the first, given to the shell again)'); print(second)
 small = manufacturing_optimization(ledge, constraints=[constraint], max_support_height=25, max_change=0.05)
 print('=== small (max_change=0.05)'); print(small)
-kept = manufacturing_optimization(ledge, constraints=[constraint], max_support_height=25, max_change=0.6, keep=[box((10, 0, 5), (31, 41, 20))])
+kept = manufacturing_optimization(ledge, constraints=[constraint], max_support_height=25, max_change=0.6, keep=[box((21, 41, 15), position=(20.5, 20.5, 12.5))])
 print('=== kept (nothing may change under the slab)'); print(kept)
 original = move(ledge, (0, -50, 0))
 original

@@ -14,14 +14,14 @@
 from fieldes import *
 
 view.set_bounds((-45, -35, -30), (45, 35, 30), auto_scale=True)
-view.set_resolution(5)                     # samples per mm: a strut 1.2 mm thick wants three or four
+view.set_resolution(25)                     # normed by the size of the part: ten samples across it for every unit: a strut 1.2 mm thick wants three or four
 view.set_quality(8)
 
 x, y, z = Shape.X(), Shape.Y(), Shape.Z()
 
 # the surface: where this field is zero (negative below it, positive above it), and the patch of it wanted: 60 x 40 mm
 wave = z - 8 * (0.12 * x).sin()
-patch = box((-30, -20, -14), (30, 20, 14))
+patch = box((60, 40, 28))
 
 # a custom cell, coordinates 0..1 across it, one corner drawn and mirrored in x, y and z: from the corner "o" beams run along the
 # edges to their middles ("ex", "ey", "ez"), from the centre "c" to the middles of the faces at that corner ("fx", "fy", "fz")

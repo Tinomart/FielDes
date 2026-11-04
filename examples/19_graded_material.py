@@ -16,13 +16,13 @@
 from fieldes import *
 
 view.set_bounds([-5, -5, -15], [105, 25, 15], auto_scale=True)
-view.set_resolution(4)
+view.set_resolution(20)
 view.set_quality(8)
 
-beam = box((0, 0, 0), (100, 20, 10))
-wall = box((-1, -1, -1), (0.01, 21, 11))
-tip = box((99.99, -1, -1), (101, 21, 11))
-top = box((-1, -1, 9.99), (101, 21, 11))
+beam = box((100, 20, 10), position=(50, 10, 5))
+wall = box((1.01, 22, 12), position=(-0.495, 10, 5))
+tip = box((1.01, 22, 12), position=(100.495, 10, 5))
+top = box((102, 22, 1.01), position=(50, 10, 10.495))
 deflection = lambda r: -evaluate(r.uz, (100, 10, 5))
 
 

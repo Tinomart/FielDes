@@ -20,8 +20,8 @@ from mfgkit import *
 t = Table('s1_block_of_support: the ledge with support="block" and a budget of 5 %: the gusset is refused, a block of support is made under the ledge, with a clearance of 0.3 mm to it and none in the strip kept free, and the part itself is unchanged')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((0, 0, 0), (10, 40, 40)), box((10, 0, 20), (30, 40, 25)))
-strip = box((25, -1, -1), (31, 41, 41))
+part = union(box((10, 40, 40), position=(5, 20, 20)), box((20, 40, 5), position=(20, 20, 22.5)))
+strip = box((6, 42, 42), position=(28, 20, 20))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45, support='block', support_gap=0.3, no_support=[strip])
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

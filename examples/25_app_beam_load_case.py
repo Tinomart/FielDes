@@ -20,20 +20,20 @@ material = app.choice('Material', ['steel', 'aluminium'], 'steel')
 report = app.save_as('Report', 'beam_load_case.txt', 'Text files (*.txt)', 'The key numbers of the analysis, as text')
 
 view.set_bounds((-10, -15, -15), (75, 35, 25), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
-beam = difference(box((0, 0, 0), (60, 20, 10)), cylinder(3, 20, (30, 10, -5)))
+beam = difference(box((60, 20, 10), position=(30, 10, 5)), cylinder(3, 20, position=(30, 10, 5)))
 beam = lock(beam)
 
 # The load point: a point with a gizmo.  Its dot is always there; click it and drag.
-pull = point(55, 10, 10,
-    position=(var(0), var(0), var(0)),
+pull = point(
+    position=(var(55), var(10), var(10)),
 )
 
 # The beam is held at its left end; the load pulls down where the point is (a block round it: the force is spread over the beam's surface in it)
-support = fixed(box((-1, -1, -1), (1, 21, 11)))
-load = force(move(box((-6, -11, -6), (6, 11, 6)), pull), (0, 0, -force_n))
+support = fixed(box((2, 22, 12), position=(0, 10, 5)))
+load = force(move(box((12, 22, 12)), pull), (0, 0, -force_n))
 
 body = beam
 if app.running():

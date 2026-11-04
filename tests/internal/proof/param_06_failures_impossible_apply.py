@@ -25,17 +25,18 @@ print('KNOWN BEST by beam theory: thickness %.2f mm for 90 MPa' % (6.0 * P * L /
 print('STARTING design : thickness 10 mm')
 
 thin = var(10)
-bar = box((0, 0, 0), (100, thin, 12))
-wall = fixed(box((-1, -1, -1), (1, 60, 60)))
-pull = force(box((99, -1, -1), (101, 60, 60)), (0, 0, -200))
+bar = box((100, thin, 12), position=(50, thin / 2, 6))
+wall = fixed(box((2, 61, 61), position=(0, 29.5, 29.5)))
+pull = force(box((2, 61, 61), position=(100, 29.5, 29.5)), (0, 0, -200))
 stress = static_analysis(bar, supports=[wall], loads=[pull], material=aluminium, element_size=4)
 
-best = parametric_optimization(stress, (thin, 0.05, 20), constraints=[minimize('mass'), 'max_von_mises <= 90'],
-                               max_evaluations=16, apply=True)
-impossible = parametric_optimization(stress, (thin, 8, 20), constraints=[minimize('mass'), 'max_von_mises <= 1'], max_evaluations=16)
+mass_1 = stress.mass
+max_von_mises_1 = stress.max_von_mises
+best = parametric_optimization(stress, (thin, 0.05, 20), conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90)], max_evaluations=16, apply=True)
+impossible = parametric_optimization(stress, (thin, 8, 20), conditions=[minimize(mass_1), keep_below(max_von_mises_1, 1)], max_evaluations=16)
 print('=== the run that asks for 1 MPa:')
 print(impossible)
 
-starting_bar = move(box((0, 0, 0), (100, 10, 12)), (0, -25, 0))
+starting_bar = move(box((100, 10, 12), position=(50, 5, 6)), (0, -25, 0))
 starting_bar
 best

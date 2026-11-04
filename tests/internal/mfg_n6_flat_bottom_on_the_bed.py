@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('n6_flat_bottom_on_the_bed: a block 10 x 10 x 10 standing on the print bed with an overhang of 45 asked: its flat bottom is the first layer, not an overhang, and nothing may change')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = box((0, 0, 0), (10, 10, 10))
+part = box(10, position=(5, 5, 5))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

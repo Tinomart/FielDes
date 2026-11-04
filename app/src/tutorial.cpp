@@ -636,6 +636,9 @@ QAction* Tutorial::sectionAction() const
 ////////////////////////////////////////////////////////////////////////////////
 // The state of a step
 
+// A step that is reached again (Back, or forward again) puts its own base model there, whatever the user made in it before: ensureModel does not keep the user's work then (the user, 2026-11-04, H85: "EVERY STEP HAS A STATE THAT IT IS RESET TO WHEN THE STEP BEGINS")
+static bool s_freshModel = false;
+
 Tutorial::State Tutorial::capture() const
 {
     State state;
@@ -830,7 +833,8 @@ void Tutorial::typeOver(int line0, int col0, int col1, const QString& text, std:
 // The steps
 
 // The first lines of a model that a step makes for itself (the render region, how fine it is drawn, how smooth)
-static QString tourHeader(const QString& bounds, int resolution = 4)
+// (the resolution is normed by the size of the model: ten samples across its longest side for every unit -- the plate of the tour is about 60 mm, where 20 is what 4 samples per mm was)
+static QString tourHeader(const QString& bounds, int resolution = 20)
 {
     return QString("# The guided tour's model\nfrom fieldes import *\n\nview.set_bounds(%1, auto_scale=True)\nview.set_resolution(%2)\nview.set_quality(8)\n\n")
         .arg(bounds.isEmpty() ? QString("[-35, -25, -8], [35, 25, 30]") : bounds)
@@ -929,8 +933,8 @@ void Tutorial::buildSteps()
     // The model of the steps that work on a field: a plate, a point, a field made of the point -- how far every place is from it -- and the plate
     // grown by it (`linked`: by the field; else by 1)
     auto fieldModel = [](bool linked) {
-        return QString("block = box((-30, -20, 0), (30, 20, 6))\n"
-                       "anchor = point(24, 12, 6)\n"
+        return QString("block = box((60, 40, 6), position=(0, 0, 3))\n"
+                       "anchor = point(position=(24, 12, 6))\n"
                        "anchor\n"
                        "swell = ramp(distance_to_point(anchor), (0, 50), (4.0, 0.3))\n"
                        "grown = offset(block, ") + (linked ? "swell" : "1.0") + ")\ngrown";
@@ -1557,9 +1561,8 @@ void Tutorial::buildSteps()
             static const QRegularExpression move(R"(position=\(\s*var\(([^)]*)\)\s*,\s*var\(([^)]*)\)\s*,\s*var\(([^)]*)\))");
             const auto m = move.match(m_editor->getScript());
             if (!m.hasMatch()) return false;
-            for (int i = 1; i <= 3; ++i)
-                if (std::abs(m.captured(i).trimmed().toDouble()) > 0.05) return true;
-            return false;
+            // (the position is GLOBAL, where the model is: the middle of the drilled plate, (0, 0, 3), until the arrow moves it)
+            return std::abs(m.captured(1).trimmed().toDouble()) > 0.05 || std::abs(m.captured(2).trimmed().toDouble()) > 0.05 || std::abs(m.captured(3).trimmed().toDouble() - 3.0) > 0.05;
         };
         s.doneNote = T("Nice. The model moved, and the numbers of its position changed with it.");
         s.show = [this](std::function<void()> over) {
@@ -1759,7 +1762,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     // 10b: a shape from math -- a function of x, y and z that the menu writes, and the formula changed by hand (chapter 3)
-    const QString mathHead = tourHeader("[-14, -14, -14], [14, 14, 14]", 5);
+    const QString mathHead = tourHeader("[-14, -14, -14], [14, 14, 14]", 25);
     auto mathModel = [mathHead](bool written) {
         if (!written) return mathHead;
         return mathHead + "def low_level_body_1_logic(x, y, z):\n"
@@ -2115,7 +2118,8 @@ void Tutorial::buildSteps()
             static const QRegularExpression re(R"(^anchor = point\([^)]*?position=\(var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\))",
                                                QRegularExpression::MultilineOption);
             const auto m = re.match(m_editor->getScript());
-            return m.hasMatch() && (std::abs(m.captured(1).toDouble()) + std::abs(m.captured(2).toDouble()) + std::abs(m.captured(3).toDouble())) > 1e-6;
+            // (the position is GLOBAL, where the point is: (24, 12, 6) until it is moved)
+            return m.hasMatch() && (std::abs(m.captured(1).toDouble() - 24.0) + std::abs(m.captured(2).toDouble() - 12.0) + std::abs(m.captured(3).toDouble() - 6.0)) > 1e-3;
         };
         s.doneNote = T("Nice. The field follows the point: the growth is where the point is.");
         s.show = [this](std::function<void()> over) {
@@ -2140,10 +2144,10 @@ void Tutorial::buildSteps()
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             if (QAction* a = sectionAction()) a->setChecked(false);
-            useScript(tourHeader("[-5, -12, -12], [65, 22, 20]", 4) +
-                      "beam = box((0, 0, 0), (60, 10, 8))\n"
-                      "wall = fixed(box((-1, -1, -1), (1, 11, 9)))\n"
-                      "pull = force(box((59, -1, -1), (61, 11, 9)), (0, 0, -100))\n"
+            useScript(tourHeader("[-5, -12, -12], [65, 22, 20]", 20) +
+                      "beam = box((60, 10, 8), position=(30, 5, 4))\n"
+                      "wall = fixed(box((2, 12, 10), position=(0, 5, 4)))\n"
+                      "pull = force(box((2, 12, 10), position=(60, 5, 4)), (0, 0, -100))\n"
                       "stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=2)\n"
                       "stress");
             scene()->clearSelection();
@@ -2172,10 +2176,10 @@ void Tutorial::buildSteps()
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             useScript(tourHeader(QString()) +
-                      "knob = sphere(4, (15, 0, 4))\n"
+                      "knob = sphere(4, position=(15, 0, 4))\n"
                       "knob\n"
-                      "cap = cylinder(7, 3, (-15, 0, 0))\n"
-                      "ring = cylinder(9, 1, (-15, 0, 0))\n"
+                      "cap = cylinder(7, 3, position=(-15, 0, 1.5))\n"
+                      "ring = cylinder(9, 1, position=(-15, 0, 0.5))\n"
                       "capped = union(cap, ring)\n"
                       "capped");
             scene()->clearSelection();
@@ -2213,7 +2217,7 @@ void Tutorial::buildSteps()
         s.closeRows = true;
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader("[-30, -22, -4], [30, 22, 12]", 4) + "base = box((-24, -14, 0), (24, 14, 6))\nbase");
+            useScript(tourHeader("[-30, -22, -4], [30, 22, 12]", 20) + "base = box((48, 28, 6), position=(0, 0, 3))\nbase");
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
         };
@@ -2243,10 +2247,10 @@ void Tutorial::buildSteps()
         s.closeRows = true;
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader("[-30, -22, -12], [30, 22, 36]", 4) +
-                      "base = box((-24, -14, 0), (24, 14, 6))\n"
+            useScript(tourHeader("[-30, -22, -12], [30, 22, 36]", 20) +
+                      "base = box((48, 28, 6), position=(0, 0, 3))\n"
                       "corner = corner_at(base, (24, 14, 6))\n"
-                      "peg = cylinder(4, 14, (-10, 0, 20))\n"
+                      "peg = cylinder(4, 14, position=(-10, 0, 27))\n"
                       "tip = circle_center_at(peg, (-6, 0, 20))\n"
                       "base\npeg\ncorner\ntip");
             scene()->clearSelection();
@@ -2258,7 +2262,8 @@ void Tutorial::buildSteps()
             flat.remove(QRegularExpression("\\s"));
             static const QRegularExpression re(R"(position=\((?:var\()?(-?[\d.e+-]+)\)?,(?:var\()?(-?[\d.e+-]+)\)?,(?:var\()?(-?[\d.e+-]+)\)?\))");
             const auto m = re.match(flat);
-            return m.hasMatch() && (qAbs(m.captured(1).toDouble()) > 1e-6 || qAbs(m.captured(2).toDouble()) > 1e-6 || qAbs(m.captured(3).toDouble()) > 1e-6);
+            // (the position is GLOBAL, where the peg is: (-10, 0, 20) until the snap moves it)
+            return m.hasMatch() && (qAbs(m.captured(1).toDouble() + 10.0) > 1e-3 || qAbs(m.captured(2).toDouble()) > 1e-3 || qAbs(m.captured(3).toDouble() - 20.0) > 1e-3);
         };
         s.doneNote = T("Nice. The peg stands on the corner, and nothing but its position changed.");
         s.show = [this, selectRows](std::function<void()> over) {
@@ -2275,9 +2280,9 @@ void Tutorial::buildSteps()
     currentChapter = 4;                     // (chapter 4: work planes, 2D shapes, paths and extrusions)
     // The model of the steps on profiles: four points and the profile through them (`smooth`: the corner at the top right is a spline point)
     auto profileModel = [](bool smooth) {
-        return QString("a = point(-20, -12, 0)\na\nb = point(20, -12, 0)\nb\n") +
-               (smooth ? "c = point(20, 12, 0, smooth=True)\n" : "c = point(20, 12, 0)\n") +
-               "c\nd = point(-20, 12, 0)\nd\nplate = profile(\n    [a, b, c, d],\n    smooth=False,\n)\nplate";
+        return QString("a = point(position=(-20, -12, 0))\na\nb = point(position=(20, -12, 0))\nb\n") +
+               (smooth ? "c = point(position=(20, 12, 0), smooth=True)\n" : "c = point(position=(20, 12, 0))\n") +
+               "c\nd = point(position=(-20, 12, 0))\nd\nplate = profile(\n    [a, b, c, d],\n    smooth=False,\n)\nplate";
     };
     // (the profile's points: how many the call lists)
     auto profilePoints = [this]() {
@@ -2287,7 +2292,7 @@ void Tutorial::buildSteps()
     };
 
     // (the model of the steps on the work plane: a flat pad to draw on -- every one of them puts it back when it is opened, whatever was drawn or deleted before)
-    auto padModel = [] { return QString("pad = box((-30, -22, -4), (30, 22, 0))\npad"); };
+    auto padModel = [] { return QString("pad = box((60, 44, 4), position=(0, 0, -2))\npad"); };
 
     // 20: the work plane: a grid to draw a shape on (Shift+W; a click puts a point down, the first one closes it)
     {
@@ -2456,9 +2461,9 @@ void Tutorial::buildSteps()
     }
     // The model of the steps on lines: four points, the spline through them, and (`tube`) a circle at the first point and the sweep of it along the line
     auto lineModel = [](bool tube) {
-        return QString("q1 = point(-25, -12, 0)\nq1\nq2 = point(-8, 10, 8)\nq2\nq3 = point(10, -8, 14)\nq3\nq4 = point(26, 8, 6)\nq4\n"
+        return QString("q1 = point(position=(-25, -12, 0))\nq1\nq2 = point(position=(-8, 10, 8))\nq2\nq3 = point(position=(10, -8, 14))\nq3\nq4 = point(position=(26, 8, 6))\nq4\n"
                        "route = spline([q1, q2, q3, q4])\nroute") +
-               (tube ? QString("\nprofile = circle(4, (-25, -12))\nprofile\npath_extrude_1 = path_extrude(profile, route)\npath_extrude_1") : QString());
+               (tube ? QString("\nprofile = circle(4, position=(-25, -12))\nprofile\npath_extrude_1 = path_extrude(profile, route)\npath_extrude_1") : QString());
     };
     // (the points q1 ... q4 as written in the script, with their gizmos: what a step compares to see that a point has been moved, turned or scaled)
     auto pointsSignature = [this]() {
@@ -2514,7 +2519,7 @@ void Tutorial::buildSteps()
         s.enter = [this, scene, lineModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             // (the region holds the whole line and the tube round it, as written: not fitted to the circle alone, which shows the circle and little else)
-            useScript(tourHeaderFixed("[-34, -20, -8], [34, 16, 22]") + lineModel(false) + "\nprofile = circle(4, (-25, -12))\nprofile");
+            useScript(tourHeaderFixed("[-34, -20, -8], [34, 16, 22]") + lineModel(false) + "\nprofile = circle(4, position=(-25, -12))\nprofile");
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
         };
@@ -2585,7 +2590,7 @@ void Tutorial::buildSteps()
         s.enter = [this, shapeAtCopy] {
             shapeAtCopy->clear();
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader(QString()) + "bolt = cylinder(3, 14, (0, 0, 0))\nbolt");
+            useScript(tourHeader(QString()) + "bolt = cylinder(3, 14, position=(0, 0, 7))\nbolt");
             m_view->standardView(View::VIEW_ISO);
             selectAgain({"bolt"}, 12);              // (it is in the tree once the script has run)
             m_view->setFocus(Qt::OtherFocusReason);            // (Ctrl+D acts while the viewport has the keyboard)
@@ -2639,15 +2644,15 @@ void Tutorial::buildSteps()
     // 25b-25h: a symmetry (a model of its own: a table top, one leg, a mirror of two planes through the axis of the table, and the images of the leg written under it)
     // (the table: the mirror and the top, and -- `legs` -- the leg and its images; the step that is about making a leg starts without it)
     auto symmetryModel = [](bool legs = true) {
-        QString s = QString("mirror = symmetry_planes(\n    planes=2,\n    kind='axis',\n    centre=(0, 0, 0),\n    axis=(0, 0, 1),\n    first=(0, 1, 0),\n"
+        QString s = QString("mirror = symmetry_planes(\n    planes=2,\n    kind='axis',\n    axis=(0, 0, 1),\n    first=(0, 1, 0),\n"
                             "    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n)\n"
                             "mirror\n\n"
-                            "top = box((-40, -26, 30), (40, 26, 36))\n"
+                            "top = box((80, 52, 6), position=(0, 0, 33))\n"
                             "top");
         if (legs)
             s += QString("\n\n"
-                         "leg = cylinder(\n    4,\n    30,\n    (32, 18, 0),\n    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n    scale=(var(1), var(1), var(1)),\n)\n"
-                         "leg = handles(leg, [var(32), var(18), var(4), var(30), var(0)])\n"
+                         "leg = cylinder(\n    4,\n    30,\n    position=(var(32), var(18), var(15)),\n    rotation=(var(0), var(0), var(0)),\n    scale=(var(1), var(1), var(1)),\n)\n"
+                         "leg = handles(leg, [var(0), var(0), var(4), var(30), var(0)])\n"
                          "leg\n"
                          "leg_images = symmetry_images(leg, mirror)  # shadow: leg, mirror\n"
                          "leg_images");
@@ -2657,7 +2662,7 @@ void Tutorial::buildSteps()
     auto legSignature = [statementAt]() { return statementAt("leg = handles(").text + "\n" + statementAt("leg = cylinder(").text; };
     auto symmetryEnter = [this, scene, symmetryModel](const QStringList& select) {
         while (auto m = QApplication::activePopupWidget()) m->close();
-        useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) + symmetryModel());
+        useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 15) + symmetryModel());
         scene()->clearSelection();
         m_view->standardView(View::VIEW_ISO);
         if (!select.isEmpty()) selectAgain(select, 12);       // (once it is in the tree)
@@ -2688,8 +2693,8 @@ void Tutorial::buildSteps()
         s.showView = true;
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) +
-                      "top = box((-40, -26, 30), (40, 26, 36))\ntop");
+            useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 15) +
+                      "top = box((80, 52, 6), position=(0, 0, 33))\ntop");
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
             m_view->setFocus(Qt::OtherFocusReason);            // (Shift+S acts while the viewport has the keyboard: in the script it is a letter)
@@ -2729,8 +2734,8 @@ void Tutorial::buildSteps()
             if (!sym.match(m_editor->getScript()).hasMatch())
             {
                 // (the step before was skipped, or the tour was started here: the table, and the symmetry as one key makes it)
-                useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) +
-                          "top = box((-40, -26, 30), (40, 26, 36))\ntop");
+                useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 15) +
+                          "top = box((80, 52, 6), position=(0, 0, 33))\ntop");
                 scene()->clearSelection();
                 m_view->standardView(View::VIEW_ISO);
                 after(1200, [this] { if (!m_editor->getScript().contains("symmetry_planes(")) m_view->toggleSymmetry(); });
@@ -2778,7 +2783,7 @@ void Tutorial::buildSteps()
             QString name = found.hasMatch() ? found.captured(1) : QString("mirror");
             if (!found.hasMatch() || !two.match(script).hasMatch())
             {
-                useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) + symmetryModel(false));
+                useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 15) + symmetryModel(false));
                 name = "mirror";
             }
             m_view->standardView(View::VIEW_ISO);
@@ -2884,7 +2889,7 @@ void Tutorial::buildSteps()
         s.group = "import";
         s.enter = [this] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader("[-60, -60, -20], [60, 60, 60]", 4));
+            useScript(tourHeader("[-60, -60, -20], [60, 60, 60]", 20));
             m_view->scenePanel()->clearSelection();
             // (the window of Import model opens in the folder of the example parts: the part the step asks for is there)
             m_window->setProperty("tourImportDir", QDir(QCoreApplication::applicationDirPath()).filePath("examples/step"));
@@ -3005,8 +3010,8 @@ void Tutorial::buildSteps()
         s.closeRows = true;
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader("[-20, -20, -4], [20, 20, 26]", 6) +
-                      "block = box((-14, -14, 0), (14, 14, 21))\n"
+            useScript(tourHeader("[-20, -20, -4], [20, 20, 26]", 30) +
+                      "block = box((28, 28, 21), position=(0, 0, 10.5))\n"
                       "foam = lattice(block, cell_periodic('octet'), cell_size=7, thickness=1.2)\n"
                       "foam");
             scene()->clearSelection();
@@ -3032,12 +3037,14 @@ void Tutorial::buildSteps()
         // user's own or the ones that come with the program)
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader("[-5, -10, -10], [65, 30, 20]", 2) +
-                      "beam = box((0, 0, 0), (60, 20, 10))\n"
-                      "support = fixed(box((-1, -1, -1), (1, 21, 11)))\n"
-                      "load = force(box((59, -1, -1), (61, 21, 11)), (0, 0, -300))\n"
+            useScript(tourHeader("[-5, -10, -10], [65, 30, 20]", 10) +
+                      "beam = box((60, 20, 10), position=(30, 10, 5))\n"
+                      "support = fixed(box((2, 22, 12), position=(0, 10, 5)))\n"
+                      "load = force(box((2, 22, 12), position=(60, 10, 5)), (0, 0, -300))\n"
                       "stress = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=2.5)\n"
-                      "opt = topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.4'], cache=False)\n"
+                      "compliance_1 = stress.compliance\n"
+                      "volume_fraction_1 = stress.volume_fraction\n"
+                      "opt = topology_optimization(stress, conditions=[minimize(compliance_1), keep_below(volume_fraction_1, 0.4)], cache=False)\n"
                       "opt");
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
@@ -3061,12 +3068,12 @@ void Tutorial::buildSteps()
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             useScript(tourHeaderFixed("[-4, -4, -4], [44, 24, 14]") +
-                      "post = cylinder(3, 12, (14, 10, -1))\n"
-                      "slab = box((0, 0, 0), (40, 20, 10))\n"
-                      "inlet_face = box((-1, -1, -1), (0.01, 21, 11))\n"
-                      "outlet_face = box((39.99, -1, -1), (41, 21, 11))\n"
-                      "faces = union(box((-1, -1, -1), (41, 21, 0.01)), box((-1, -1, 9.99), (41, 21, 11)))\n"
-                      "sides = union(box((-1, -1, -1), (41, 0.01, 11)), box((-1, 19.99, -1), (41, 21, 11)))\n"
+                      "post = cylinder(3, 12, position=(14, 10, 5))\n"
+                      "slab = box((40, 20, 10), position=(20, 10, 5))\n"
+                      "inlet_face = box((1.01, 22, 12), position=(-0.495, 10, 5))\n"
+                      "outlet_face = box((1.01, 22, 12), position=(40.495, 10, 5))\n"
+                      "faces = union(box((42, 22, 1.01), position=(20, 10, -0.495)), box((42, 22, 1.01), position=(20, 10, 10.495)))\n"
+                      "sides = union(box((42, 1.01, 12), position=(20, -0.495, 5)), box((42, 1.01, 12), position=(20, 20.495, 5)))\n"
                       "flow = fluid_analysis(post, slab, inlets=[inlet(inlet_face, speed=5)], outlets=[outlet(outlet_face, pressure=0)], boundaries=[slip(faces), slip(sides)], fluid=water)\n"
                       "post\nflow");
             scene()->clearSelection();
@@ -3091,9 +3098,9 @@ void Tutorial::buildSteps()
         s.closeRows = true;
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader("[-24, -12, -4], [24, 12, 28]", 5) +
-                      "stem = box((-6, -6, 0), (6, 6, 16))\n"
-                      "cap = rounded_box((-18, -6, 16), (18, 6, 22), 0.3)\n"
+            useScript(tourHeader("[-24, -12, -4], [24, 12, 28]", 25) +
+                      "stem = box((12, 12, 16), position=(0, 0, 8))\n"
+                      "cap = rounded_box((36, 12, 6), 0.3, position=(0, 0, 19))\n"
                       "part = union(stem, cap)\n"
                       "printer = fff_constraint(nozzle=0.4, overhang=45)\n"
                       "printable = manufacturing_optimization(part, constraints=[printer], max_change=0.25)\n"
@@ -3127,7 +3134,7 @@ void Tutorial::buildSteps()
             if (f.open(QIODevice::ReadOnly | QIODevice::Text)) text = QString::fromUtf8(f.readAll());
             if (text.trimmed().isEmpty())
                 text = "from fieldes import *\n\napp.title('Plate with a hole', 'Choose the size of the hole', '1.0')\nradius = app.number('Hole radius', 5, min=2, max=12, unit='mm')\n\n"
-                       "plate = box((-30, -20, 0), (30, 20, 6))\nhole = cylinder(radius, 40, (0, 0, -10))\ndrilled = difference(plate, hole)\ndrilled";
+                       "plate = box((60, 40, 6), position=(0, 0, 3))\nhole = cylinder(radius, 40, position=(0, 0, 10))\ndrilled = difference(plate, hole)\ndrilled";
             useScript(text, false);
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
@@ -3156,10 +3163,10 @@ void Tutorial::buildSteps()
         s.closeRows = true;
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader("[-5, -10, -10], [65, 30, 20]", 2) +
-                      "beam = box((0, 0, 0), (60, 20, 10))\n"
-                      "support = fixed(box((-1, -1, -1), (1, 21, 11)))\n"
-                      "load = force(box((59, -1, -1), (61, 21, 11)), (0, 0, -300))\n"
+            useScript(tourHeader("[-5, -10, -10], [65, 30, 20]", 10) +
+                      "beam = box((60, 20, 10), position=(30, 10, 5))\n"
+                      "support = fixed(box((2, 22, 12), position=(0, 10, 5)))\n"
+                      "load = force(box((2, 22, 12), position=(60, 10, 5)), (0, 0, -300))\n"
                       "result = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=5)\n"
                       "result");
             scene()->clearSelection();
@@ -3219,7 +3226,7 @@ void Tutorial::buildSteps()
     // and does not go on from an error: the user, 2026-10-27, of a script that stopped with "name 'faces' is not defined" and was still broken in the next step)
     auto ensureModel = [this, scene](bool have, const QString& text, const QVector3D& from = QVector3D()) {
         while (auto m = QApplication::activePopupWidget()) m->close();
-        const bool replace = !have || m_scriptBroken;
+        const bool replace = !have || m_scriptBroken || s_freshModel;
         if (replace) useScript(text);
         if (!from.isNull()) m_view->lookFrom(from);
         else if (replace) m_view->standardView(View::VIEW_ISO);
@@ -3302,9 +3309,9 @@ void Tutorial::buildSteps()
     };
 
     // ---- Chapter 8: a lattice
-    const QString latticeHead = tourHeader("[-30, -22, -8], [30, 22, 10]", 6);
+    const QString latticeHead = tourHeader("[-30, -22, -8], [30, 22, 10]", 30);
     auto latticeModel = [latticeHead](bool built) {
-        QString s = latticeHead + "part = box((-24, -16, -5), (24, 16, 5), alpha=0.2)\npart\nwalls = ramp(x_field(), (-24, 24), (1.0, 2.6))\nwalls\n";
+        QString s = latticeHead + "part = box((48, 32, 10), position=(0, 0, 0), alpha=0.2)\npart\nwalls = ramp(x_field(), (-24, 24), (1.0, 2.6))\nwalls\n";
         // (the call as the menu writes it: one argument to a line, every argument the call has; the cell size is a tenth of the block across, rounded to 1, 2 or 5 -- 48 mm is 5)
         if (built) s += "\nlattice_1 = lattice(\n    part,\n    cell_periodic('gyroid'),\n    cell_size=5,\n    thickness=walls,\n    radius=None,\n    density=None,\n    style='sheet',\n    offset=None,\n    skin=0.0,\n"
                         "    region='volume',\n    depth=None,\n    cell_map=None,\n    node_radius=None,\n    blend=0.0,\n    skin_blend=0.0,\n    wall=None,\n    axis='z',\n)  # shadow: part, walls\nlattice_1\n";
@@ -3390,11 +3397,11 @@ void Tutorial::buildSteps()
 
     // ---- Chapter 8, going on: a lattice that does not repeat -- a foam, made around points -- and a cell of one's own
     // (a block of 20 x 20 x 14: the foam and a lattice of a cell that is an equation draw in seconds in it -- in 28 x 28 x 20 the lattice of the diamond's cell took 50 s)
-    const QString foamHead = tourHeader("[-14, -14, -4], [14, 14, 18]", 4);
+    const QString foamHead = tourHeader("[-14, -14, -4], [14, 14, 18]", 20);
     // (the block, faint, and what the steps made of it: 0 the block, 1 the points a foam is made around as the menu writes them, 2 the foam.  The step that puts points ON the surface changes
     // surface=False to surface=True in the call, and the foam gets a junction at every one of them)
     auto foamModel = [foamHead](int stage) {
-        QString s = foamHead + "part = box((-10, -10, 0), (10, 10, 14), alpha=0.2)\npart\n";
+        QString s = foamHead + "part = box((20, 20, 14), position=(0, 0, 7), alpha=0.2)\npart\n";
         // (the calls as the menu writes them: one argument to a line, every argument the call has)
         if (stage >= 1) s += "\nrandom_points_1 = random_points(\n    part,\n    spacing=5,\n    randomness=0.5,\n    min_distance=None,\n    max_distance=None,\n    seed=1,\n    bounds=None,\n"
                              "    surface=False,\n    frame=False,\n)  # shadow: part\nrandom_points_1\n";
@@ -3464,11 +3471,11 @@ void Tutorial::buildSteps()
     // (a flat bar, 40 across: the menu writes a cell of 5 and beams of 0.625 for it -- eight cells along it, two across, beams of three samples at 5 to the mm.  A block 20 across got cells of 2 and beams of
     // 0.25 -- one sample, in ten times ten times seven cells: a noise, not a picture)
     auto cellModel = [](int stage) {
-        QString s = tourHeader("[-24, -9, -4], [24, 9, 14]", 5) + "part = box((-20, -5, 0), (20, 5, 10), alpha=0.2)\npart\n";
+        QString s = tourHeader("[-24, -9, -4], [24, 9, 14]", 25) + "part = box((40, 10, 10), position=(0, 0, 5), alpha=0.2)\npart\n";
         if (stage >= 1)
         {
             const QString radius = stage >= 3 ? "3.5" : "2.5";
-            s += "\ncell_custom_1 = cell_custom(\n    box((0, 0, 0), (5, 5, 5)),\n    sphere(" + radius + ", (2.5, 2.5, 2.5)),\n    check=True,\n)\ncell_custom_1\n";
+            s += "\ncell_custom_1 = cell_custom(\n    box((5, 5, 5), position=(2.5, 2.5, 2.5)),\n    sphere(" + radius + ", position=(2.5, 2.5, 2.5)),\n    check=True,\n)\ncell_custom_1\n";
         }
         // (no thickness: the cell is the geometry as it was modelled, and the library refuses a thickness for it)
         if (stage >= 2)
@@ -3542,14 +3549,14 @@ void Tutorial::buildSteps()
     }
 
     // ---- Chapter 9: a static analysis
-    const QString beamHead = tourHeader("[-5, -12, -12], [65, 22, 20]", 4);
+    const QString beamHead = tourHeader("[-5, -12, -12], [65, 22, 20]", 20);
     // (the beam as the menus write it, stage by stage: 0 the beam, 1 with the face at its left end selected, 2 held there, 3 with the face at its right end selected, 4 pulled there, 5 with its material,
     // 6 analysed.  A face is what a right-click on the beam ▸ Select Surface writes: the flat face under the click, made of the field of the beam)
     auto beamModel = [beamHead](int stage, const QString& vector, const QString& elementSize) {
         // (the beam and the faces are hidden once it is analysed: they are drawn over its own analysis, and the stress is seen on the part that is left uncovered only -- the example files hide the body the same way)
         // (stage 7 is stage 6 as the menus leave it, with nothing hidden: the beam and the faces are drawn over the analysis, as they are for the user who made it)
         const QString hidden = stage == 6 ? "# hidden: " : QString();
-        QString s = beamHead + "beam = box((0, 0, 0), (60, 10, 8))\n" + QString(stage == 6 ? "# hidden: beam\n" : "beam\n");
+        QString s = beamHead + "beam = box((60, 10, 8), position=(30, 5, 4))\n" + QString(stage == 6 ? "# hidden: beam\n" : "beam\n");
         // (the faces are right under the beam, above the conditions that are made of them: the rows that the analysis takes -- the beam, the support, the load and the material -- are then the beam and
         // one block under the faces, and it is clear that the faces are not among them; the user, 2026-10-27: "order the surfaces on top, so that it is visually clear that they are not included
         // and then the user can also select them all with shift click from top to bottom")
@@ -3739,7 +3746,7 @@ void Tutorial::buildSteps()
         // bottom and both sides, for the flow to be the one of a free channel with only the post sticking -- the user, 2026-10-28: "Slip has to be surrounding the entire channel")
         const bool quiet = stage == 9;
         const QString hidden = quiet ? "# hidden: " : QString();
-        QString s = flowHead + "post = cylinder(" + radius + ", 12, (14, 10, -1))\npost\nslab = box((0, 0, 0), (40, 20, 10)" + QString(!quiet ? ", alpha=0.15" : "") + ")\n" +
+        QString s = flowHead + "post = cylinder(" + radius + ", 12, position=(14, 10, 5))\npost\nslab = box((40, 20, 10), position=(20, 10, 5)" + QString(!quiet ? ", alpha=0.15" : "") + ")\n" +
                     QString(!quiet ? "slab\n" : "");
         // (the faces of the water are right under it, above the conditions made of them: the rows that the flow takes are then the post, the water and one block under the faces)
         if (stage >= 1) s += "selection_1 = select_surface(slab, seed=(0.0, 10.0, 5.0), angle=10)\n" + hidden + "selection_1\n";
@@ -4009,18 +4016,151 @@ void Tutorial::buildSteps()
         add(s);
     }
 
-    // ---- Chapter 11: a topology optimization
-    const QString topologyCall = QString("topology_optimization_1 = topology_optimization(\n    static_analysis_1,\n    constraints=[minimize('compliance'), 'volume_fraction <= 0.4'],\n"
+    // ---- Chapter 11: a topology optimization, asked for with conditions made from the results of the analysis (the user, 2026-11-03: "the tutorial needs to be restructured around this")
+    // (the results of the analysis the beam of chapter 9 has, as lines of the script: a result is hidden, it draws nothing; the conditions are what the user makes of them)
+    const QString resultLines = QString("max_displacement_1 = static_analysis_1.max_displacement\n# hidden: max_displacement_1\nmass_1 = static_analysis_1.mass\n# hidden: mass_1\n");
+    const QString keepBelowLines = QString("keep_below_1 = keep_below(\n    max_displacement_1,\n    limit=0.4,\n)\n# hidden: keep_below_1\n");
+    const QString minimizeLines = QString("minimize_1 = minimize(mass_1)\n# hidden: minimize_1\n");
+    const QString topologyCall = QString("topology_optimization_1 = topology_optimization(\n    static_analysis_1,\n    conditions=[minimize_1, keep_below_1],\n"
                                          "    iterations=None,\n    filter_radius=None,\n    keep=None,\n    avoid=None,\n    grow=False,\n    grow_limit=None,\n    extrude=None,\n    penalty=3.0,\n"
                                          "    sharpness=16.0,\n    symmetry='auto',\n    tolerance=1e-05,\n    cache=True,\n)  # shadow: static_analysis_1\ntopology_optimization_1\n");
     {
         currentChapter = 10;
         Step s;
+        // (H99, the user, 2026-11-03: "The analysis results in the tutorial come out of absolutely thin air and the suer has no idea what is going on.  In an earlier step, the user should have been guided to create
+        // them out of the static analysis by going to the arrow and clicking one of them": the results are made by the user, from the drawer of the analysis, as the step Properties of chapter 2 asks for a field.
+        // The state of the step is the model with its analysis and no result: a step starts from what it needs, whatever the step before did)
+        s.title = T("Ask the analysis for its results");
+        s.text = T("An analysis gives results. Point at static_analysis_1: a tab comes out at the edge of the tree. Click it, scroll the drawer all the way down, and click max_displacement and mass in the NUMBERS list. Each is written under the analysis as a model of its own.");
+        s.hint = T("The drawer lists the fields and the numbers of the analysis; the one you click is written under it as a model of its own: max_displacement_1 = static_analysis_1.max_displacement. "
+                   "They are what an optimization is told to work on. The tab is there once the analysis has run. Or press Show me.");
+        s.code = linesWith("^\\w+ = static_analysis_1\\.\\w+");
+        s.holes = [this, treeWithTab]() {
+            QVector<QRect> out = treeWithTab();
+            const QRect view = widgetRect(m_view);
+            if (!view.isEmpty()) out << view;           // (the simulation is drawn in the viewport: it is not dimmed)
+            return out;
+        };
+        s.cardNear = [this]() { return widgetRect(m_view); };
+        s.aim = aimRow({"static_analysis_1"});
+        s.place = InsideBottomLeft;
+        s.group = "properties";
+        s.closeRows = true;
+        s.enter = [=] { ensureModel(made("static_analysis"), beamModel(6, "(0, 0, -100)", "3")); };
+        s.done = [this] {
+            static const QRegularExpression compliance(R"(^max_displacement_\d+ = static_analysis_1\.max_displacement\b)", QRegularExpression::MultilineOption);
+            static const QRegularExpression fraction(R"(^mass_\d+ = static_analysis_1\.mass\b)", QRegularExpression::MultilineOption);
+            const QString script = m_editor->getScript();
+            return compliance.match(script).hasMatch() && fraction.match(script).hasMatch();
+        };
+        s.doneNote = T("Nice. They are models of the tree like any other: conditions are made from them.");
+        s.show = [this, scene](std::function<void()> over) {
+            // (the mouse comes to the row of static_analysis_1: the tab comes out; the hand goes to it, and then to compliance and to volume_fraction in the drawer, one after the other)
+            const QRect row = scene()->visibleRowRect("static_analysis_1", m_window);
+            if (row.isEmpty()) { over(); return; }
+            QWidget* vp = scene()->treeViewport();
+            const QPoint rowPoint(row.left() + 80, row.center().y());
+            QPointer<QWidget> viewport(vp);
+            m_busy = true;
+            setCursor(rowPoint + QPoint(60, 40));
+            glide(m_cursor, rowPoint, 700, [=](QPoint wp) {
+                setCursor(wp);
+                if (viewport) sendMouse(viewport, QEvent::MouseMove, viewport->mapFrom(m_window, wp), Qt::NoButton, Qt::NoButton);
+            }, [=] {
+                after(350, [=] {
+                    QPointer<QWidget> tab = scene()->propertyTab();
+                    if (!tab || !tab->isVisible()) { m_busy = false; hideCursor(); over(); return; }
+                    const QPoint tabPoint = m_window->mapFromGlobal(tab->mapToGlobal(tab->rect().center()));
+                    glide(rowPoint, tabPoint, 500, [=](QPoint wp) { setCursor(wp); }, [=] {
+                        setCursor(tabPoint, true);
+                        if (!tab) { m_busy = false; hideCursor(); over(); return; }
+                        sendMouse(tab, QEvent::MouseButtonPress, tab->rect().center(), Qt::LeftButton, Qt::LeftButton);
+                        sendMouse(tab, QEvent::MouseButtonRelease, tab->rect().center(), Qt::LeftButton, Qt::NoButton);
+                        after(900, [=] {
+                            setCursor(tabPoint, false);
+                            auto press = std::make_shared<std::function<void(QStringList, QPoint)>>();
+                            *press = [=](QStringList names, QPoint from) {
+                                if (names.isEmpty()) { m_busy = false; hideCursor(); over(); return; }
+                                QPointer<QPushButton> button = m_window->findChild<QPushButton*>("prop_" + names.first());
+                                if (!button) { m_busy = false; hideCursor(); over(); return; }
+                                const QPoint target = m_window->mapFromGlobal(button->mapToGlobal(button->rect().center()));
+                                glide(from, target, 700, [=](QPoint wp) { setCursor(wp); }, [=] {
+                                    setCursor(target, true);
+                                    after(350, [=] {
+                                        if (button) button->click();
+                                        setCursor(target, false);
+                                        after(700, [=] { (*press)(names.mid(1), target); });
+                                    });
+                                });
+                            };
+                            (*press)(QStringList{"max_displacement", "mass"}, tabPoint);
+                        });
+                    });
+                });
+            });
+        };
+        add(s);
+    }
+    {
+        currentChapter = 10;
+        Step s;
+        s.title = T("Limit the bending");
+        s.text = T("You made two numbers of the analysis: max_displacement_1 and "
+                   "mass_1. To tell an optimization what to do you make conditions from them. Right-click max_displacement_1 and choose "
+                   "Engineering ▸ Optimization ▸ Optimization condition ▸ keep_below, then type 0.4 over the limit: the beam may bend 0.4 mm at most.");
+        s.hint = T("A condition is a model of its own, made from a result. keep_below, keep_above and keep_between keep a result inside limits; minimize and maximize make it as small or as large "
+                   "as it can be. Or press Show me.");
+        buildLook(s);
+        s.group = "topology";
+        s.aim = [=]() -> QRect {
+            std::function<QRect()> before = holeOrRow("max_displacement_1"), after = rowAim("keep_below_1");
+            return madeAndFilled("keep_below") ? after() : before();
+        };
+        s.code = callLines("keep_below");
+        s.enter = [=] { ensureModel(made("static_analysis") && hasLines({"max_displacement_1 = static_analysis_1.max_displacement"}), beamModel(6, "(0, 0, -100)", "3") + resultLines); };
+        s.done = [=] {
+            static const QRegularExpression re(R"(keep_below\(max_displacement_1,(?:limit=)?([\d.]+))");
+            const auto m = re.match(flatCall("keep_below"));
+            return madeAndFilled("keep_below") && m.hasMatch() && m.captured(1).toDouble() > 0;
+        };
+        s.doneNote = T("Nice. keep_below_1 keeps the beam from bending more than the limit you gave.");
+        s.show = [=](std::function<void()> over) {
+            showPick({"max_displacement_1"}, {T("Engineering"), T("Optimization"), T("Optimization condition"), "keep_below"}, [=] {
+                after(1800, [=] { fillDots("keep_below", "0.4", over, 90); });
+            });
+        };
+        add(s);
+    }
+    {
+        currentChapter = 10;
+        Step s;
+        s.title = T("Ask for the lightest");
+        s.text = T("Now what the optimization makes best. Right-click mass_1 and choose Engineering ▸ Optimization ▸ Optimization condition ▸ minimize. The mass is how heavy the beam is: "
+                   "minimizing it makes the beam as light as it can be.");
+        s.hint = T("minimize and maximize are goals: an optimization has one at most. Or press Show me.");
+        buildLook(s);
+        s.group = "topology";
+        s.aim = [=]() -> QRect {
+            std::function<QRect()> before = rowAim("mass_1"), after = rowAim("minimize_1");
+            return made("minimize") ? after() : before();
+        };
+        s.code = callLines("minimize");
+        s.enter = [=] { ensureModel(made("static_analysis") && hasLines({"max_displacement_1 = static_analysis_1.max_displacement"}) && made("keep_below"), beamModel(6, "(0, 0, -100)", "3") + resultLines + keepBelowLines); };
+        s.done = [=] { return madeAndFilled("minimize"); };
+        s.doneNote = T("Nice. minimize_1 makes mass_1 as small as it can be.");
+        s.show = [=](std::function<void()> over) {
+            showPick({"mass_1"}, {T("Engineering"), T("Optimization"), T("Optimization condition"), "minimize"}, over);
+        };
+        add(s);
+    }
+    {
+        currentChapter = 10;
+        Step s;
         s.title = T("Find the lightest shape");
-        s.text = T("The beam of chapter 9, analysed. An optimization asks where material can be taken away without losing stiffness. Select static_analysis_1, right-click it and choose "
-                   "Engineering ▸ topology_optimization. Then type over the placeholder what it should do: [minimize('compliance'), 'volume_fraction <= 0.4']. The optimization is drawn with "
+        s.text = T("The beam of chapter 9, analysed, and the two conditions for it. An optimization asks where material can be taken away. Click static_analysis_1 in the model tree, then Ctrl+click minimize_1 and keep_below_1, right-click one of the three and choose "
+                   "Engineering ▸ Optimization ▸ topology_optimization. It is written with the analysis and both conditions. The optimization is drawn with "
                    "the analysis and the beam it comes from, and they cover it: click topology_optimization_1 in the model tree and press I, so that only the optimized part is shown.");
-        s.hint = T("Compliance is how much the beam bends: minimizing it makes the beam as stiff as it can be, in 40 % of the material. The optimizer decides how dense the material is at "
+        s.hint = T("The optimizer makes the beam as light as it can be while it bends no more than the limit. It decides how dense the material is at "
                    "every place -- a field. Or press Show me.");
         buildLook(s);
         s.group = "topology";
@@ -4029,18 +4169,21 @@ void Tutorial::buildSteps()
             std::function<QRect()> before = holeOrRow("static_analysis_1"), after = rowAim("topology_optimization_1");
             return madeAndFilled("topology_optimization") ? after() : before();
         };
+        // (three rows are asked for -- the analysis, then Ctrl+click on both conditions --: all three are framed, not only the first; the user, 2026-11-04, H85, "WHEN A MULTI SELECT IS NEEDED, ALL OBJECTS TO BE SELECTED ARE HIGHLIGHTED")
+        s.aims = [=]() -> QVector<QRect> {
+            std::function<QVector<QRect>()> before = aimRows({"static_analysis_1", "minimize_1", "keep_below_1"}), after = aimRows({"topology_optimization_1"});
+            return madeAndFilled("topology_optimization") ? after() : before();
+        };
         s.calculates = true;
         s.code = callLines("topology_optimization");
-        s.enter = [=] { ensureModel(made("static_analysis"), beamModel(6, "(0, 0, -100)", "3")); };
+        s.enter = [=] { ensureModel(made("static_analysis") && made("keep_below") && made("minimize"), beamModel(6, "(0, 0, -100)", "3") + resultLines + keepBelowLines + minimizeLines); };
         s.done = [madeAndFilled, scene] { return madeAndFilled("topology_optimization") && scene()->isolated(); };
         s.doneNote = T("Nice. Only the optimized part is shown: the red is where material stays, the blue is where it was taken away. Press I again to bring the other models back.");
         s.leave = unisolate;
         s.show = [=](std::function<void()> over) {
-            showPick({"static_analysis_1"}, {T("Engineering"), "topology_optimization"}, [=] {
+            showPick({"static_analysis_1", "minimize_1", "keep_below_1"}, {T("Engineering"), T("Optimization"), "topology_optimization"}, [=] {
                 after(1800, [=] {
-                    fillDots("topology_optimization", "[minimize('compliance'), 'volume_fraction <= 0.4']", [=] {
-                        showThenIsolate([madeAndFilled] { return madeAndFilled("topology_optimization"); }, "topology_optimization_1", over);
-                    }, 70);
+                    showThenIsolate([madeAndFilled] { return madeAndFilled("topology_optimization"); }, "topology_optimization_1", over);
                 });
             });
         };
@@ -4050,39 +4193,39 @@ void Tutorial::buildSteps()
     {
         currentChapter = 10;
         Step s;
-        s.title = T("Allow less material");
-        s.text = T("Ask for less: in the call of topology_optimization_1, change the 0.4 in 'volume_fraction <= 0.4' to 0.25 -- a quarter of the material. The optimizer runs again.");
-        s.hint = T("The call is open in the tree and the code. The part that is left is thinner, and still carries the load. Or press Show me.");
+        s.title = T("Ask for a stiffer beam");
+        s.text = T("Ask for less bending: in the condition keep_below_1, change the limit 0.4 to 0.3 -- a stiffer beam. The optimizer runs again.");
+        s.hint = T("The condition is open in the tree and the code. The part that is left is thicker, because it may bend less. Or press Show me.");
         buildLook(s);
         s.group = "topology";
-        s.openRows = QStringList{"topology_optimization_1"};
+        s.openRows = QStringList{"keep_below_1"};
         s.calculates = true;
-        s.code = callLines("topology_optimization");
+        s.code = callLines("keep_below");
         s.enter = [=] {
-            const bool have = madeAndFilled("topology_optimization");
-            ensureModel(have, beamModel(6, "(0, 0, -100)", "3") + topologyCall);
-            openCall("topology_optimization");
+            const bool have = madeAndFilled("topology_optimization") && made("keep_below") && made("minimize");
+            ensureModel(have, beamModel(6, "(0, 0, -100)", "3") + resultLines + keepBelowLines + minimizeLines + topologyCall);
+            openCall("keep_below");
             after(500, [=] { hideModel("static_analysis_1"); hideModel("beam"); });         // (the optimization is drawn on its own: the analysis and the beam would be drawn over it)
         };
         s.done = [flatCall, callAt, balanced] {
-            static const QRegularExpression re(R"(volume_fraction<=([\d.]+))");
-            const Statement st = callAt("topology_optimization");
-            const auto m = re.match(flatCall("topology_optimization"));
+            static const QRegularExpression re(R"(keep_below\(max_displacement_1,(?:limit=)?([\d.]+))");
+            const Statement st = callAt("keep_below");
+            const auto m = re.match(flatCall("keep_below"));
             return st.first >= 0 && balanced(st.text) && m.hasMatch() && m.captured(1).toDouble() > 0 && m.captured(1).toDouble() < 0.4;
         };
-        s.doneNote = T("Nice. Less material, found again.");
+        s.doneNote = T("Nice. A stiffer beam needs more material: found again.");
         s.show = [=](std::function<void()> over) {
-            typeInCall("topology_optimization", R"(volume_fraction <= ([\d.]+))", "0.25", over);
+            typeInCall("keep_below", R"(limit=([\d.]+))", "0.3", over);
         };
         add(s);
     }
 
     // ---- Chapter 12: a manufacturing optimization
-    const QString mfgHead = tourHeader("[-24, -12, -4], [24, 12, 28]", 5);
+    const QString mfgHead = tourHeader("[-24, -12, -4], [24, 12, 28]", 25);
     // (the part as the menus write it, stage by stage: 0 the part, 1 with the rule of a printer, 3 with the analysis)
     auto mfgModel = [mfgHead](int stage, const QString& overhang) {
         // (the cap's edges are rounded a little: the colours of the analysis are read at the corners of the mesh, and the corner of a sharp box edge has no lean of its own to read)
-        QString s = mfgHead + "stem = box((-6, -6, 0), (6, 6, 16))\ncap = rounded_box((-18, -6, 16), (18, 6, 22), 0.3)\npart = union(stem, cap)\npart\n";
+        QString s = mfgHead + "stem = box((12, 12, 16), position=(0, 0, 8))\ncap = rounded_box((36, 12, 6), 0.3, position=(0, 0, 19))\npart = union(stem, cap)\npart\n";
         if (stage >= 1)
             s += "\nfff_constraint_1 = fff_constraint(\n    nozzle=0.4,\n    build_direction=(0, 0, 1),\n    overhang=" + overhang + ",\n    max_bridge=20.0,\n    region=None,\n)\nfff_constraint_1\n";
         if (stage >= 3)
@@ -4202,9 +4345,9 @@ void Tutorial::buildSteps()
     currentChapter = 11;
 
     // ---- Chapter 13: a FielDes app
-    const QString appHead = tourHeader("[-35, -25, -8], [35, 25, 30]", 4);
+    const QString appHead = tourHeader("[-35, -25, -8], [35, 25, 30]", 20);
     auto appModel = [appHead](const QString& size) {
-        return appHead + "app.title('Block maker', 'A block of the size you choose', '1.0')\nsize = " + size + "\nblock = box((-size, -12, 0), (size, 12, 10))\nblock";
+        return appHead + "app.title('Block maker', 'A block of the size you choose', '1.0')\nsize = " + size + "\nblock = box((2 * size, 24, 10), position=(0, 0, 5))\nblock";
     };
     {
         currentChapter = 12;
@@ -4686,6 +4829,8 @@ void Tutorial::goTo(int index, bool viaBack)
         if (m_hasEntry[index])
         {
             if (!toShowcase) restore(m_entry[index]);
+            s_freshModel = true;
+            QTimer::singleShot(3000, [] { s_freshModel = false; });
         }
         else
         {

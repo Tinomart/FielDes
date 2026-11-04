@@ -19,17 +19,18 @@ print('STARTING design : thickness 10 mm')
 print('KNOWN BEST      : thickness 25 mm (the upper bound of the range)')
 
 t = var(10)
-slab = box((0, 0, 0), (60, t, 10))
-cold = fixed_temperature(box((-1, -1, -1), (1, 40, 11)), 20.0)
-heat = heat_input(box((59, -1, -1), (61, 40, 11)), 5.0)
-air = convection(box((10, -1, -1), (50, 40, 11)), 10e-6, ambient=20.0)
+slab = box((60, t, 10), position=(30, t / 2, 5))
+cold = fixed_temperature(box((2, 41, 12), position=(0, 19.5, 5)), 20.0)
+heat = heat_input(box((2, 41, 12), position=(60, 19.5, 5)), 5.0)
+air = convection(box((40, 41, 12), position=(30, 19.5, 5)), 10e-6, ambient=20.0)
 hot = thermal_analysis(slab, fixed_temperatures=[cold], heat_inputs=[heat], heat_generations=[], convections=[air],
                        material=aluminium, element_size=3)
 
-best = parametric_optimization(hot, (t, 5, 25), constraints=[minimize('max_temperature')], max_evaluations=14)
+max_temperature_1 = hot.max_temperature
+best = parametric_optimization(hot, (t, 5, 25), conditions=[minimize(max_temperature_1)], max_evaluations=14)
 
-starting_slab = move(box((0, 0, 0), (60, 10, 10)), (0, -40, 0))
-known_best_slab = move(box((0, 0, 0), (60, 25, 10)), (0, 40, 0))
+starting_slab = move(box((60, 10, 10), position=(30, 5, 5)), (0, -40, 0))
+known_best_slab = move(box((60, 25, 10), position=(30, 12.5, 5)), (0, 40, 0))
 starting_slab
 best
 known_best_slab

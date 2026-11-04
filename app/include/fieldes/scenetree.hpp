@@ -203,6 +203,8 @@ public slots:
     void createPlaced(QString name, QList<QVector3D> points, bool smooth);
     /*  The symmetry of the viewport (see symmetry.hpp): while it is on, what a menu or the work plane makes is made with its images (the library writes them)  */
     void setSymmetry(FielDes::Symmetry symmetry, int images);
+    bool linkSymmetryToSelection();              // (Shift+S with a shape made of points selected: its points that have an exact mirror partner under the symmetry in use are linked to it; false when there was nothing to do)
+    bool splitSharedPlane(const QString& plane, const QJsonArray& names);          // (a body of points whose symmetry plane other bodies use too gets a copy of it of its own: profile_edit._split_plane)
     /*  A symmetry model made of the planes of `symmetry` (see symmetry_planes), written into the script and selected: it is what is used from then on  */
     void createSymmetry(FielDes::Symmetry symmetry);
     /*  The arguments of the call of the symmetry that is selected given new values (`planes`, `kind`): the card's buttons  */
@@ -308,6 +310,9 @@ public slots:
      *  (with `add`, they join the selection that there is)  */
     void selectLines(QList<int> lines0, bool add);
 
+    /*  The (0-based) lines of the models of the selected rows, as they are now: what the wheel over a point puts back when it had to select the point to give it its numbers  */
+    QList<int> selectedRowLines() const { return selectedLines(); }
+
     void setCollapsed(bool c);
 
     /*  A surface picked in the viewport: writes `name = select_surface(shape, seed=(x, y, z), ...)` and a
@@ -336,7 +341,7 @@ public slots:
     void setCacheStates(const QHash<int, QString>& states);
 
 signals:
-    void previewReady(QVector<float> vertices, QVector<int> triangles);       // (the coarse mesh of what the entry under the mouse would make: x, y, z, ... and the corners of its triangles; empty: nothing to show)
+    void previewReady(QVector<float> vertices, QVector<int> triangles, bool flat);       // (the coarse mesh of what the entry under the mouse would make: x, y, z, ... and the corners of its triangles; empty: nothing to show)
     /*  The symmetry model that is selected (its lines, 0-based; none: no symmetry), whether it is another one than before (which is to use it), and its name  */
     void activeSymmetryChanged(QList<int> lines0, bool chosen, QString name);
     /*  Scroll the editor to a (0-based) line and flash it  */
@@ -684,7 +689,9 @@ protected:
     void deleteRow(QTreeWidgetItem* row);
     void deleteItem(const QJsonObject& it);
     /*  The same for several models at once: one edit, one question  */
-    void deleteItems(const QList<QJsonObject>& items);
+    void deleteItems(const QList<QJsonObject>& items, bool automatic = false);
+    void scheduleLostEdges();
+    void removeLostEdges();
     /*  The edit deleting whole lines a..b (0-based), newline included  */
     TextEdit deleteLines(int a, int b) const;
     /*  Back to the file: deletes the import's cache and the placement arguments and handles() lines
@@ -735,6 +742,7 @@ protected:
     struct Model { QJsonObject item; QString source; int after = 0; };
     /*  The selected models, in the order they were selected (a variable, or an expression displayed on its own)  */
     QList<Model> selectedModels() const;
+    bool transformPointsInPlace(const QString& how, const QJsonArray& names, double scale);     // (move, scale, rotate, mirror with points selected: the points themselves change -- profile_edit._transform_points)
     /*  What a menu opened on the shape displayed by `line0` (negative: in empty space) works on: when several models
      *  are selected and that one is among them, all of them (in the order they were selected), else just that one
      *  (in empty space: the selected ones, else the last model)  */
@@ -773,6 +781,8 @@ protected:
     void noteLockedInMulti(bool warn);
     void warnLockedMultiSelect();
     void prepareSelection();
+    /*  The extrusions of the scene that are shown and have no numbers for the pull of their ends yet: they are given them after every run, selected or not (H125)  */
+    QList<QJsonObject> extrusionsToPrepare() const;
     void updateProvisional();
     void updateFieldView();
     QString m_fieldKeyShown;
@@ -821,6 +831,7 @@ protected:
     QJsonObject m_symmetryRequest;             // (the symmetry as the library takes it: the centre, and every image as a mirror and a turn; empty while it is off)
     QString m_activeSymVar;                    // (the symmetry model that is selected: what is made is made with its images while it is in use)
     QJsonObject m_symdefRequest;               // (the planes of a symmetry that is being made: planes, kind, centre, axis, first)
+    QJsonObject m_symmetryAny;                 // (the symmetry that is active as the library takes it, whether it is in use or not: what linking the points of a shape to it needs)
     bool m_placedSmooth = false;
     QVector3D m_workPlaneOrigin, m_workPlaneU, m_workPlaneV;
     float m_workPlaneStep = 0;
@@ -869,8 +880,11 @@ protected:
     QLabel* m_note;
 
     QJsonObject m_scene;
+    int m_lostGeneration = 0;           // (every scene starts the wait for the removal of a lost edge again)
+    bool m_autoDeleted = false;         // (deleteItems wrote the removal of an edge that was lost)
     QHash<int, QString> m_cacheStates;
     QString m_selectedKey;
+    QString m_lastPointVar;                         // (the point the user used last -- selected -- : a point made by a surface drag takes its type: the user, 2026-11-03, H76)
     QHash<QString, bool> m_expandState;   // user's expand / collapse, by row key
     std::function<QString()> m_fileKey;
     QTimer m_expandSaveTimer;             // (what is collapsed is written a moment after it was changed)
@@ -924,6 +938,9 @@ protected:
      *  answered (move_check: the problems and the statements that have to go along), `along` their labels.  True: move them along; false: leave the script as it is  */
     bool confirmPythonMove(const QString& what, const QJsonObject& check, const QStringList& along);
     QJsonObject m_dragPython;                   // (the block being dragged; empty: the drag is of models)
+    QJsonObject m_dragResult;                   // (H103: the analysis whose property is being dragged out of its drawer)
+    QString m_dragResultName;                   // (... and the property)
+    bool m_dragResultOn = false;                // (an entry of a drawer is being dragged into the tree)
     bool m_insertSet = false;
     QString m_insertKey;                        // (the key of the row the point is above; empty: the end)
 
@@ -931,6 +948,11 @@ protected:
      *  drawer that lists them; one that is clicked is written as a new model of its own, under the statement: `stress_1 = result.von_mises`  */
     void openProperties(QTreeWidgetItem* row, const QPoint& global);
     void addProperty(const QJsonObject& item, const QString& property);
+    void addPropertyAt(const QJsonObject& item, const QString& property, int atLine);       // (the same, written before a line of the script; -1: below the analysis)
+    void beginResultDrag(const QJsonObject& item, const QString& property, const QPoint& global);       // (H103: an entry of the property drawer is dragged into the tree)
+    void moveResultDrag(const QPoint& global);
+    void finishResultDrag(const QPoint& global);
+    void dropResult(const QJsonObject& item, const QString& property, QTreeWidgetItem* over, int at);
     QPointer<QFrame> m_drawer;
     QPointer<QWidget> m_propTab;                // (the tab that opens the drawer)
     QString m_propTabKey;                       // (the row it is for)

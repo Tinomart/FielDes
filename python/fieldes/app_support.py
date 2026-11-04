@@ -407,13 +407,15 @@ def _is_import_call(node, gs=None):
 
 
 def _find_import(stmt, gs=None):
-    ''' (call, subscript-or-None) for the first import call in a statement '''
+    ''' (call, subscript-or-None) for the first import call in a statement (one walk of the statement: a subscript of an import call wins over a plain one, wherever it stands) '''
+    first_call = None
     for node in ast.walk(stmt):
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call) and _is_import_call(node.value, gs):
             return node.value, node
-    for node in ast.walk(stmt):
-        if isinstance(node, ast.Call) and _is_import_call(node, gs):
-            return node, None
+        if first_call is None and isinstance(node, ast.Call) and _is_import_call(node, gs):
+            first_call = node
+    if first_call is not None:
+        return first_call, None
     return None, None
 
 
@@ -439,27 +441,79 @@ _SEARCH = 1.0e6          # half-size of the box searched for a shape's extent
 _BOUNDS_SECONDS = 1.5    # time budget per scene for estimating extents
 
 
-def _var_values():
-    ''' The var() numbers of the script being run, as (trees, values) arrays for a bounds search '''
-    import ctypes
+# The numbers of the script's var()s, read ONCE and extended as the script makes more of them -- not read again for every statement and every name in it (H72, the import of a mesh: two thousand points are six thousand
+# numbers, and a key of a statement that read them all was made for each of two thousand statements, 5.4 s for ONE statement of 642 names).  `__vars` only grows while a script runs and the numbers in it only change in
+# place through `retune` (see the host function: it counts them in `__vars_gen`); a program that does not count them is read again each time, as it was
+_vcache = {'entries': None, 'gen': None, 'count': 0, 'trees': [], 'values': [], 'hasher': None, 'arrays': None, 'arrays_at': -1}
+_vlock = __import__('threading').RLock()          # (the script's thread and the render thread both ask for the numbers: the cache is read and extended by one at a time)
+_host_missing = [False]                           # (the application's module _fieldes_host was asked for and is not there: the library runs outside the application)
+
+
+def _locked(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _vlock:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
+@_locked
+def _var_sync():
+    """ The cache above brought up to date, or None (outside the application, or a script without var()s) """
+    import sys
+    if _host_missing[0] and '_fieldes_host' not in sys.modules:
+        return None             # (outside the application the import below fails every time, and every read of a field asks: 21 000 reads in the trace of one edge, 0.3 ms each; a stand-in host that a test puts in sys.modules is found again)
     try:
         import _fieldes_host as host
         entries = getattr(host, '__vars', None)
+        gen = getattr(host, '__vars_gen', None)
     except ImportError:
+        _host_missing[0] = True
         return None
     if not entries:
         return None
-    from fieldes.ffi import libfive_tree
-    trees, values = [], []
-    for e in entries:
+    import hashlib
+    import struct
+    c = _vcache
+    n = len(entries)
+    if gen is None or c['entries'] is not entries or c['gen'] != gen or n < c['count']:
+        c['entries'], c['gen'], c['count'] = entries, gen, 0
+        c['trees'], c['values'], c['hasher'], c['arrays'], c['arrays_at'] = [], [], hashlib.sha1(), None, -1
+    for e in entries[c['count']:n]:
         try:
-            trees.append(e[0].ptr)
-            values.append(float(e[1]))
+            ptr = e[0].ptr
+            value = float(e[1])
         except (TypeError, ValueError, AttributeError, IndexError):
             continue
-    if not trees:
+        c['trees'].append(ptr)
+        c['values'].append(value)
+        c['hasher'].update(struct.pack('<d', value))
+    c['count'] = n
+    return c if c['trees'] else None
+
+
+@_locked
+def _var_values():
+    """ The var() numbers of the script being run, as (trees, values) arrays for a bounds search """
+    c = _var_sync()
+    if c is None:
         return None
-    return (libfive_tree * len(trees))(*trees), (ctypes.c_float * len(values))(*values), len(trees)
+    n = len(c['trees'])
+    if c['arrays_at'] != n:
+        import ctypes
+        from fieldes.ffi import libfive_tree
+        c['arrays'] = ((libfive_tree * n)(*c['trees']), (ctypes.c_float * n)(*c['values']), n)
+        c['arrays_at'] = n
+    return c['arrays']
+
+
+@_locked
+def _var_digest():
+    """ A digest of the numbers of the script's var()s, or None: what a key of a statement holds of them """
+    c = _var_sync()
+    return None if c is None else c['hasher'].hexdigest()
 
 
 def _look_for_box(s, known, half, box, limit):
@@ -574,6 +628,23 @@ def menu_call(request):
     return catalog.call(request)
 
 
+def hides_inputs(name):
+    ''' '1' when the menu operation `name` makes something that is drawn as a body -- a solid, a 2D shape, a lattice, the result of an analysis -- and so shows the bodies it is made of itself: they are hidden
+        when the operation is made (the user, 2026-10-29: "bodies that an operation is based on and uses in its own visual representation, like an analysis, a union, difference, etc. hide the bodies it
+        was created from automatically").  An empty string for what makes a number, a field, a surface, a point, a curve or the conditions of an analysis: those are drawn beside what they are made of '''
+    from fieldes import menu_catalog as catalog
+    from fieldes import outline
+    # (an extrusion and a path extrusion leave the profile they are made of shown: the profile is what the shape is edited on, the user, 2026-11-04: "the profile should not get hidden like it does currently.  It is a vital part of editing the profile even after it is created")
+    if name in ('extrude', 'path_extrude'):
+        return ''
+    kind = outline._function_kinds().get(name)
+    if kind is None:
+        # (the geometric operations -- offsets, rounding, moving, repeating, extruding, combining -- make a body of the body they are given; measuring makes a number or a point)
+        group = next((g for n, g, _t, _o in catalog.OPERATIONS if n == name), None)
+        return '1' if group and group not in ('Measuring',) else ''
+    return '1' if kind in ('solid', 'profile', 'lattice', 'simulation') else ''
+
+
 def preview_mesh(request):
     ''' A coarse mesh of what a context-menu entry would make where the mouse is, for the see-through preview of the entry that is under it.  `request` is the one
         of menu_call (the same entry, place and size).  The call is evaluated on its own: an entry that is made of models of the script, or whose call is not
@@ -592,13 +663,52 @@ def preview_mesh(request):
     head, _marker, expression = text.rpartition(catalog.PRELUDE)
     namespace = {}
     exec('from fieldes import *', namespace)
+    # (the points a profile or a body of points is made of say `position=(var(0), ...)`: the program's var() makes a number that can be dragged, which `from fieldes import *` does not bring -- the hover
+    # preview of the morph shapes and of the profile raised "name 'var' is not defined" and showed nothing; a preview has no use for a number that can be dragged, so var() is the number itself)
+    namespace['var'] = lambda value: value
     if head.strip():
         exec(head, namespace)           # (a function or the points that the call is made of)
     shape = eval(expression.strip(), namespace)
     if not hasattr(shape, 'get_mesh'):
         return ''
     import math
+    # A 2D shape -- slot, ring, rounded_rectangle, profile -- is the prism of its outline: through the whole height of the box that is meshed (the tall slab of the profile, the ring that touches the box at
+    # every size and so is "not shown"), or, where it has a thickness of its own, a band of side walls with no top and no bottom -- a hollow rim.  The click puts a flat, filled plate there (the user,
+    # 2026-11-04: "THE PREVIEW SHOWS WHAT GETS GENERATED WHEN THE USER CLICKS ON IT"; measured in the window: the slot and the rounded_rectangle a rim of 1496 and 520 triangles none of which faces up or down,
+    # the ring nothing, the profile a slab).  So the preview is meshed as that plate: the shape cut to a thin plate, which has its top and its bottom
+    plate_z = None
+    if any(n == req.get('name') and group == '2D' for n, group, _ in catalog.PRIMITIVES):
+        try:
+            from fieldes import outline
+            import re
+            bounds = getattr(shape, '_bounds', None)
+            thickness = 0.075 * max(float(req.get('scale', 1.0)), 1e-6)
+            z0 = 0.0
+            lo_xy = hi_xy = None
+            if bounds is not None:
+                lo_xy, hi_xy = (float(bounds[0][0]), float(bounds[0][1])), (float(bounds[1][0]), float(bounds[1][1]))
+                z0 = 0.5 * (float(bounds[0][2]) + float(bounds[1][2]))
+                if float(bounds[1][2]) - float(bounds[0][2]) > 1e-9:
+                    thickness = float(bounds[1][2]) - float(bounds[0][2])
+            elif outline._function_kinds().get(req.get('name')) == 'profile':
+                # (the points a profile is made of say where it is: the plate is cut over them)
+                number = r'(-?[0-9][0-9.eE+-]*)'
+                corners = [tuple(float(v) for v in m) for m in re.findall(r'position=\(var\(' + number + r'\), var\(' + number + r'\), var\(' + number + r'\)\)', head)]
+                if corners:
+                    z0 = corners[0][2]
+                    lo_xy = (min(c[0] for c in corners), min(c[1] for c in corners))
+                    hi_xy = (max(c[0] for c in corners), max(c[1] for c in corners))
+            wide = 1000.0 * max(float(req.get('scale', 1.0)), 1e-6)
+            cx, cy = (0.5 * (lo_xy[0] + hi_xy[0]), 0.5 * (lo_xy[1] + hi_xy[1])) if lo_xy is not None else (float(req.get('x', 0.0)), float(req.get('y', 0.0)))
+            shape = namespace['intersection'](shape, namespace['box']((wide, wide, thickness), position=(cx, cy, z0)))
+            plate_z = z0
+            if lo_xy is not None:
+                shape._bounds = ((lo_xy[0], lo_xy[1], z0 - 0.5 * thickness), (hi_xy[0], hi_xy[1], z0 + 0.5 * thickness))
+        except Exception:
+            plate_z = None              # (the preview stays what it was)
     centre = [float(req.get(k, 0.0)) for k in ('x', 'y', 'z')]
+    if plate_z is not None:
+        centre[2] = plate_z                 # (the plate is where the 2D shape is, not at the height of the click)
     half = 2.5 * max(float(req.get('scale', 1.0)), 1e-6)
     # The box of the shape: known for what the library makes with a size of its own (`_bounds`), so that the shape is meshed at its own size, as large or as small as it is.  Where it is not known, the box
     # round the click is the guess, and is made larger (twice at most) while the shape touches its sides -- cut open there --; a shape that is still not inside is not shown
@@ -650,7 +760,23 @@ def preview_mesh(request):
         if finer_tris and len(finer_tris) <= 150000:
             verts, tris = finer_verts, finer_tris
             break
-    return json.dumps({'v': [round(c, 4) for v in verts for c in v], 't': [i for t in tris for i in t],
+    # A 2D shape is a flat sheet in the viewport -- the shape the click makes is drawn from the face of its outline, with no thickness --: what is handed over is the up-facing triangles of the plate, in the
+    # plane it is in, and the program draws them as it draws that shape (View::setPreviewMesh, flat)
+    flat = plate_z is not None
+    if flat:
+        keep = []
+        for a, b, c in tris:
+            p, q, r = verts[a], verts[b], verts[c]
+            if (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]) > 0:
+                keep.append((a, b, c))
+        if keep:
+            used = sorted({i for t in keep for i in t})
+            where = {old: new for new, old in enumerate(used)}
+            verts = [(verts[i][0], verts[i][1], plate_z) for i in used]
+            tris = [(where[a], where[b], where[c]) for a, b, c in keep]
+        else:
+            flat = False
+    return json.dumps({'v': [round(c, 4) for v in verts for c in v], 't': [i for t in tris for i in t], 'flat': 1 if flat else 0,
                        'ms': int((time.perf_counter() - started) * 1000)}, separators=(',', ':'))
 
 
@@ -876,6 +1002,50 @@ def _arg_removals(call, names, var, start_of, end_of):
     return edits
 
 
+def _morph_faces_after_removal(tree, var, call, names, start_of, end_of, source):
+    ''' The faces of a body of points when points are taken out of its list (the user, 2026-11-02, after deleting the ninth point of a morph polyhedron: "a face is the numbers of three or four different points
+        (0 to 7): (2, 6, 8)"): the faces are the list `body_faces = [...]` above the call; the faces that name the points that go are taken out, the hole each leaves is closed by one face (the four triangles
+        round a point that was pressed out of a square are the square again), and the numbers of the points that stay are renumbered -- all in the same edit that takes the points out of the list.  A hole
+        that is not a closed loop takes the whole statement with it: the faces are the hull's again.  Returns (edits of the whole source as (start, end, text), the first line the edit touches or None) '''
+    func = call.func
+    callee = func.id if isinstance(func, ast.Name) else getattr(func, 'attr', '')
+    if callee not in ('morph_polyhedron', 'morph_body') or not call.args or not isinstance(call.args[0], ast.List):
+        return [], None
+    items = call.args[0].elts
+    gone = {i for i, e in enumerate(items) if isinstance(e, ast.Name) and e.id in names}
+    # (the last statement above the call that gives the list: when the script runs, a later one wins)
+    given = [s for s in tree.body if isinstance(s, ast.Assign) and s.lineno < call.lineno
+             and any(isinstance(t_, ast.Name) and t_.id == var + '_faces' for t_ in s.targets)]
+    st = given[-1] if given else None
+    if not gone or st is None or not isinstance(st.value, ast.List):
+        return [], None
+    try:
+        faces = [tuple(int(v) for v in f) for f in ast.literal_eval(ast.get_source_segment(source, st.value))]
+    except (ValueError, SyntaxError, TypeError):
+        return [], None
+    from fieldes.stdlib import morph
+    filled = morph._fill_holes(faces, gone)
+    lines = source.split('\n')
+    # (THE LINES STAY WHERE THEY ARE: the model tree writes the lines from the faces down to the call back one to one, and cuts the lines of the deleted point's own statements at the numbers they had.  Text
+    # that has more or fewer lines than the list it replaces moves everything under it and the cut takes the wrong lines -- the user, 2026-11-03, after deleting a point: the closing bracket of the list and its end mark
+    # gone, the end of the point's statement left behind.  So the list is written again with the number of lines it had, and what is no longer needed is an empty line)
+    count = st.value.end_lineno - st.value.lineno + 1
+    if filled is None:
+        # (the hole is not a closed loop: the faces are the hull's again, which is what a list that is None says)
+        return [(start_of(st.value), end_of(st.value), 'None' + '\n' * (count - 1))], st.lineno
+    number = {}
+    for k in range(len(items)):
+        if k not in gone:
+            number[k] = len(number)
+    fresh = [tuple(number[v] for v in f) for f in filled]
+    try:
+        from fieldes import profile_edit
+        text = profile_edit._faces_text_fit(fresh, ' ' * st.col_offset, count)
+    except Exception:
+        text = repr(fresh) + '\n' * (count - 1)
+    return [(start_of(st.value), end_of(st.value), text)], st.lineno
+
+
 def arg_edits(arg):
     ''' Changing the models a call is given: the model tree's nesting, renesting and denesting are edits of the arguments.
         `arg` is JSON {source, statements: [{var, line, remove: [name, ...], insert: [{name, relative, side}, ...]}]}: for each
@@ -936,6 +1106,11 @@ def arg_edits(arg):
             raise ValueError('%s is not one of the models %s is given' % (name, var))
 
         edits = _arg_removals(call, want.get('remove', []), var, start_of, end_of) if want.get('remove') else []
+        faces_line = None
+        if is_call and want.get('remove'):
+            # (the points of a body of points that go take their faces with them, and the faces that are left are renumbered)
+            more, faces_line = _morph_faces_after_removal(tree, var, call, want['remove'], start_of, end_of, source)
+            edits.extend(more)
         for name in want.get('hole', []):
             # (a model the call cannot do without is taken out: a placeholder `...` stands where it was, wherever it is written)
             nodes = [n for n in ast.walk(call) if isinstance(n, ast.Name) and n.id == name
@@ -958,7 +1133,7 @@ def arg_edits(arg):
                     edits.append((start_of(node), start_of(node), name + ', '))
                 else:
                     edits.append((end_of(node), end_of(node), ', ' + name))
-        first, last = stmt.lineno, stmt.end_lineno
+        first, last = (min(stmt.lineno, faces_line) if faces_line else stmt.lineno), stmt.end_lineno
         base = starts[first - 1]
         stop = starts[last - 1] + len(lines[last - 1])
         text = source[base:stop]
@@ -987,6 +1162,35 @@ def block_save(request):
     import json
     r = json.loads(request)
     return save_as_block(r.get('source', ''), name=r.get('name') or None, suggest=bool(r.get('suggest')))
+
+
+def import_editable(request):
+    ''' File > Import model of a triangle mesh (the user, 2026-11-02, H64: "a tri mesh should import as a polyhedron"): the statements that make the mesh a body of points -- a point at each vertex, each a model of its
+        own with its gizmo, the faces of the mesh as the list `<name>_faces` above the call, the `morph_polyhedron` of the points, and the line that shows it.  `request` is JSON {"path", "name", "file_units"}; the
+        answer is {"text", "points"}, or {"reason"} when the mesh cannot be one (it is not closed, or it has more points than a body of points is edited by): the import is then `import_model`, the exact distance
+        to its triangles, as before '''
+    import json
+    from fieldes import menu_catalog
+    from fieldes.stdlib import mesh_edit
+    r = json.loads(request)
+    name = r['name']
+    try:
+        verts, faces = mesh_edit.mesh_faces(r['path'], file_units=r.get('file_units'))
+    except Exception as e:
+        why = str(e)
+        return json.dumps({'reason': why[len('editable_polyhedron: '):] if why.startswith('editable_polyhedron: ') else why})
+    text = ''.join(menu_catalog._gizmoed_point('%s_p%d' % (name, k + 1), '%.6g' % x, '%.6g' % y, '%.6g' % z, None) for k, (x, y, z) in enumerate(verts))
+    names = ', '.join('%s_p%d' % (name, k + 1) for k in range(len(verts)))
+    from fieldes import profile_edit
+    block = profile_edit._faces_block(name + '_faces', faces, '')
+    # (the import sets the resolution: about 200 pieces across the mesh -- the user, 2026-11-02, H72: the render region of a mesh 570 mm long warned "resolution 10 means 5700 voxels across the render region")
+    size = max(max(v[a] for v in verts) - min(v[a] for v in verts) for a in range(3)) or 1.0
+    res = '%.3g' % min(20.0, max(0.05, 200.0 / size))
+    # (the region too, from the size of the mesh and room for a point that is dragged out of it: without view.set_bounds the program runs the whole script a second time to fit the region -- 15 s of the 33 s
+    # of the import of 884 points in the window)
+    lo = ', '.join('%.4g' % (min(v[a] for v in verts) - 0.5 * size) for a in range(3))
+    hi = ', '.join('%.4g' % (max(v[a] for v in verts) + 0.5 * size) for a in range(3))
+    return json.dumps({'text': 'view.set_resolution(%s)\nview.set_quality(8)\nview.set_bounds([%s], [%s], auto_scale=True)\n%s%s%s = morph_polyhedron([%s])\n%s\n' % (res, lo, hi, text, block, name, names, name), 'points': len(verts)})
 
 
 def save_as_block(source, name=None, suggest=False):
@@ -1133,6 +1337,157 @@ def terminal_exec(request):
     return json.dumps({'output': out.getvalue(), 'value': value, 'error': error})
 
 
+def _edge_line_of(values, point, size, reach):
+    ''' (the place of the edge nearest `point`, its direction) -- the straight line the edge makes -- or None when there is no edge within `reach` '''
+    from fieldes.stdlib import features
+    found = features.find_feature(values, point, reach, size, 'edge')
+    if found is None or found.get('direction') is None:
+        return None
+    return tuple(float(c) for c in found['point']), tuple(float(c) for c in found['direction'])
+
+
+def _same_edge(a, b, tol):
+    ''' Do two lines (place, direction) say one straight edge: parallel, and the place of the one on the line of the other '''
+    import math
+    (pa, da), (pb, db) = a, b
+    if abs(sum(da[i] * db[i] for i in range(3))) < 0.999:
+        return False
+    d = [pb[i] - pa[i] for i in range(3)]
+    along = sum(d[i] * da[i] for i in range(3))
+    return math.sqrt(max(0.0, sum(c * c for c in d) - along * along)) < tol
+
+
+def _traced_points(shape, place):
+    ''' The points of the curve that the statement `edge_at(body, place)` traces (a curved edge: a closed curve or one that ends where two faces fade into one another), or None when it traces none '''
+    import contextlib
+    import io
+    try:
+        from fieldes.stdlib import features
+        with contextlib.redirect_stdout(io.StringIO()):
+            curve = features.edge_at(shape, tuple(float(c) for c in place))
+        if getattr(curve, '_lost', None):
+            return None
+        points = [tuple(float(c) for c in p) for p in (getattr(curve, 'vertices', None) or [])]
+        return points if len(points) >= 2 else None
+    except Exception:
+        return None
+
+
+def _near_polyline(point, points, tol):
+    ''' Does `point` lie within `tol` of the polyline through `points` '''
+    import math
+    for a, b in zip(points, points[1:]):
+        ab = [b[i] - a[i] for i in range(3)]
+        length2 = sum(c * c for c in ab)
+        t = 0.0 if length2 < 1e-30 else max(0.0, min(1.0, sum((point[i] - a[i]) * ab[i] for i in range(3)) / length2))
+        if math.sqrt(sum((point[i] - (a[i] + t * ab[i])) ** 2 for i in range(3))) < tol:
+            return True
+    return False
+
+
+def connected_edges(request):
+    ''' The edges that a right-click on a body offers under "Lines along connected edges" (H97): every straight edge of the body that is joined to the edge nearest the place it was made, through
+        its corners, in every direction (see fieldes.stdlib.features.connected_edges), as JSON {"edges": [[[x, y, z], [x, y, z], [x, y, z]], ...], "existing": how many were left out}: the two ends and
+        the place that the statement `edge_at(body, place)` is written with -- the picked edge first.  An edge is written once, and only when the statement finds it: the place is on the edge itself
+        (the corners are found to a few percent of the body at an apex, so the middle of the chord is off the edge), the statement is tried here, an edge that cannot be found is left out (it
+        would be a dud from the start), an edge that is found twice with ends that differ is one edge, and an edge that the script has already (`existing`: the places of its edge_at statements of
+        this body -- the user, 2026-11-03: "The user cannot create the same edge linked to a body twice ... it does not create overlapping edge curves") is not made again.  `request` is JSON
+        {"var": the name of the body in the script that ran last, "point": [x, y, z] where the click was, "reach": the mm that about thirty pixels span there (optional), "existing": [[x, y, z], ...]
+        (optional)}.  An empty answer ({}) when the body is not one a variable holds or the search fails '''
+    import json
+    try:
+        r = json.loads(request)
+        from fieldes import runner
+        from fieldes.shape import Shape
+        from fieldes.stdlib import features
+        from fieldes.stdlib.fields import _shape_bounds, _eval_many
+        shape = runner.last_globals.get(r['var'])
+        if not isinstance(shape, Shape):
+            return '{}'
+        lo, hi = _shape_bounds(shape, None)
+        size = max(hi[i] - lo[i] for i in range(3)) or 1.0
+        reach = float(r['reach']) if r.get('reach') else 0.03 * size
+        values = lambda points: _eval_many(shape, points)
+        found = features.connected_edges(values, tuple(float(c) for c in r['point']), reach, size)
+        # (the corners are found by a search that is exact to about a hundred-thousandth of the body -- a corner at 0 comes back as 9e-07 -- and they are written into a script, where nobody wants
+        # to read that: they are put on a grid of a ten-thousandth of the body, rounded to a power of ten (0.001 mm for a box of 20 mm), where the corners of an ordinary part are exact)
+        import math
+        grid = 10.0 ** math.floor(math.log10(size) - 4.0)
+
+        def tidy(p):
+            return [float('%.10g' % (round(c / grid) * grid)) + 0.0 for c in p]
+
+        def written(p):
+            return [float('%.5g' % c) + 0.0 for c in tidy(p)]           # (the app writes a place with five digits: the one that is tried is the one that is written)
+        tol = 2e-3 * size
+        have = [l for l in (_edge_line_of(values, tuple(float(c) for c in p), size, 0.1 * size) for p in (r.get('existing') or [])) if l is not None]
+        kept, out, skipped = [], [], 0
+        import io
+        import contextlib
+        for a, b in found:
+            middle = tuple(0.5 * (a[i] + b[i]) for i in range(3))
+            on = _edge_line_of(values, middle, size, 0.1 * size)
+            if on is None:
+                continue
+            if any(_same_edge(on, e, tol) for e in have):
+                skipped += 1
+                continue
+            if any(_same_edge(on, e, tol) for e in kept):
+                continue
+            place = written(on[0])
+            with contextlib.redirect_stdout(io.StringIO()):
+                line = features.edge_at(shape, tuple(place))
+            if getattr(line, '_lost', None):
+                continue
+            kept.append(on)
+            out.append([tidy(a), tidy(b), place])
+        return json.dumps({'edges': out, 'existing': skipped})
+    except Exception:
+        return '{}'
+
+
+def edge_exists(request):
+    ''' Is the edge under a click one that the script has already (an edge_at statement of this body)? {"index": i} -- the i-th of `existing`, the places of the statements -- or {}.  `request` is JSON
+        {"var": the name of the body in the script that ran last, "point": [x, y, z] where the click was, "reach": the mm that about thirty pixels span there (optional), "existing": [[x, y, z], ...]} '''
+    import json
+    try:
+        r = json.loads(request)
+        from fieldes import runner
+        from fieldes.shape import Shape
+        from fieldes.stdlib.fields import _shape_bounds, _eval_many
+        shape = runner.last_globals.get(r['var'])
+        if not isinstance(shape, Shape):
+            return '{}'
+        lo, hi = _shape_bounds(shape, None)
+        size = max(hi[i] - lo[i] for i in range(3)) or 1.0
+        values = lambda points: _eval_many(shape, points)
+        click = tuple(float(c) for c in r['point'])
+        reach = float(r['reach']) if r.get('reach') else 0.03 * size
+        here = _edge_line_of(values, click, size, reach)
+        if here is None:
+            # A CURVED edge (the user, 2026-11-03: "The user cannot create the same edge linked to a body twice ... it does not create overlapping edge curves"; a curve along the cut of a sphere through a cylinder, pressed at
+            # three places, was written three times): it is the edge of a statement when the place of the edge under the click lies on the curve that statement traces.  A statement that is a straight line is not looked at
+            from fieldes.stdlib import features
+            found = features.find_feature(values, click, reach, size, 'edge')
+            if found is None or found.get('point') is None:
+                return '{}'
+            where = tuple(float(c) for c in found['point'])
+            for i, p in enumerate(r.get('existing') or []):
+                if _edge_line_of(values, tuple(float(c) for c in p), size, 0.1 * size) is not None:
+                    continue
+                points = _traced_points(shape, p)
+                if points and _near_polyline(where, points, 0.01 * size):
+                    return json.dumps({'index': i})
+            return '{}'
+        for i, p in enumerate(r.get('existing') or []):
+            line = _edge_line_of(values, tuple(float(c) for c in p), size, 0.1 * size)
+            if line is not None and _same_edge(here, line, 2e-3 * size):
+                return json.dumps({'index': i})
+        return '{}'
+    except Exception:
+        return '{}'
+
+
 def feature_near(request):
     ''' What a right-click on a body offers near the place it was made: the corner and the edge of the body nearest that place (see fieldes.stdlib.features), as JSON
         {"corner": [x, y, z] or null, "edge": {"point": [x, y, z], "straight": [[x, y, z], [x, y, z]] or null} or null}.  `request` is JSON {"var": the name of
@@ -1233,11 +1588,16 @@ def origin_placement(request):
         P = tuple(float(value_of(v)) for v in xyz)
         args = getattr(body, '_placement_args', None)
         parts = getattr(body, '_placed_parts', None)
+        frame = args[5] if args is not None and len(args) > 5 else None
+        written = args is not None and args[0] is not None
         if args is not None and parts is not None:
             m, r = _numbers(args[0], (0.0, 0.0, 0.0)), _numbers(args[1], (0.0, 0.0, 0.0))
             s = args[2]
             s = (1.0, 1.0, 1.0) if s is None else (tuple(float(value_of(s)) for _ in range(3)) if not isinstance(s, (tuple, list)) else _numbers(s, (1.0, 1.0, 1.0)))
             c = tuple(float(v) for v in parts[1])
+            if frame != 'origin' and written:
+                # (a model made where its parts put it has ONE position, global: where its pivot is -- it is moved by that less the pivot, H93)
+                m = tuple(m[i] - c[i] for i in range(3))
         else:
             m, r, s, c = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), tuple(float(v) for v in _pivot(body))
         if any(abs(v) < 1e-9 for v in s):
@@ -1254,6 +1614,10 @@ def origin_placement(request):
     def num(v):
         return ('%.8f' % v).rstrip('0').rstrip('.') if abs(v) >= 5e-9 else '0'
     changed = any(abs(m2[i] - m[i]) > 1e-7 for i in range(3))
+    if frame != 'origin':
+        # (the position of a model made where its parts put it is where its pivot is: the new pivot is the point, so a position that is written is written again -- there -- and the model stays where it is)
+        changed = changed or written or any(abs(v) > 1e-7 for v in m2)
+        m2 = list(P)
     return json.dumps({'origin': '(%s)' % ', '.join(num(v) for v in o2), 'position': '(%s)' % ', '.join('var(%s)' % num(v) for v in m2), 'position_changed': changed})
 
 
@@ -1281,6 +1645,18 @@ def handles_text(name):
         raise ValueError('%s has %d numbers that place its surfaces: too many to write into the script '
                          '(the limit is %d)' % (name, len(values), _MAX_HANDLES))
     return '%s = handles(%s, [%s])' % (name, name, ', '.join('var(%s)' % v for v in values))
+
+
+def _no_handles_by_kind(shape):
+    ''' Whether the shape cannot have handles by what it is, which takes no measurement: a point (moved by its gizmo), a field or a number (no surface to pull), a shape that is edited by its
+        points (a morph shape), a shape with an excluded part.  A shape under a gizmo is asked about the shape it was made from, as _handle_count does '''
+    try:
+        from fieldes.shape import Shape
+        while getattr(shape, '_gizmo', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
+            shape = shape._placed_from
+        return bool(getattr(shape, '_locks', None) or getattr(shape, '_kind', None) in ('point', 'field', 'const') or getattr(shape, '_editable', False))
+    except Exception:
+        return True
 
 
 def _handle_count(shape):
@@ -1655,6 +2031,7 @@ def _placement_of(value, gs, src):
     if not _is_placeable(callee):
         return out
     out['placeable'] = True
+    out['frame'] = getattr(callee, '_placement_frame', None)           # ('origin': made in its own frame, its position is where that frame is; else: where its pivot is)
     out['args'], out['has_numbers'] = _placement_args(value, len(value.args), src)
     if out['args']:
         out['form'] = 'call'
@@ -1681,6 +2058,8 @@ def _placement_rows(placement, symmetry=False):
     for name, default in _PLACEMENT_SHOWN:
         if name == 'scale' and symmetry:
             continue
+        if name == 'position' and (placement or {}).get('place'):
+            default = '(%s)' % ', '.join('%.6g' % v for v in placement['place'])       # (the position is GLOBAL: where the model is, not 0, 0, 0)
         if name in written:
             rows.append({'param': name, 'text': written[name]['text'], 'span': written[name]['span'], 'kind': 'expression'})
         else:

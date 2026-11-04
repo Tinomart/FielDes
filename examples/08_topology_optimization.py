@@ -25,14 +25,14 @@ view.set_bounds(*roi(parts, ((-75.01, -85.07, -60.02), (75.01, 35.06, 28))), aut
 view.set_resolution(roi_resolution(parts, ((-75.01, -85.07, -60.02), (75.01, 35.06, 28))))
 view.set_quality(8)
 
-plates = union(box((-76, 5, -61), (-45, 36, 29)),
-               box((45, 5, -61), (76, 36, 29)))
-lugs = box((-60, -90, -61), (60, -60, 29))      # the lug ends: the pull acts here
+plates = union(box((31, 31, 90), position=(-60.5, 20.5, -16)),
+               box((31, 31, 90), position=(60.5, 20.5, -16)))
+lugs = box((120, 30, 90), position=(0, -75, -16))      # the lug ends: the pull acts here
 # hidden: lugs
 
 # the two lug holes, each with its whole ring of material (the holes are 17 mm across, the rings 36 mm, along x)
-holes = union(box((-48, -88, -22), (-26, -44, 22)),
-              box((26, -88, -22), (48, -44, 22)))
+holes = union(box((22, 44, 44), position=(-37, -66, 0)),
+              box((22, 44, 44), position=(37, -66, 0)))
 # hidden: holes
 design = exclude(space, holes)                        # ... which stay as they are
 # hidden: design
@@ -40,7 +40,9 @@ design = exclude(space, holes)                        # ... which stay as they a
 support = fixed(plates)
 load = force(lugs, (0, -2000, 0))
 opt_stress = static_analysis(design, supports=[support], loads=[load], material=aluminium, element_size=5)
-opt = topology_optimization(opt_stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.5'])
+compliance_1 = opt_stress.compliance
+volume_fraction_1 = opt_stress.volume_fraction
+opt = topology_optimization(opt_stress, conditions=[minimize(compliance_1), keep_below(volume_fraction_1, 0.5)])
 opt
 
 optimized = opt.shape()                       # where the density is above the level that keeps the 50 % asked for

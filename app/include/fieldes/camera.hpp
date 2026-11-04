@@ -117,7 +117,7 @@ signals:
 protected:
     void animateAxis(QQuaternion end);
 
-    float scale=0.5;
+    float scale=0.05;           // (ten times farther than it was, 0.5: what is made from the menu is as large as the view says, and the shapes were 0.5 mm -- the user, 2026-10-29: "the default is so tiny, please make it 10 fold bigger")
     QVector3D center={0,0,0};
     float pitch=128;
     float yaw=-59;

@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('u2_tunnel_across: a tunnel 6 x 6 mm across a block of 20 (along x), an undercut along z asked: a tunnel across the way a mould opens cannot be moulded, it is filled whole')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = difference(box((0, 0, 0), (20, 20, 20)), box((-1, 7, 7), (21, 13, 13)))
+part = difference(box(20, position=(10, 10, 10)), box((22, 6, 6), position=(10, 10, 10)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(undercut_along=(0, 0, 1))
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

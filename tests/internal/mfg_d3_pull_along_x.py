@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('d3_pull_along_x: a block 10 x 10 x 10 for a draft of 2 degrees with the mould opening ALONG X (not z): the faces across y and z lean, their width grows toward the foot (x = 0), the two faces across x stay where they were')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = box((0, 0, 0), (10, 10, 10))
+part = box(10, position=(5, 5, 5))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(draft=2.0, pull_direction=(1, 0, 0))
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

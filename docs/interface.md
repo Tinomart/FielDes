@@ -219,7 +219,9 @@ model had been right-clicked in the viewport:
   is valid when the pair it would be written with -- the selected model and the last other model of the script -- is what it takes (with no other model in the script the second is a placeholder, `...`, and the entry is valid all the same). **What an entry takes is declared by the library function itself**
   (`fn._takes = takes(...)`, with the kinds of `fieldes.kinds`: `SHAPES`, `BODIES`), the menu reads it from there, and a function that declares nothing takes any shape: so `smooth`, `round_edges`, `fillet`, `shell_inside`,
   `shell_outside`, `shell_exact`, `lattice` and `random_points` take a body (not a surface, a curve, a point or a field), `extrude` a 2D shape, a foam its points -- and a new function is covered by one line on it, with
-  no list of names in the menus.
+  no list of names in the menus.  **What goes into each input of its call** is declared the same way (`fn._slots = [slot(...)]`, see `fieldes.kinds.slot`): the call an entry writes from the models that are selected
+  is made of them each in the input that takes its kind, whatever order they were selected in -- the edges of a `fillet` in a row and a field as its radius, the part, the conditions and the material of a simulation --
+  and what the call needs and was not selected is a placeholder, `radius=...`.
 - On a line (or row) that defines a model: **Primitives**, **Parametric shapes**, **Operations**, **Engineering** (which holds **Periodic lattices** and **Non-periodic lattices** with the analyses), the quick operations (*center*, *bounding_box*), **Import model...**, **Select Surface** (greyed outside the viewport: the
   selection spreads from the place you click on the surface) and **Delete**, written for that model. The two lattice categories are sections of their own
   (not groups of the operations): **Periodic lattices** holds the operations that fill a model with cells that repeat and a menu for every family of cells, each entry making that cell;
@@ -346,7 +348,7 @@ on one placeholder only its own kind is taken, and another kind is refused, with
 **A shadow cannot be put above its original.** The tree gives a model its row under the **first statement that uses it** when it stands directly above it (otherwise it keeps its own row where it is made, and every use shows a shadow): that row is the original; every later use is a shadow. So a shadow can only go into a statement *below* the original. Ctrl+drag a model into a statement that is *above* it, or move a shadow there, and a message explains it: the new use would come first, so it would become the original and the old place would only show a shadow — and the model has to be defined above any use for the script to run. The same happens **indirectly**: a statement that holds a shadow can be dragged above the original, or the original dragged below it. The program works out the tree the edit would give, before it writes anything, and if any shadow would then come first it asks **once**, listing every model it is about (three shadows in one statement are one message, not three). The message offers the easy fix, which is its default: **the first use becomes the original place** (for a copy (Ctrl+drag), the model's definition goes directly above that statement, when nothing in between uses it) **and a reference stays where the original was**. *Do not show this message again* makes it always do that, without asking (**Settings → Show hidden messages again** brings the message back); Cancel leaves everything as it is; one `Ctrl+Z` undoes it. It is the same kind of rule as taking a model out of an operation that cannot do without it: the script is never left broken.
 
 **Taking a model out of a list.** A model that is one of the things in a **list** a call is given -- `loads=[force_1, force_2]`,
-`topology_optimization([push_case, pull_case], constraints=[...])`, `union_all([a, b, c])` -- is taken out of the list, and the call keeps the rest:
+`topology_optimization([push_case, pull_case], conditions=[...])`, `union_all([a, b, c])` -- is taken out of the list, and the call keeps the rest:
 the trash button of the `force_1` row under `static_analysis_1` leaves `loads=[force_2]`, not nothing. Taking out the **last**
 model of a list leaves a **placeholder** in it (`loads=...`, never an empty `[]`, which would only fail later): the analysis
 and its other inputs stay, and the statement waits there, as at every placeholder, until something is written -- drop a model on the
@@ -385,7 +387,7 @@ Dropping on an operation still adds the model to it, as in the table below: repl
 |---|---|
 | **a field on an operation** | the field takes the place of **a number** the operation is written with — *anywhere a number goes, a field goes*: drag `swell` onto `thick = offset(plate, 1.0)` and it becomes `offset(plate, swell)`. It takes the first plain number of the call that is no count (not one inside a tuple, such as a corner or a centre; not a whole number such as 
  or count: a field has a different value at every point, so it cannot say how many); where there is none, the drop is refused and says why |
-| **a point on an operation** | the point takes the place of **a position** the call is written with: drag `anchor` onto `d = distance_to_point((5, 5, 5))` and it becomes `distance_to_point(anchor)`. It takes the first position written as a tuple of numbers that is a position (not a size, a direction, a scale or a range), or the other point the call is given. A flat shape's position has two coordinates: `circle(3, (20, 50))` becomes `circle(3, (anchor.x, anchor.y))`. A point reads as its coordinates wherever a position goes, so the same works when you write it |
+| **a point on an operation** | the point takes the place of **a position** the call is written with: drag `anchor` onto `d = distance_to_point((5, 5, 5))` and it becomes `distance_to_point(anchor)`. It takes the first position written as a tuple of numbers that is a position (not a size, a direction, a scale or a range), or the other point the call is given. A flat shape's position has two coordinates: `circle(3, position=(20, 50))` becomes `circle(3, position=(anchor.x, anchor.y))`. A point reads as its coordinates wherever a position goes, so the same works when you write it |
 | **on a placeholder row** | the model takes the placeholder's place, at once (on the statement's row: its first placeholder). A placeholder for an input of conditions (`inlets=...`) takes **all the conditions dropped, as a list** -- all of one kind, or the drop is refused and says why |
 | **conditions on a simulation** (or on its *boundary conditions* row) | each goes into the input of its kind, as a list: a placeholder is replaced by the list, a list that is there gets them as more items, a single one written becomes a list with them. Conditions of different kinds each go to their own input, all in one edit |
 | **on a model of a call (or on a shadow) that cannot take it in** | the model of the same kind **replaces** it in that call -- see *Replacing a model* above |
@@ -565,7 +567,7 @@ the place of the work plane while its view is open (its axis the plane's normal)
 surface, a field -- and a profile, a line or a spline (through the images of its points), and what an operation makes of them: a `path_extrude`, a union, a shell. **All the images of a model are one model**, written under it:
 
 ```python
-box_1 = box((8, 4, 0), (26, 14, 8))
+box_1 = box((18, 10, 8), position=(17, 9, 4))
 box_1
 box_1_images = symmetry_images(box_1, symmetry_1)  # shadow: box_1, symmetry_1
 box_1_images
@@ -591,6 +593,8 @@ x, y or z, the work plane's normal, up in the view (the first plane then splits 
 an axis do not care where a first plane is); **Centre** -- where the planes cross (the origin, the middle of what is selected, the work plane's origin). The count and the arrangement are written into the call (`planes=` for planes, `copies=` for
 turns: changing the arrangement moves the number to the argument it belongs to); where it is and how it is turned are the numbers of its gizmo. **In use** switches the images off and on
 (`Shift+S` does the same; while it is off its planes are drawn pale as long as bodies are bound to it -- the images of a model --, as the mark that they are, and not at all when no body is: the planes are those of the symmetry **the bodies are made in**, whichever symmetry is selected, so each symmetry that has bodies shows its own, and the ✕ of the card stops using it).
+
+**A symmetry applied later to a shape made of points.** A profile, a line, a spline, a morph polyhedron or a morph body that was made without the symmetry, or half of one drawn on one side of a plane, can be given it afterwards: select the shape and press `Shift+S`. Every point that already has an exact mirror partner under the symmetry is linked to it -- the later point of a pair becomes the image of the earlier one (`body_p2 = symmetry_image(body_p1, mirror, 1)`), so pulling one pulls the other, no point is put on top of another, a point on the plane stays on it, and a second symmetry on the same points applies as well. A symmetry that was made after the shape is moved up above the first point it is used by. With a shape that has no such pair, or with anything else selected, `Shift+S` is what it was: the symmetry in use or not.
 
 **Its gizmo is along its own axes.** A symmetry made with `Shift+S` while the work plane's view is open has its axis along the plane's normal and its first plane across the plane (perpendicular to it), centred on the
 plane's origin -- and **its gizmo is turned with it**: the arrows and the rings are along the plane's own axes (its u, its v, its normal), however the camera was turned when the plane was made, so it is moved and turned in the
@@ -677,7 +681,7 @@ Shown at the bottom right when an analysis result is displayed (a result stated 
   around it). The button beside play sets how it runs — round and round (↻), back and forth (⇄), once to the
   end (→) — and the drop-down its speed: ×⅛, ×¼, ×½, ×1 (ten steps a second), ×2, ×4;
 - the **deformation** slider (`1:1` = true size) — the part is drawn deformed;
-- **Elements**: draw the tetrahedra (or hexahedra) the solver used, each with its own value (the
+- **Elements**: draw the tetrahedra (or hexahedra) the solver used (a mesh made with `mesh_volume` or `mesh_surface` has no such button: its cells are always drawn), each with its own value (the
   stress in a tetrahedron is constant in it); hover one to read it. The line below says how many there
   are. The result line and the safety factor use the elements' peak. The elements carry the result's own
   values, so the button is there at the result's own step (the full load, the last time);
@@ -692,7 +696,7 @@ does not have is left alone (it shows its own first one).
 
 ## Status bar and progress
 
-The status bar shows the render state on the left and, on the right, **where the keyboard is** (*Keys: viewport* or *Keys: editor*, the pane that has the keyboard also has a frame), the region, the resolution and the quality.
+The status bar shows the render state on the left and, on the right, **where the keyboard is** (*Keys: viewport* or *Keys: editor*, the pane that has the keyboard also has a frame), the region, the resolution and the quality, and last the **build** the window is (`build 2026-11-03 20:05`: the time of the program).
 A thin progress bar shows meshing. While a script runs, the output pane shows the statement and the
 progress of the operation in it.
 
@@ -836,7 +840,7 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 | Snap the first body onto the second by the selected faces, edges and points (viewport or tree focused) | `S` |
 | Work plane view: open / close, new work plane, set the view to it | `Shift+W`, `W` (viewport focused); `Ctrl+Shift+W` anywhere |
 | Snapping mode: a grid that everything you move goes to, a ring with its numbers where it lands, and a step for every turn | `Tab` (viewport focused); `Alt` held moves freely |
-| Use the symmetry that is selected, or stop (with none in the script: make one) | `Shift+S` (viewport focused) |
+| Use the symmetry that is selected, or stop (with none in the script: make one; with a shape made of points selected: link the points that have a mirror partner to it) | `Shift+S` (viewport focused) |
 | A **new symmetry at the cursor**, used at once (the point a new model would get under the cursor is its centre; the work plane's axis while its view is open) | `Ctrl+Shift+S` (anywhere; or View > New symmetry at the cursor) |
 | Set the origin of the selected model to the selected point (the model stays where it is) | `O` (viewport or tree focused) |
 | In the work plane view: next kind of drawing (line, spline, point; after stopping: the one that was on) / stop drawing / end a line / take a point back / cancel | `E` / right click / `Enter` or a double click / `Backspace` / `Esc` |

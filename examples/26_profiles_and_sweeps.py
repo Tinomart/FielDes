@@ -15,19 +15,19 @@
 from fieldes import *
 
 view.set_bounds([-10, -10, -10], [115, 70, 55], auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 # The corners of a plate. The fourth one says smooth=True: a spline point.
-a = point(0, 0, 0)
+a = point()
 a
-b = point(60, 0, 0)
+b = point(position=(60, 0, 0))
 b
-c = point(60, 30, 0, smooth=True)
+c = point(position=(60, 30, 0), smooth=True)
 c
-d = point(30, 50, 0)
+d = point(position=(30, 50, 0))
 d
-e = point(0, 30, 0)
+e = point(position=(0, 30, 0))
 e
 
 # The face they enclose (smooth=False: a point that says nothing is a corner), and the plate it makes.
@@ -44,30 +44,30 @@ plate = extrude(
 plate
 
 # A path of four points, and the tube along it. The scale of a point is how thick the tube is there: the gizmo of q2 has a scale of 1.8.
-q1 = point(70, 5, 10)
+q1 = point(position=(70, 5, 10))
 q1
-q2 = point(88, 24, 24,
-    position=(var(0), var(0), var(0)),
+q2 = point(
+    position=(var(88), var(24), var(24)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1.8), var(1.8), var(1.8)),
 )
 q2
-q3 = point(102, 44, 16)
+q3 = point(position=(102, 44, 16))
 q3
-q4 = point(106, 62, 36)
+q4 = point(position=(106, 62, 36))
 q4
 path = spline(
     [q1, q2, q3, q4],
 )
 path
 # The profile of the tube is a profile as well: four spline points round the origin, the face they enclose. Move one of them, or pull a point out of its outline, and the tube follows.
-s1 = point(3, 0, 0)
+s1 = point(position=(3, 0, 0))
 s1
-s2 = point(0, 3, 0)
+s2 = point(position=(0, 3, 0))
 s2
-s3 = point(-3, 0, 0)
+s3 = point(position=(-3, 0, 0))
 s3
-s4 = point(0, -3, 0)
+s4 = point(position=(0, -3, 0))
 s4
 cross_section = profile(
     [s1, s2, s3, s4],

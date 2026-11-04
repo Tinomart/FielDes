@@ -73,9 +73,11 @@ def _surface_arrays(shape, bounds, resolution):
     from fieldes.stdlib.fields import _shape_bounds, render_mesh
     lo, hi = _shape_bounds(shape, bounds)
     if resolution is None:
-        resolution = _host('__resolution', None)
+        # (the scene's resolution is normed by the size of the part -- ten samples across it for every unit --: the same number of samples across the part as the viewport has)
+        from fieldes.view import resolution_per_mm
+        size = max(h - l for l, h in zip(lo, hi))
+        resolution = resolution_per_mm(size)
         if resolution is None:
-            size = max(h - l for l, h in zip(lo, hi))
             resolution = max(0.5, min(20.0, 200.0 / max(size, 1e-9)))
     if bounds is None:
         # (the extent of a body is the box its faces lie on: a region that ends exactly on a face has no face inside it -- one cell more all round)
@@ -215,9 +217,11 @@ def _slice_contours(body, z, lo, hi, resolution):
     return out
 
 
-def _layer_resolution(resolution):
-    if resolution is None:
-        resolution = _host('__resolution', None)
+def _layer_resolution(resolution, lo=None, hi=None):
+    ''' Samples per mm of the contours: the number given, else the scene's resolution normed by the size of the body (ten samples across its longest side for every unit), else 4 '''
+    if resolution is None and lo is not None and hi is not None:
+        from fieldes.view import resolution_per_mm
+        resolution = resolution_per_mm(max(hi[i] - lo[i] for i in range(3)))
     return float(resolution) if resolution else 4.0
 
 
@@ -242,7 +246,7 @@ def export_layers(part, path, layer_height=0.2, bounds=None, resolution=None, fi
     body = _body_of(part, 'export_layers')
     lo, hi = _shape_bounds(body, bounds)
     z0 = float(lo[2] if first is None else first)
-    res = _layer_resolution(resolution)
+    res = _layer_resolution(resolution, lo, hi)
     pad = 0.5 / res
     flat = ((lo[0] - pad, lo[1] - pad), (hi[0] + pad, hi[1] + pad))
     out = ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', '4', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES']
@@ -275,7 +279,7 @@ def export_slice(part, path, z, bounds=None, resolution=None):
         raise ValueError('export_slice({!r}): the file is an .svg (the layers of a body as a stack: export_layers, .dxf)'.format(path))
     body = _body_of(part, 'export_slice')
     lo, hi = _shape_bounds(body, bounds)
-    res = _layer_resolution(resolution)
+    res = _layer_resolution(resolution, lo, hi)
     pad = 0.5 / res
     contours = _slice_contours(body, float(z), (lo[0] - pad, lo[1] - pad), (hi[0] + pad, hi[1] + pad), res)
     d = ' '.join('M ' + ' L '.join('%.5g %.5g' % (x, -y) for x, y in pts) + ' Z' for pts in contours)
@@ -710,7 +714,7 @@ def result_summary(result, native=False):
         values['min_temperature'], values['max_temperature'] = ranges['temperature']
     if 'frequencies' not in values and hasattr(result, 'frequencies'):
         try:
-            values['frequencies'] = list(result.frequencies)
+            values['frequencies'] = [float(f) for f in result.frequencies]
         except Exception:
             pass
     for name, label, unit in _RESULT_NUMBERS:
@@ -857,7 +861,9 @@ def export_field(field, path, bounds=None, resolution=None, name='field'):
     field = _body_of(field, 'export_field') if not isinstance(field, Shape) else field
     lo, hi = _shape_bounds(field, bounds)
     if resolution is None:
-        resolution = _host('__resolution', None) or 2.0
+        # (the scene's resolution is normed by the size of the field's box: ten samples across its longest side for every unit)
+        from fieldes.view import resolution_per_mm
+        resolution = resolution_per_mm(max(hi[i] - lo[i] for i in range(3))) or 2.0
     dims = [max(2, int(math.ceil((hi[i] - lo[i]) * resolution)) + 1) for i in range(3)]
     while dims[0] * dims[1] * dims[2] > 2000000:
         dims = [max(2, int(d * 0.9)) for d in dims]

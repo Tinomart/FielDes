@@ -3,9 +3,9 @@ Your own solvers: write the equations of a problem in Python, and FielDes meshes
 
     from fieldes import *
 
-    plate = box((0, 0, 0), (60, 20, 3))
-    cold = box((-1, -1, -1), (1, 21, 4))                    # where the plate is held at 20 degrees
-    hot = box((59, -1, -1), (61, 21, 4))                    # and where it is at 80
+    plate = box((60, 20, 3), position=(30, 10, 1.5))
+    cold = box((2, 22, 5), position=(0, 10, 1.5))                    # where the plate is held at 20 degrees
+    hot = box((2, 22, 5), position=(60, 10, 1.5))                    # and where it is at 80
 
     result = solve('heat', plate, fixed=[(cold, 20), (hot, 80)], conductivity=0.2)
     result                                                  # displayed: the temperature of the plate, with the elements behind it (the Elements button)

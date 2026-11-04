@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('h1_budget_refusal: a fin of 0.6 mm and a budget of 5 % (the thickening would change 33 %): the remedy is refused, the part comes out as it was, and the tool says why')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-fin = box((0, 0, 0), (0.6, 16, 24))
+fin = box((0.6, 16, 24), position=(0.3, 8, 12))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

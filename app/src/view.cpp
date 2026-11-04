@@ -17,7 +17,11 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <cstdio>
+#include <QJsonArray>
 #include <chrono>
+#include <memory>
+#include <QtConcurrent/QtConcurrent>
 #include <cstdio>
 #include "fieldes/regionformat.hpp"
 #include <QKeyEvent>
@@ -68,6 +72,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #endif
 
 namespace FielDes {
+
+static void groupFrameCommit();
 
 namespace {
 class ViewOverlay : public QWidget
@@ -120,6 +126,7 @@ View::View(QWidget* parent)
         if (!m_wheelScaling) return;
         m_wheelScaling = false;
         emit(dragEnd());
+        finishWheelSelection();
         m_overlay->update();
     });
     m_waitTimer.setInterval(40);
@@ -297,6 +304,7 @@ View::~View()
     {
         s->freeGL();
     }
+    releaseSnapLattice();
     doneCurrent();
 }
 
@@ -338,7 +346,16 @@ void View::applyViewerChoices(Shape* s) const
 
 void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
 {
+    auto lapClock = std::chrono::steady_clock::now();
+    const bool lapping = std::getenv("FIELDES_TIMING") != nullptr;
+    auto lap = [&](const char* what) {
+        if (!lapping) return;
+        const auto now = std::chrono::steady_clock::now();
+        fprintf(stderr, "[view] setShapes: %s took %.0f ms\n", what, 1000.0 * std::chrono::duration<double>(now - lapClock).count());
+        lapClock = now;
+    };
     for (auto s : new_shapes) applyViewerChoices(s);
+    lap("the viewer's choices of the new shapes");
     // We're going to co-optimize every single new and old tree together,
     // so that we can deduplicate them.  This could be expensive; if we
     // notice the main thread lagging, we could do the new_shapes half of this
@@ -366,6 +383,7 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
         fprintf(stderr, "[view] setShapes: %d new shapes keyed in %.0f ms\n", int(new_shapes.size()),
                 1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tKeys).count());
 
+    lap("the keys of the new shapes");
     // Erase all existing shapes that aren't in the new_shapes list
     bool vars_changed = false;
     bool any_running = false;
@@ -410,6 +428,7 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
         }
     }
 
+    lap("the old shapes against the new ones (their keys again, updateFrom)");
     // Start up the busy spinner
     if (new_shapes_map.size() || vars_changed)
     {
@@ -418,6 +437,8 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
     }
 
     // Connect all new shapes
+    std::vector<std::map<libfive::Tree::Id, float>> graveyard;           // (the numbers of the new shapes that an old one stands for: freed on another thread, see Shape::giveUpNumbers)
+    graveyard.reserve(new_shapes.size() * 3);                              // (reserved at once: the move of a std::map of MSVC is not noexcept, so a vector that grows COPIES every map in it -- 3321 maps of 3321 numbers were 5.5-6.9 s of "connecting the new shapes" in the window, H90; probe: 600 maps 387 ms without reserve, 0 ms with)
     for (auto s : new_shapes)
     {
         if (new_shapes_map.count(new_shapes_key[s]))
@@ -438,10 +459,17 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
         }
         else
         {
+            s->giveUpNumbers(graveyard);
             s->deleteLater();
         }
     }
+    if (!graveyard.empty())
+    {
+        const auto dead = std::make_shared<std::vector<std::map<libfive::Tree::Id, float>>>(std::move(graveyard));
+        QtConcurrent::run([dead] { dead->clear(); });
+    }
 
+    lap("connecting the new shapes");
     if (!any_running) {
         busy.hide();
         emit(renderBusy(false));
@@ -461,12 +489,18 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
         }
     }
     m_liveDrawn = false;
+    lap("the busy bar and the log");
     updateResultPanel();            // (shapes that went take their legend with them; new ones bring theirs when they have meshes)
+    lap("updateResultPanel");
     update();
     requestSlice();
+    lap("update and requestSlice");
     refreshSymmetry();              // (the symmetry model is another shape now)
+    lap("refreshSymmetry");
     linkFollowers();
+    lap("linkFollowers");
     applyActiveCopy();              // (the copies are linked to their points now: the one that was pressed shows the gizmo again)
+    lap("applyActiveCopy");
 }
 
 void View::linkFollowers()
@@ -550,6 +584,7 @@ void View::moveSourceLines(QVector<int> moved)
     // (what the view keeps by line as well: the provisional gizmo's models, the press that waits for a gizmo)
     for (int& l : m_provLines) l = moveLine(l);
     for (int& l : m_wait.lines) l = moveLine(l);
+    for (int& l : m_wheelRestoreLines) l = moveLine(l);         // (the selection the wheel puts back: a line written above it moved it)
     if (m_copyLine >= 0) m_copyLine = moveLine(m_copyLine);
     update();
 }
@@ -793,6 +828,7 @@ void View::releaseGL()
     glyphs.releaseGL();
     axes.releaseGL();
     background.releaseGL();
+    releaseSnapLattice();
     bbox.releaseGL();
     busy.releaseGL();
     for (QOpenGLShaderProgram** program : {&Shader::basic, &Shader::busy, &Shader::line, &Shader::slice})
@@ -1127,6 +1163,10 @@ void View::paintGL()
     }
 
     // (the spinner's place shows the render's progress bar: paintOverlay)
+
+    // The lattice of the snapping mode: lines over everything that was drawn, made by the graphics card from the lines that were chosen for this camera
+    ensureSnapLattice();
+    drawSnapLattice(m);
 
     glDisable(GL_DEPTH_TEST);
     painter.endNativePainting();
@@ -1775,7 +1815,7 @@ void View::updateResultPanel()
     st.hasDeform = r->hasDeformation();
     st.scale = r->deformScale();
     st.autoScale = r->deformAuto();
-    st.hasElements = r->hasElements();
+    st.hasElements = r->hasElements() && !r->cellsOnly();
     st.showElements = r->showElements();
     st.steps = r->stepCount();
     st.step = r->step();
@@ -1859,6 +1899,24 @@ void View::mouseMoveEvent(QMouseEvent* event)
     event->accept();
     m_lastPos = event->pos();
 
+    if (m_insertBody)
+    {
+        // (a press on the surface of a body made of points that moves: the point is put where it was pressed -- the script is edited, and when the point is there and selected the drag of it goes on: see
+        // startWaitingGrip)
+        if (m_leftDown && (event->pos() - m_insertPressPos).manhattanLength() >= 4)
+        {
+            Shape* body = m_insertBody;
+            m_insertBody = nullptr;
+            m_wait = WaitGrip{true, 3, 0, 0, QList<int>{}, true, m_insertPressPos, true, true};
+            m_waitTimer.start();
+            setCursor(Qt::BusyCursor);
+            emit(surfaceInsertRequested(body->sourceLine(), m_insertPress));
+            setPullVirtual(m_insertPress);          // (the point is drawn where it was pressed at once, the script has it a moment later: the user, 2026-11-02, "the point should at least be created insnatly")
+            m_overlay->update();
+        }
+        mouse.pos = event->pos();
+        return;
+    }
     if (m_pullShape)
     {
         if (!m_pullActive)
@@ -1894,11 +1952,24 @@ void View::mouseMoveEvent(QMouseEvent* event)
         if (m_faceActive)
         {
             QVector3D at;
-            if (ringPoint(event->pos(), m_faceStart, m_faceNormal, at))
+            bool haveAt = false;
+            if (m_faceEndPull)
+            {
+                // (the end face of a prism moves along the normal of its plane: the point of that line that is nearest to the ray of the cursor, as the pull of a surface finds it)
+                const QVector3D cursor = toModelPos(event->pos(), 0);
+                const QVector3D ray = cursor - toModelPos(event->pos(), 1);
+                const QVector3D dir = m_faceWallDir.normalized();
+                const QVector3D side = QVector3D::crossProduct(ray, QVector3D::crossProduct(dir, ray));
+                const float den = QVector3D::dotProduct(dir, side);
+                haveAt = std::fabs(den) > 1e-9f;
+                if (haveAt) at = m_faceStart + dir * (QVector3D::dotProduct(cursor - m_faceStart, side) / den);
+            }
+            else haveAt = ringPoint(event->pos(), m_faceStart, m_faceNormal, at);
+            if (haveAt)
             {
                 QVector3D d = at - m_faceStart;
                 if (!m_faceWallDir.isNull()) d = m_faceWallDir * QVector3D::dotProduct(d, m_faceWallDir);       // (a wall moves along what it faces, and nowhere else)
-                if (m_wp.open && m_wp.exists && m_faceHasRef && std::fabs(QVector3D::dotProduct(m_faceNormal, m_wp.normal())) > 0.999f)
+                if (m_wp.open && m_wp.exists && m_faceHasRef && !m_faceEndPull && std::fabs(QVector3D::dotProduct(m_faceNormal, m_wp.normal())) > 0.999f)
                 {
                     d = snapToWorkPlane(m_faceRef + d, nullptr, nullptr, false) - m_faceRef;        // (the grid only: its own points are what is moving)
                     d -= m_wp.normal() * QVector3D::dotProduct(d, m_wp.normal());                    // (in the plane: the noise of the ray is not a move out of it)
@@ -1911,7 +1982,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
                     setSnapMark(m_faceRef + d, false);                       // (where the point of the face that is kept on the grid lands: marked)
                 }
                 std::map<libfive::Tree::Id, float> numbers;
-                for (const FaceVar& v : m_faceVars) numbers[v.id] = v.value0 + d[v.axis];
+                for (const FaceVar& v : m_faceVars) numbers[v.id] = v.value0 + v.scale * d[v.axis];
                 if (!numbers.empty()) applyGizmoNumbers(numbers);
             }
         }
@@ -2406,7 +2477,7 @@ void View::mousePressEvent(QMouseEvent* event)
                 }
                 if (direct && !numbers)
                 {
-                    m_wait = WaitGrip{true, 3, 0, 0, QList<int>{}, true};
+                    m_wait = WaitGrip{true, 3, 0, 0, QList<int>{}, true, event->pos(), true};
                     m_waitTimer.start();
                     setCursor(Qt::BusyCursor);
                     press_pos = QPoint(-100000, -100000);   // (the select is made here, not by the release)
@@ -2460,6 +2531,25 @@ void View::mousePressEvent(QMouseEvent* event)
                     if (!lineShape->isCurve()) beginPull(event->pos());
                     return;
                 }
+                // The line of an edge of a body (edge_at) cannot be pulled, but it is a model of the tree like any other, and a click on it selects it.  It has no pixel in the picture of what is pressed, so the
+                // press found the body behind it, or nothing (the user, 2026-11-04: "when left clicking an edge it does not get selected in the model tree like every other obejct does"; measured in a window:
+                // "nothing to pull at ... picked 0 (line -1)").  A press within a few pixels of it -- the test the right click makes -- is the line's: a click selects it, and a drag from it draws the selection rectangle
+                {
+                    Shape* edgeShape = nullptr;
+                    QVector3D edgeHit;
+                    int edgePiece = 0;
+                    if (outlineAt(event->pos(), edgeShape, edgeHit, edgePiece, true) && edgeShape && edgeShape->isCurve() && edgeShape->sourceLine() >= 0)
+                    {
+                        press_pos = event->pos();
+                        press_target = edgeShape;
+                        press_ctrl = false;
+                        drag_target = nullptr;
+                        rect_start = rect_now = event->pos();
+                        rect_add = false;
+                        mouse.state = mouse.DRAG_RECT;
+                        return;
+                    }
+                }
                 // The face of a profile: dragged, it takes all its points along in its plane; a click selects it
                 // (the face of an image -- the profile a sweep's images bring along -- is not dragged: its points are the original's, and a click selects it)
                 if (picked && int(picked) <= shapes.size() && shapes.at(picked - 1)->isFace() && !shapes.at(picked - 1)->isLocked() &&
@@ -2486,6 +2576,7 @@ void View::mousePressEvent(QMouseEvent* event)
                         }
                         m_faceVars.clear();
                         m_faceWallDir = QVector3D();                // (the face moves every point as the mouse does)
+                        m_faceEndPull = false;
                         const auto& vs = face->getVars();
                         for (const auto& c : face->controlPoints())
                         {
@@ -2515,14 +2606,16 @@ void View::mousePressEvent(QMouseEvent* event)
             {
                 Shape* prism = shapes.at(picked - 1);
                 Shape::PrismWall wall;
-                if (prism->hasPrism() && !prism->isLocked() && !prism->isSymmetryImage() && prism->sourceLine() >= 0 && prism->prismWallAt(toModelPos(event->pos()), wall))
+                bool endPull = false;           // (a press on an end face: pulled by the number of that end, along the normal of the plane of the profile)
+                if (prism->hasPrism() && !prism->isLocked() && !prism->isSymmetryImage() && prism->sourceLine() >= 0 && (prism->prismWallAt(toModelPos(event->pos()), wall) || (endPull = prism->prismEndAt(toModelPos(event->pos()), wall))))
                 {
                     m_faceVars.clear();
                     const auto& vs = prism->getVars();
-                    for (const auto& v : wall.vars)
+                    for (size_t k = 0; k < wall.vars.size(); ++k)
                     {
+                        const auto& v = wall.vars[k];
                         const auto it = vs.find(v.first);
-                        if (it != vs.end()) m_faceVars.append({v.first, v.second, it->second});
+                        if (it != vs.end()) m_faceVars.append({v.first, v.second, it->second, k < wall.scales.size() ? wall.scales[k] : 1.0f});
                     }
                     if (!m_faceVars.isEmpty())
                     {
@@ -2532,12 +2625,29 @@ void View::mousePressEvent(QMouseEvent* event)
                         m_faceNormal = wall.planeNormal;
                         m_faceWallDir = wall.direction;
                         m_faceStart = toModelPos(event->pos());
-                        m_faceHasRef = false;
+                        m_faceEndPull = endPull;
+                        m_faceRef = m_faceStart;        // (the pressed point of the end face is what the grid holds while it is pulled)
+                        m_faceHasRef = endPull;
                         m_faceShape = prism;
                         m_faceActive = false;
                         m_facePressPos = event->pos();
                         return;
                     }
+                }
+                else if (prism->hasPrism() && prism->isSelected() && !prism->isLocked() && !prism->isSymmetryImage() && prism->sourceLine() >= 0 && !(event->modifiers() & Qt::ShiftModifier)
+                         && prism->prismEndAt(toModelPos(event->pos()), wall, false))
+                {
+                    // The press is on the end of the extrusion that is selected, but the end is not a number of its own yet: the first selection writes `handles(extrusion, [a, b])` and the run that answers that edit
+                    // is still going.  The press used to be dropped ("nothing to pull ... numbers to pull it by no"; the user, 2026-11-04: "it does work, but only after the script has ran fully ... like 5 seconds"):
+                    // it is held now and made again when the run is in, if the button is still down
+                    press_pos = QPoint(-100000, -100000);
+                    press_target = nullptr;
+                    drag_target = nullptr;
+                    m_endPressHeld = true;
+                    const QPoint heldAt = event->pos();
+                    const Qt::KeyboardModifiers heldModifiers = event->modifiers();
+                    QTimer::singleShot(40, this, [this, heldAt, heldModifiers] { replayEndPress(heldAt, heldModifiers, 0); });
+                    return;
                 }
             }
             // The work plane view: a 2D shape that lies in the plane (a circle, a rectangle, a shape from a surface) is moved about in it, in steps of the grid, by pressing it
@@ -2561,7 +2671,7 @@ void View::mousePressEvent(QMouseEvent* event)
                         else
                         {
                             // (it is selected, which gives it the numbers it is moved by, and the drag begins when they are there)
-                            m_wait = WaitGrip{true, 3, 0, 0, QList<int>{}, true};
+                            m_wait = WaitGrip{true, 3, 0, 0, QList<int>{}, true, event->pos(), true};
                             m_waitTimer.start();
                             setCursor(Qt::BusyCursor);
                             emit(shapeClicked(flat->sourceLine()));
@@ -2585,6 +2695,18 @@ void View::mousePressEvent(QMouseEvent* event)
                     std::swap(pick_depth, pick_depth_bodies);
                 }
             }
+            // A body made of points (morph_polyhedron, morph_body): a press on its surface that moves puts a point there and goes on dragging it, as a press on the outline of a profile does (the user, 2026-10-28:
+            // "dragging the surfcae should do the exact same thing as it does for the profile just in 3d, which is inserting a point and moving that point around"); one that does not move selects the body
+            if (drag_target && drag_target->isPointBody() && !(event->modifiers() & Qt::ControlModifier) && drag_target->sourceLine() >= 0 && !drag_target->isLocked())
+            {
+                press_pos = QPoint(-100000, -100000);       // (the click is made at the release, below)
+                press_target = nullptr;
+                m_insertBody = drag_target;
+                m_insertPress = toModelPos(event->pos());
+                m_insertPressPos = event->pos();
+                drag_target = nullptr;
+                return;
+            }
             press_pos = event->pos();
             press_target = drag_target;
             // Ctrl + click on the LINE of a curve (a spline, a polyline) or the edge of a profile: a line has no pixel in the pick buffer, so the press found no model at all and
@@ -2595,6 +2717,7 @@ void View::mousePressEvent(QMouseEvent* event)
                 QVector3D lineHit;
                 int linePiece = 0;
                 if (outlineAt(event->pos(), lineShape, lineHit, linePiece) && lineShape && lineShape->sourceLine() >= 0) press_target = lineShape;
+                else if (outlineAt(event->pos(), lineShape, lineHit, linePiece, true) && lineShape && lineShape->isCurve() && lineShape->sourceLine() >= 0) press_target = lineShape;     // (the line of an edge of a body: a model of the tree like any other)
             }
             // (Ctrl + click selects: it never pulls the surface it is on)
             press_ctrl = bool(event->modifiers() & Qt::ControlModifier);
@@ -2615,6 +2738,7 @@ void View::mousePressEvent(QMouseEvent* event)
                 m_regionGrown = false;
 
                 drag_start = drag_target->isFlat() ? flat_edge : toModelPos(event->pos());
+                drag_target->setPullBand((toModelPos(event->pos() + QPoint(12, 0)) - toModelPos(event->pos())).length());      // (the model length of 12 pixels: how near its end a sheet is pressed to pull its size)
                 auto df = drag_target->dragFrom(drag_start);
                 const qint64 tFrom = timing ? clock.nsecsElapsed() : 0;
                 drag_eval.first.reset(df.first);
@@ -2670,8 +2794,19 @@ void View::mousePressEvent(QMouseEvent* event)
                 ? (pick_img.pixel(event->pos()) & 0xFFFFFF) : 0;
             right_press_pos = event->pos();
             right_press_target = (picked && int(picked) <= shapes.size()) ? shapes.at(picked - 1) : nullptr;
-            right_press_empty = !right_press_target;       // (empty space: its own menu, if the click does not drag)
             right_press_point = right_press_target ? toModelPos(event->pos()) : QVector3D();
+            // A line -- the outline of a 2D shape, a curve, an edge made of a body -- has no pixel in the picture of what is pressed, so the body behind it was what the click found and the menu of
+            // the body was shown (the user, 2026-10-29, right-clicking an edge on a box: "it instead counts as a right click for the body in the background ... 2D bodies should always be
+            // prioritized over bodies").  What is within a few pixels of a line is the line's: its menu is the one that has fillet and chamfer.  The same test as the hover and the left press make
+            Shape* lineShape = nullptr;
+            QVector3D lineHit;
+            int linePiece = 0;
+            if (outlineAt(event->pos(), lineShape, lineHit, linePiece, true) && lineShape && lineShape->sourceLine() >= 0)
+            {
+                right_press_target = lineShape;
+                right_press_point = lineHit;
+            }
+            right_press_empty = !right_press_target;       // (empty space: its own menu, if the click does not drag)
             mouse.state = mouse.DRAG_PAN;
         }
     }
@@ -2685,12 +2820,21 @@ static int editRootLine(const Shape* s)
 
 void View::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (event->button() == Qt::LeftButton) m_endPressHeld = false;            // (a held press of an end face is let go: see replayEndPress)
     QOpenGLWidget::mouseReleaseEvent(event);
     event->accept();
     if (event->button() == Qt::LeftButton) m_leftDown = false;
     // (what was being moved has landed: the mark of where it landed goes, and the hover brings its own back -- not on a right click, which opens the menu that puts something down at the mark:
     // the mark stays there until the menu is closed, 2026-10-27, the user: "the snap cursor disappears when you right click to place, that is unacceptable")
     if (event->button() == Qt::LeftButton) clearSnapMark();
+    if (m_insertBody)
+    {
+        // (a press on the surface of a body made of points that did not move: a click, which selects the body)
+        Shape* body = m_insertBody;
+        m_insertBody = nullptr;
+        if (event->button() == Qt::LeftButton) emit(shapeClicked(body->sourceLine()));
+        return;
+    }
     if (m_pullShape)
     {
         Shape* shape = m_pullShape;
@@ -2721,6 +2865,7 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         const bool active = m_faceActive;
         m_faceShape = nullptr;
         m_faceActive = false;
+        m_faceEndPull = false;
         unsetCursor();
         if (event->button() == Qt::LeftButton)
         {
@@ -2761,6 +2906,7 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     }
     if (gizmo_drag)
     {
+        if (gizmo_drag && (gizmo_active.kind == 9 || gizmo_active.kind == 1 || gizmo_active.kind == 6) && gizmo_active.group) groupFrameCommit();
         gizmo_drag = false;
         // (the press on the dot of a point that did not move was a click: it selects the point)
         const int dotClickLine = (m_dotPressLine >= 0 && !m_dotMoved) ? m_dotPressLine : -1;
@@ -3582,11 +3728,15 @@ void View::syncSnapWithWorkPlane()
     }
 }
 
-bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
+bool View::renderSnapLattice(int& stride) const
 {
+    QElapsedTimer clock;
+    clock.start();
     stride = 1;
     m_snapSlabValid = false;
     m_snapLines.clear();
+    m_latticeVerts.clear();            // (a lattice that is too fine to draw from here leaves nothing of the last one)
+    m_latticeFresh = true;
     float step = snapStep();
     const float scale = camera.getScale();
     const int W = width(), H = height();
@@ -3594,10 +3744,11 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // A lattice whose lines are closer than about forty pixels is a haze, not a grid: from there only every 2nd, 5th, 10th, 20th ... line is drawn, the way a drawing board shows its major lines.
     // They are lines of the same lattice (its nodes are the places everything snaps to, every one of them, drawn or not); the line at the bottom of the picture says which are shown
     {
+        const float spacing = 40.0f;
         const float pixels = step * scale * 0.5f * float(std::min(W, H));
-        if (pixels > 0 && pixels < 40.0f)
+        if (pixels > 0 && pixels < spacing)
         {
-            const float want = 40.0f / pixels;
+            const float want = spacing / pixels;
             for (double decade = 1; decade < 1e9 && stride == 1; decade *= 10)
             {
                 for (const double f : {1.0, 2.0, 5.0})
@@ -3740,16 +3891,11 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     constexpr int kBands = 8;
     static const int kAlpha[kBands] = {120, 98, 80, 64, 50, 38, 27, 17};
     static const double kWidth[kBands] = {1.6, 1.4, 1.25, 1.1, 1.0, 0.9, 0.8, 0.7};
-    static const int kAxisAlpha[kBands] = {220, 190, 160, 132, 106, 82, 60, 42};
-    // The lines between the junctions fade out (the user, 2026-10-28: "fade out the lines between every junction and only have the current opacity there ... a good way to remove things for readability while
-    // keeping the most important things"): a line is drawn at its full strength at each of its two junctions and fades toward its middle, in steps of a few pieces -- the first sixth of it from each end as it
-    // was, then half as strong, then a fifth as strong, and the middle not at all.  The axes of the world are the references and stay whole
-    struct Stub { double from, to, share; };
-    constexpr int kStubs = 3;
-    // (a fifth shorter than they were -- the user, 2026-10-28: "decrease the length of the junction arms a little bit, to accomodate for the increased amount of clutter")
-    static const Stub kStub[kStubs] = {{0.0, 0.128, 1.0}, {0.128, 0.224, 0.5}, {0.224, 0.304, 0.2}};
-    QVector<QLineF> bands[3][kBands][kStubs];
-    QVector<QLineF> axes[3][kBands];
+    // The lattice is drawn by the graphics card, from the ends of its lines (drawSnapLattice and its shader: the tones by axis and by band, the widths, the beams at the junctions that fade toward the middle of a
+    // line -- the first sixth of it from each end as it was, then half as strong, then a fifth as strong, the middle not at all --, the axes of the world whole, and the round patch that fades toward its rim).
+    // What is chosen here is which lines there are and how far each one is
+    m_latticeVerts.clear();
+    m_latticeVerts.reserve(nodes.size() * 4);
     const double reachSq = circle * circle;
     for (const auto& entry : nodes)
     {
@@ -3760,82 +3906,234 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
             if (other == nodes.end()) continue;
             const Node& b = other->second;
             const int band = std::min(kBands - 1, int(0.5f * (a.f + b.f) * float(kBands)));
-            const QLineF line(a.at, b.at);
+            const QVector3D pa(float(a.i) * step, float(a.j) * step, float(a.k) * step), pb(float(b.i) * step, float(b.j) * step, float(b.k) * step);
             // (a line of the grid that is an axis of the world -- the other two coordinates 0 -- is drawn in the colour of its axis)
             const bool onAxis = (axis == 0 && a.j == 0 && a.k == 0) || (axis == 1 && a.i == 0 && a.k == 0) || (axis == 2 && a.i == 0 && a.j == 0);
-            if (onAxis)
+            if (!onAxis)
             {
-                axes[axis][band] << line;
-                continue;
+                // (a line with both of its junctions out of the round patch is not seen)
+                const double ax = a.at.x() - centre.x(), ay = a.at.y() - centre.y(), bx = b.at.x() - centre.x(), by = b.at.y() - centre.y();
+                if (ax * ax + ay * ay > reachSq && bx * bx + by * by > reachSq) continue;
+                m_snapLines.push_back(SnapLine{a.at, b.at, qint8(axis), qint8(band), qint16(kAlpha[band]), float(kWidth[band]), pa, pb});
             }
-            // (a line with both of its junctions out of the round patch is not seen)
-            const double ax = a.at.x() - centre.x(), ay = a.at.y() - centre.y(), bx = b.at.x() - centre.x(), by = b.at.y() - centre.y();
-            if (ax * ax + ay * ay > reachSq && bx * bx + by * by > reachSq) continue;
-            m_snapLines.push_back(SnapLine{a.at, b.at, qint8(axis), qint8(band), qint16(kAlpha[band]), float(kWidth[band]),
-                                           QVector3D(float(a.i) * step, float(a.j) * step, float(a.k) * step), QVector3D(float(b.i) * step, float(b.j) * step, float(b.k) * step)});
-            const QPointF d = b.at - a.at;
-            // (the beams of a junction are longer the nearer the layer it is in -- as drawn for the nearest, little more than half as long for the farthest --, so that the depth reads from the junction
-            // whatever the projection: in an orthographic view nothing else of a line gets shorter with the distance.  Longer than that, and the beams of the near layers run into each other)
-            const double stubScale = 1.0 - 0.45 * double(band) / double(kBands - 1);
-            for (int s = 0; s < kStubs; ++s)
-            {
-                bands[axis][band][s] << QLineF(a.at + d * (kStub[s].from * stubScale), a.at + d * (kStub[s].to * stubScale));
-                bands[axis][band][s] << QLineF(b.at - d * (kStub[s].from * stubScale), b.at - d * (kStub[s].to * stubScale));
-            }
+            const float flag = onAxis ? 1.0f : 0.0f;
+            m_latticeVerts.push_back(LatticeVertex{pa.x(), pa.y(), pa.z(), float(band), float(axis), flag});
+            m_latticeVerts.push_back(LatticeVertex{pb.x(), pb.y(), pb.z(), float(band), float(axis), flag});
         }
     }
-
-    image = QImage(QSize(int(std::ceil(double(W) * ratio)), int(std::ceil(double(H) * ratio))), QImage::Format_ARGB32_Premultiplied);
-    image.setDevicePixelRatio(ratio);
-    image.fill(Qt::transparent);
-    QPainter p(&image);
-    p.setRenderHint(QPainter::Antialiasing, nodes.size() <= 7000);
-    // (the lines are a light tint -- the selection is amber, the gizmo red, green and blue, a selected surface magenta and the work plane blue, and the snapping mode has a colour of its own, which shows
-    // on a selected model too --: a pale red where they run along X, a pale green along Y and a pale blue along Z (the user, 2026-10-27: "coloring the different lines depending on what axis they are
-    // parallel to ... a subtle red green blue shift"), so that the direction of a line is read from its colour as well as from where it goes.  The axes of the world below are the strong ones)
-    static const int kTintNear[3][3] = {{255, 160, 170}, {170, 240, 150}, {150, 195, 255}};
-    static const int kTintFar[3][3] = {{200, 95, 120}, {105, 170, 100}, {95, 135, 225}};
-    for (int a = 0; a < 3; ++a)
-    {
-        for (int b = 0; b < kBands; ++b)
-        {
-            // (the near lines are the lighter tint and the far ones a deeper one, as well as fainter and thinner)
-            const double k = double(b) / double(kBands - 1);
-            const int red = int(kTintNear[a][0] + (kTintFar[a][0] - kTintNear[a][0]) * k), green = int(kTintNear[a][1] + (kTintFar[a][1] - kTintNear[a][1]) * k),
-                      blue = int(kTintNear[a][2] + (kTintFar[a][2] - kTintNear[a][2]) * k);
-            for (int s = 0; s < kStubs; ++s)
-            {
-                // (a piece that would be fainter than a few of 255 is not drawn: the far lines are faint to begin with)
-                const int alpha = int(std::lround(double(kAlpha[b]) * kStub[s].share));
-                if (alpha < 5 || bands[a][b][s].isEmpty()) continue;
-                p.setPen(QPen(QColor(red, green, blue, alpha), kWidth[b]));
-                p.drawLines(bands[a][b][s]);
-            }
-        }
-    }
-    const QColor axisColor[3] = {QColor(220, 50, 47), QColor(116, 184, 31), QColor(38, 139, 210)};
-    for (int a = 0; a < 3; ++a)
-    {
-        for (int b = 0; b < kBands; ++b)
-        {
-            p.setPen(QPen(QColor(axisColor[a].red(), axisColor[a].green(), axisColor[a].blue(), kAxisAlpha[b]), 2.0 - 0.6 * double(b) / double(kBands - 1)));
-            p.drawLines(axes[a][b]);
-        }
-    }
-    // The round patch: everything outside the circle is taken away, and what is inside it fades toward the rim -- whole in the middle, then in the smooth steps of a smoothstep out to nothing at the rim
-    p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-    p.setPen(Qt::NoPen);
-    QRadialGradient fade(centre, circle);
-    constexpr int kFadeStops = 10;
-    for (int i = 0; i <= kFadeStops; ++i)
-    {
-        const double t = double(i) / double(kFadeStops);                       // (0 at the middle, 1 at the rim)
-        const double u = std::min(1.0, std::max(0.0, (t - 0.45) / 0.55));      // (whole out to 0.45 of the radius)
-        fade.setColorAt(t, QColor(255, 255, 255, int(std::lround(255.0 * (1.0 - u * u * (3.0 - 2.0 * u))))));
-    }
-    p.setBrush(QBrush(fade));
-    p.drawRect(QRectF(0, 0, double(W), double(H)));
+    m_latticeFresh = true;
+    if (std::getenv("FIELDES_TIMING"))
+        std::fprintf(stderr, "[snap] lattice chosen: %zu nodes, %zu lines, stride %d, %.1f ms\n", nodes.size(), m_latticeVerts.size() / 2, stride, double(clock.nsecsElapsed()) / 1.0e6);
     return true;
+}
+
+// The lattice is chosen again when the camera's matrix, the step, the viewing distance or the size of the viewport changes -- before the 3D pass draws it, so that it is the lattice of this frame -- and by that
+// alone: a model that is dragged, resized or edited does not touch it, and the graphics card draws it at every frame from the lines it has
+void View::ensureSnapLattice()
+{
+    if (!m_snap.on || !m_snap.show || (m_wp.open && m_wp.exists)) return;
+    const QMatrix4x4 M = camera.M();
+    const float step = snapStep();
+    const qreal ratio = devicePixelRatioF();
+    if (m_snapImageKept && M == m_snapImageM && step == m_snapImageStep && m_snap.distance == m_snapImageDistance && size() == m_snapImageSize && ratio == m_snapImageRatio) return;
+    m_snapImageDrawn = renderSnapLattice(m_snapImageStride);
+    m_snapImageM = M;
+    m_snapImageStep = step;
+    m_snapImageDistance = m_snap.distance;
+    m_snapImageSize = size();
+    m_snapImageRatio = ratio;
+    m_snapImageKept = true;
+    m_snapRebuilt = true;
+}
+
+// The lattice's lines are drawn as the quads of two beams to a line (the axes of the world as one quad), made by a geometry shader from the two ends of the line: the width of a line is a number of pixels
+// that a line of the graphics card does not have, and the beams are shorter the farther the layer, so they are made from where the ends are on the screen.  The tone of a beam steps down along it as the picture's
+// beams did (the first part whole, then half, then a fifth), and the round patch -- whole to 0.45 of its radius and then a smoothstep to nothing at the rim -- is a factor of the fragment's place
+static const char* kLatticeVert = R"GLSL(#version 150
+uniform mat4 M;
+in vec3 pos;
+in vec3 info;
+out vec3 vInfo;
+void main()
+{
+    gl_Position = M * vec4(pos, 1.0);
+    vInfo = info;
+}
+)GLSL";
+
+static const char* kLatticeGeom = R"GLSL(#version 150
+layout(lines) in;
+layout(triangle_strip, max_vertices = 8) out;
+uniform vec2 viewDev;
+uniform float ratio;
+in vec3 vInfo[];
+out vec2 fAcross;
+out vec4 fStyle;
+const float kWidth[8] = float[8](1.6, 1.4, 1.25, 1.1, 1.0, 0.9, 0.8, 0.7);
+
+vec2 toPixels(vec4 clip)
+{
+    vec2 ndc = clip.xy / clip.w;
+    return vec2((ndc.x + 1.0) * 0.5 * viewDev.x, (1.0 - ndc.y) * 0.5 * viewDev.y);
+}
+
+vec4 toClip(vec2 px)
+{
+    return vec4(px.x / viewDev.x * 2.0 - 1.0, 1.0 - px.y / viewDev.y * 2.0, 0.0, 1.0);
+}
+
+void beam(vec2 p0, vec2 p1, float hw, vec3 style)
+{
+    vec2 d = p1 - p0;
+    float len = length(d);
+    if (len < 1e-3) return;
+    vec2 n = vec2(-d.y, d.x) / len;
+    float m = hw + 0.75;
+    for (int i = 0; i < 4; ++i)
+    {
+        float along = (i >= 2) ? 1.0 : 0.0;
+        float side = (i % 2 == 0) ? 1.0 : -1.0;
+        gl_Position = toClip(mix(p0, p1, along) + n * (m * side));
+        fAcross = vec2(along, m * side);
+        fStyle = vec4(style, hw);
+        EmitVertex();
+    }
+    EndPrimitive();
+}
+
+void main()
+{
+    vec4 ca = gl_in[0].gl_Position, cb = gl_in[1].gl_Position;
+    // (in front of the viewer, as the lattice of the picture was: a line that has an end behind it is not drawn)
+    if (ca.w <= 0.05 || cb.w <= 0.05) return;
+    vec2 pa = toPixels(ca), pb = toPixels(cb);
+    float band = vInfo[0].x;
+    int k = clamp(int(band + 0.5), 0, 7);
+    vec3 style = vInfo[0];
+    if (vInfo[0].z > 0.5)
+    {
+        beam(pa, pb, 0.5 * (2.0 - 0.6 * band / 7.0) * ratio, style);
+        return;
+    }
+    // (the beams of a junction are longer the nearer the layer it is in: the whole of 0.304 of the line for the nearest, a little more than half as long for the farthest)
+    float reach = 0.304 * (1.0 - 0.45 * band / 7.0);
+    float hw = 0.5 * kWidth[k] * ratio;
+    vec2 d = pb - pa;
+    beam(pa, pa + d * reach, hw, style);
+    beam(pb, pb - d * reach, hw, style);
+}
+)GLSL";
+
+static const char* kLatticeFrag = R"GLSL(#version 150
+uniform vec2 viewDev;
+uniform vec2 centreDev;
+uniform float circleDev;
+in vec2 fAcross;
+in vec4 fStyle;
+out vec4 color;
+const float kAlpha[8] = float[8](120.0, 98.0, 80.0, 64.0, 50.0, 38.0, 27.0, 17.0);
+const float kAxisAlpha[8] = float[8](220.0, 190.0, 160.0, 132.0, 106.0, 82.0, 60.0, 42.0);
+const vec3 kTintNear[3] = vec3[3](vec3(255.0, 160.0, 170.0) / 255.0, vec3(170.0, 240.0, 150.0) / 255.0, vec3(150.0, 195.0, 255.0) / 255.0);
+const vec3 kTintFar[3] = vec3[3](vec3(200.0, 95.0, 120.0) / 255.0, vec3(105.0, 170.0, 100.0) / 255.0, vec3(95.0, 135.0, 225.0) / 255.0);
+const vec3 kAxisColor[3] = vec3[3](vec3(220.0, 50.0, 47.0) / 255.0, vec3(116.0, 184.0, 31.0) / 255.0, vec3(38.0, 139.0, 210.0) / 255.0);
+
+void main()
+{
+    int band = clamp(int(fStyle.x + 0.5), 0, 7);
+    int axis = clamp(int(fStyle.y + 0.5), 0, 2);
+    float hw = fStyle.w;
+    float cover = clamp(hw - abs(fAcross.y) + 0.5, 0.0, 1.0);
+    vec3 rgb;
+    float a;
+    if (fStyle.z > 0.5)
+    {
+        rgb = kAxisColor[axis];
+        a = kAxisAlpha[band] / 255.0;
+    }
+    else
+    {
+        rgb = mix(kTintNear[axis], kTintFar[axis], float(band) / 7.0);
+        float share = fAcross.x < 0.4211 ? 1.0 : (fAcross.x < 0.7368 ? 0.5 : 0.2);
+        float strength = kAlpha[band] * share;
+        // (a piece that would be fainter than a few of 255 is not drawn: the far lines are faint to begin with)
+        if (strength < 4.5) discard;
+        a = strength / 255.0;
+    }
+    vec2 p = vec2(gl_FragCoord.x, viewDev.y - gl_FragCoord.y);
+    float r = length(p - centreDev) / circleDev;
+    float u = clamp((r - 0.45) / 0.55, 0.0, 1.0);
+    float inPatch = r >= 1.0 ? 0.0 : 1.0 - u * u * (3.0 - 2.0 * u);
+    color = vec4(rgb, a * cover * inPatch);
+}
+)GLSL";
+
+void View::drawSnapLattice(const QMatrix4x4& m)
+{
+    if (!m_snap.on || !m_snap.show || (m_wp.open && m_wp.exists) || m_latticeFailed || m_latticeVerts.empty()) return;
+    if (!m_latticeProgram)
+    {
+        auto* p = new QOpenGLShaderProgram;
+        bool ok = p->addShaderFromSourceCode(QOpenGLShader::Vertex, kLatticeVert) && p->addShaderFromSourceCode(QOpenGLShader::Geometry, kLatticeGeom) &&
+                  p->addShaderFromSourceCode(QOpenGLShader::Fragment, kLatticeFrag);
+        if (ok)
+        {
+            p->bindAttributeLocation("pos", 0);
+            p->bindAttributeLocation("info", 1);
+            ok = p->link();
+        }
+        if (!ok)
+        {
+            std::fprintf(stderr, "[snap] the lattice shader did not build: %s\n", p->log().toUtf8().constData());
+            m_latticeError = QStringLiteral("The grid's shader did not build: ") + p->log().simplified().left(240);        // (said on the viewport, under the grid's own line, so that it is seen)
+            delete p;
+            m_latticeFailed = true;
+            return;
+        }
+        m_latticeProgram = p;
+        m_latticeVbo.create();
+        m_latticeVao.create();
+        m_latticeFresh = true;
+    }
+    m_latticeVao.bind();
+    m_latticeVbo.bind();
+    if (m_latticeFresh)
+    {
+        m_latticeVbo.allocate(m_latticeVerts.data(), int(m_latticeVerts.size() * sizeof(LatticeVertex)));
+        m_latticeCount = int(m_latticeVerts.size());
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(LatticeVertex), reinterpret_cast<const GLvoid*>(0));
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(LatticeVertex), reinterpret_cast<const GLvoid*>(3 * sizeof(float)));
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        m_latticeFresh = false;
+    }
+    const qreal ratio = devicePixelRatioF();
+    const double W = double(width()) * ratio, H = double(height()) * ratio;
+    constexpr double kCircle = 1.12;                  // (as renderSnapLattice's round patch: a circle round the middle of the picture, as high as the picture and a little more)
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    m_latticeProgram->bind();
+    m_latticeProgram->setUniformValue("M", m);
+    m_latticeProgram->setUniformValue("viewDev", QVector2D(float(W), float(H)));
+    m_latticeProgram->setUniformValue("ratio", float(ratio));
+    m_latticeProgram->setUniformValue("centreDev", QVector2D(float(0.5 * W), float(0.5 * H)));
+    m_latticeProgram->setUniformValue("circleDev", float(0.5 * std::min(W, H) * kCircle));
+    glDrawArrays(GL_LINES, 0, m_latticeCount);
+    m_latticeProgram->release();
+    m_latticeVbo.release();
+    m_latticeVao.release();
+    glDisable(GL_BLEND);
+}
+
+void View::releaseSnapLattice()
+{
+    if (m_latticeVao.isCreated()) m_latticeVao.destroy();
+    if (m_latticeVbo.isCreated()) m_latticeVbo.destroy();
+    delete m_latticeProgram;
+    m_latticeProgram = nullptr;
+    m_latticeFailed = false;
+    m_latticeError.clear();
+    m_latticeFresh = true;                           // (sent to the graphics card again)
 }
 
 void View::drawSnapGrid(QPainter& painter)
@@ -3845,26 +4143,14 @@ void View::drawSnapGrid(QPainter& painter)
     const QColor violet(176, 130, 255);
     if (m_snap.show)
     {
-        // The lattice is a picture that is made when the camera or the card changes and is drawn as it is while the cursor moves over it
-        const qreal ratio = painter.device()->devicePixelRatioF();
-        const QMatrix4x4 M = camera.M();
-        const float step = snapStep();
-        bool rebuilt = false;
-        if (!m_snapImageKept || M != m_snapImageM || step != m_snapImageStep || m_snap.distance != m_snapImageDistance || size() != m_snapImageSize || ratio != m_snapImageRatio)
-        {
-            m_snapImageDrawn = renderSnapLattice(m_snapImage, ratio, m_snapImageStride);
-            m_snapImageM = M;
-            m_snapImageStep = step;
-            m_snapImageDistance = m_snap.distance;
-            m_snapImageSize = size();
-            m_snapImageRatio = ratio;
-            m_snapImageKept = true;
-            rebuilt = true;
-        }
-        if (m_snapImageDrawn) painter.drawImage(0, 0, m_snapImage);
-        // The view moved under a cursor that did not (a wheel turn, the keys, an animation): the spotlight follows the cursor over the new picture at once, so the node that is marked is worked out again from it --
+        // The lattice itself is drawn by the graphics card, in the 3D pass (ensureSnapLattice, drawSnapLattice); the overlay has the spotlight of the cursor over it
+        // The view moved under a cursor that did not (a wheel turn, the keys, an animation): the spotlight follows the cursor over the new lattice at once, so the node that is marked is worked out again from it --
         // not left where it was in space, a junction away from the one that is lit (not while something is held, or a menu is open at the mark)
-        if (rebuilt && m_snapCursorValid && !m_snapMarkHeld && mouse.state == mouse.RELEASED) updateSnapHover(m_snapCursor);
+        if (m_snapRebuilt)
+        {
+            m_snapRebuilt = false;
+            if (m_snapCursorValid && !m_snapMarkHeld && mouse.state == mouse.RELEASED) updateSnapHover(m_snapCursor);
+        }
         if (m_snapImageDrawn && m_snapCursorValid) drawSnapGlow(painter);
     }
     // The mode is a mode: a frame round the viewport says so, and a line says what it snaps to
@@ -3887,6 +4173,11 @@ void View::drawSnapGrid(QPainter& painter)
     painter.drawRoundedRect(box, 4, 4);
     painter.setPen(violet);
     painter.drawText(box, Qt::AlignCenter, text);
+    if (!m_latticeError.isEmpty())
+    {
+        painter.setPen(QColor(255, 140, 140));
+        painter.drawText(QRectF(QPointF(10, height() - 44 - 2 * fm.height() - 14), QSizeF(width() - 20, fm.height() + 6)), Qt::AlignLeft | Qt::AlignVCenter, m_latticeError);
+    }
     painter.restore();
 }
 
@@ -4035,12 +4326,14 @@ void View::clearPreview()
     m_previewTimer.stop();
     if (!m_ghostOn) return;
     m_ghostOn = false;
-    if (m_ghost) m_ghost->setPictureMesh(nullptr, 1.0f);
+    if (m_ghost) { m_ghost->setPictureMesh(nullptr, 1.0f); m_ghost->setFlat(false); }
+    m_ghostFlat = false;
+    m_ghostOutline.clear();
     update();
 }
 
 // What the entry of a menu under the mouse would make, as a shape of the program's own -- the colour and lighting of any body --, drawn see-through where it would be made (see paintGL)
-void View::setPreviewMesh(QVector<float> vertices, QVector<int> triangles)
+void View::setPreviewMesh(QVector<float> vertices, QVector<int> triangles, bool flat)
 {
     const int points = vertices.size() / 3, faces = triangles.size() / 3;
     if (points <= 0 || faces <= 0)
@@ -4064,7 +4357,30 @@ void View::setPreviewMesh(QVector<float> vertices, QVector<int> triangles)
         if (a < 0 || b < 0 || c < 0 || a >= points || b >= points || c >= points) continue;
         picture->branes.push_back(Eigen::Matrix<uint32_t, 3, 1>(uint32_t(a), uint32_t(b), uint32_t(c)));
     }
-    m_ghost->setPictureMesh(picture, 0.55f);
+    // A 2D entry is drawn as the 2D shape the click makes: the same flat flag (so Shape::draw colours it as it colours that shape), as opaque as that shape is, and the boundary of its sheet in the
+    // blue of its outline (see drawOutlines) -- the user, 2026-11-04, H116: "YOU MAKE THE PREVIEW FOR THE 2D SHAPE EXACTLY WHAT THE USER WOULD SEE WHEN THEY PRESS IT".  Every other entry stays the
+    // see-through body it was
+    m_ghost->setFlat(flat);
+    m_ghostFlat = flat;
+    m_ghostOutline.clear();
+    if (flat)
+    {
+        // (the edges that only one triangle has are the boundary of the sheet)
+        std::map<std::pair<int, int>, int> uses;
+        for (const auto& t : picture->branes)
+        {
+            const int c[3] = {int(t[0]), int(t[1]), int(t[2])};
+            for (int k = 0; k < 3; ++k) ++uses[std::make_pair(std::min(c[k], c[(k + 1) % 3]), std::max(c[k], c[(k + 1) % 3]))];
+        }
+        for (const auto& e : uses)
+        {
+            if (e.second != 1) continue;
+            const auto& a = picture->verts[size_t(e.first.first)];
+            const auto& b = picture->verts[size_t(e.first.second)];
+            m_ghostOutline.emplace_back(QVector3D(a.x(), a.y(), a.z()), QVector3D(b.x(), b.y(), b.z()));
+        }
+    }
+    m_ghost->setPictureMesh(picture, flat ? 1.0f : 0.55f);
     m_ghostOn = true;
     update();
 }
@@ -4162,8 +4478,10 @@ void View::placementAt(QPoint pos, QVector3D& point, double& scale) const
     }
     point = snapPlace(pos, nullptr, false);          // (the snapping mode: what a click puts down goes to the node of the grid that the cursor is over, near or far)
     scale = scaleAt(pos, point);
-    // (the snapping mode with a region that grows to hold what is made: a node of the grid outside it, near the viewer as far from it, is where the model goes -- the region grows to hold it, it is not moved in)
-    if (snapActive() && settings.autoScale) return;
+    // (a region that grows to hold what is made -- auto_scale --: the place under the cursor, or in the snapping mode the node of the grid that the cursor is over, is where the model goes, near the viewer as far from
+    // it: the region grows to hold it, the model is not moved in.  It was so for the snapping mode only, and a region left small by a model that was deleted pulled everything made outside it to its edge -- the user,
+    // 2026-11-03, with `view.set_bounds([3, -11, -6], [11, -3, 2], auto_scale=True)` and nothing in the scene: "Creation placement does not work anymore. It does not create on the cursor anymore")
+    if (settings.autoScale) return;
     // Nothing outside the render region is drawn: a primitive whose place is outside it goes to the nearest place
     // that is inside (half its size in from the edge), so it is always seen -- in the snapping mode to the nearest node of the grid that is inside, so that it stays on the grid
     const QVector3D lo = settings.min, hi = settings.max;
@@ -4359,6 +4677,32 @@ void View::keyPressEvent(QKeyEvent* event)
     QOpenGLWidget::keyPressEvent(event);
 }
 
+// A press on the end of a selected extrusion that was held until the end is a number (see mousePressEvent): made again when the run of the edit that wrote the numbers is in, if the button is still down
+void View::replayEndPress(QPoint at, Qt::KeyboardModifiers modifiers, int tries)
+{
+    if (!m_endPressHeld) return;
+    if (!m_leftDown)
+    {
+        m_endPressHeld = false;             // (let go before the numbers came: nothing is pulled, and the extrusion is selected already)
+        return;
+    }
+    bool ready = false;
+    for (auto& s : shapes)
+    {
+        Shape::PrismWall wall;
+        if (s->hasPrism() && s->isSelected() && s->prismEndAt(toModelPos(at), wall)) { ready = true; break; }
+    }
+    if (!ready)
+    {
+        if (tries >= 200) { m_endPressHeld = false; return; }            // (about ten seconds: the end is not a number of its own at all)
+        QTimer::singleShot(50, this, [this, at, modifiers, tries] { replayEndPress(at, modifiers, tries + 1); });
+        return;
+    }
+    m_endPressHeld = false;
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(at), Qt::LeftButton, Qt::LeftButton, modifiers);
+    mousePressEvent(&press);
+}
+
 void View::createAt(const QString& name, QPoint pos)
 {
     QVector3D point;
@@ -4366,7 +4710,26 @@ void View::createAt(const QString& name, QPoint pos)
     placementAt(pos, point, scale);
     if (name == "point") point = placementExact(pos);          // (as the menu does: a point is exactly under the cursor)
     else if (flatPrimitive(name)) point = placementFlat(pos, scale);          // (and a 2D shape where the ray meets its plane)
+    if (name != "point") point = offSymmetryPlanes(point, scale);
     emit(createRequested("primitive", name, point, scale, -1, -1));
+}
+
+// A symmetry that is in use makes what is made at its images too, and a shape made ON one of its mirror planes lies on its own image: every corner is there twice -- the user, 2026-11-03, of a morph
+// polyhedron made with a symmetry in use: "the symmetry on creation ... causes overlapping poins for no reason".  It goes to the side of the plane that the cursor is on, as far as its size, so that it
+// touches the plane and its image does not lie on it (the turns of a symmetry have no plane).  The scripted creation (createAt) and the right-click menu (addCreateEntries) both put a model here
+QVector3D View::offSymmetryPlanes(QVector3D point, double scale)
+{
+    if (!m_sym.on || m_sym.kind == Symmetry::Turn) return point;
+    const float half = float(0.85 * scale);
+    for (const QVector3D& n : m_sym.planeNormals())
+    {
+        const float d = QVector3D::dotProduct(point - m_sym.centre, n);
+        if (std::fabs(d) >= half) continue;
+        float side = d >= 0.0f ? 1.0f : -1.0f;
+        if (std::fabs(d) < 1e-4f) side = QVector3D::dotProduct(n, camera.towardViewer()) >= 0.0f ? 1.0f : -1.0f;          // (on the plane itself: the side that faces the viewer)
+        point += n * (side * (half - std::fabs(d)));
+    }
+    return point;
 }
 
 bool View::flatPrimitive(const QString& name) const
@@ -5129,7 +5492,9 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
     }
     if (ops.isEmpty())
     {
-        menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
+        // (the line is for a catalog that has not been made yet; a category with no entry of its own -- the Engineering menu's "what works over an analysis of any domain", now that the
+        // optimization conditions have a section of their own -- holds nothing, and says nothing)
+        if (m_catalog["operations"].toArray().isEmpty()) menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
         return;
     }
     const bool haveOther = m_scene && m_scene->hasOtherModel(line);
@@ -5155,12 +5520,28 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
             sub->setToolTipsVisible(true);
         }
         const QString name = o["name"].toString();
-        auto action = sub->addAction(name, this, [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
+        // (an entry that names a submenu is in it, a section of its own: the optimization conditions)
+        QMenu* into = sub;
+        const QString section = o["submenu"].toString();
+        if (!section.isEmpty())
+        {
+            into = nullptr;
+            for (QMenu* m : sub->findChildren<QMenu*>(QString(), Qt::FindDirectChildrenOnly))
+                if (m->title() == T(section)) into = m;
+            if (!into)
+            {
+                into = sub->addMenu(TypeIcons::icon("simulation", false, o["domain"].toString(), name), T(section));
+                into->setToolTipsVisible(true);
+            }
+        }
+        auto action = into->addAction(name, this, [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
         if (o["type"].toString() == "block") action->setIcon(TypeIcons::icon("block"));
         if (simulations)
             action->setIcon(o["domain"].toString().isEmpty() && group != "Conditions" ? TypeIcons::icon("engineering")
-                                                                                      : TypeIcons::icon(group == "Conditions" ? "conditions" : "simulation", false, o["domain"].toString()));
+                                                                                      : TypeIcons::icon(group == "Conditions" ? "conditions" : "simulation", false, o["domain"].toString(),
+                                                                                                        group == "Conditions" ? QString() : name));
         if (!o["doc"].toString().isEmpty()) action->setToolTip(o["doc"].toString());
+        else if (!o["hint"].toString().isEmpty()) action->setToolTip(o["hint"].toString());
         else if (o["other"].toBool() && !o["needs_other"].toBool(true))
         {
             action->setToolTip(T("With several models selected: the first is the one this is made for, the others are what it uses -- where it "
@@ -5398,17 +5779,19 @@ void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, doub
 void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, double scale, int atLine)
 {
     static const QList<QPair<QString, QString>> categories = {
-        {"structural", T("Structural")}, {"thermal", T("Thermal")}, {"fluid", T("Fluid")}, {"manufacturing", T("Manufacturing")}, {"mesh", T("Mesh")}};
+        {"optimization", T("Optimization")}, {"structural", T("Structural")}, {"thermal", T("Thermal")}, {"fluid", T("Fluid")}, {"manufacturing", T("Manufacturing")}, {"mesh", T("Mesh")}};
     const int at = line < 0 ? atLine : line;
-    // First, on its own: what designs for an analysis of any domain (topology_optimization); then a line, then the categories
-    fillOperations(menu, line, point, scale, true, "^");
-    menu->addSeparator();
+    // The categories, the first of them Optimization: what designs for an analysis of any domain and what an optimization is given (topology_optimization, parametric_optimization, an analysis
+    // result, an optimization condition), each with a picture of its own (the user, 2026-11-02: "this should be ordered into its own optimization section here")
     for (const auto& c : categories)
     {
         auto sub = menu->addMenu(TypeIcons::icon("simulation", false, c.first), c.second);
         sub->setToolTipsVisible(true);
-        fillSimulationPrimitives(sub, point, scale, at, c.first, QStringList(), QStringList{"Fluids"});      // (a fluid is with the materials)
-        sub->addSeparator();
+        if (c.first != "optimization")
+        {
+            fillSimulationPrimitives(sub, point, scale, at, c.first, QStringList(), QStringList{"Fluids"});      // (a fluid is with the materials)
+            sub->addSeparator();
+        }
         fillOperations(sub, line, point, scale, true, c.first);
     }
     // What an analysis is made of, in one place: New material -- of any domain -- and New fluid, which is the material of a flow
@@ -5461,8 +5844,11 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
                 const QString name = p["name"].toString();
                 // (a point is exactly under the cursor; a 2D shape that is written with an x and a y only is where the ray under the cursor meets its plane, z = 0)
                 const bool isFlat = p["flat"].toBool();
-                const QVector3D at = p["group"].toString() == "Points" ? exact : isFlat ? flat : point;
+                const bool isPoint = p["group"].toString() == "Points";
                 const double size = isFlat ? flatScale : scale;
+                // (with a symmetry in use a shape is made beside its mirror planes, not on them, so that it does not lie on its own image: see offSymmetryPlanes)
+                const QVector3D here = isFlat ? flat : point;
+                const QVector3D at = isPoint ? exact : p["group"].toString() == "Symmetry" ? here : offSymmetryPlanes(here, size);
                 auto action = into->addAction(TypeIcons::icon(p["type"].toString(type), false, QString(), name), p["label"].toString(name),
                                               this, [=]{ emit(createRequested("primitive", name, at, size, atLine, -1)); });
                 if (p.contains("doc") && !p["doc"].toString().isEmpty()) action->setToolTip(p["doc"].toString());
@@ -5477,7 +5863,7 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
             if (entries.size() == 1 && g != "Custom blocks")
             {
                 auto a = make(menu, entries.first());
-                a->setText(titles.value(g, T("New %1").arg(entries.first()["name"].toString())));
+                a->setText(T("New %1").arg(entries.first()["name"].toString().replace('_', ' ')));         // (a lone parametric surface says what it makes -- "New wave surface" -- not "New surface": the user, 2026-11-03, H92)
                 a->setData(QStringLiteral("category"));         // (a category with one entry is shown as that entry: it goes when it is not valid, as a category does)
                 continue;
             }
@@ -5628,6 +6014,17 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
                 {
                     auto l = menu->addAction(TypeIcons::icon("curve"), T("Line along the edge"), this, [=]{ emit(featureRequested(line, edgeAt, "edge")); });
                     l->setToolTip(T("The straight edge of this body that is nearest the click, from corner to corner: edge_at(body, (x, y, z))"));
+                    // (H97, the user, 2026-11-03: "A line along connected edges operation ... accessible in the exact smae place": the same pick, but at every corner where the edge splits it goes on down every
+                    // branch, so every edge that is connected to it is made too)
+                    auto lc = menu->addAction(TypeIcons::icon("curve"), T("Lines along connected edges"), this, [=]{ emit(featureRequested(line, edgeAt, "edges")); });
+                    lc->setToolTip(T("Every straight edge of this body that is joined to the edge nearest the click, through the corners and on in every direction, each as a line: edge_at(body, (x, y, z)) once for each edge"));
+                }
+                else
+                {
+                    // (every edge that is not a line: a circle is exact -- the rim of a cylinder or a hole, the base of a cone --, any other is followed along the surface where the two faces meet; the user,
+                    // 2026-10-28: "on the diference shown it does not correctly recognize the edge and does not give the option for its selection")
+                    auto l = menu->addAction(TypeIcons::icon("curve"), T("Curve along the edge"), this, [=]{ emit(featureRequested(line, edgeAt, "edge")); });
+                    l->setToolTip(T("The edge of this body that is nearest the click, as a curve: edge_at(body, (x, y, z)) -- a circle exactly (the rim of a cylinder or a hole, the base of a cone), any other edge followed along the surface where the two faces meet.  Fillet and chamfer take it"));
                 }
             }
         }
@@ -5826,6 +6223,7 @@ void View::setPullVirtual(const QVector3D& at)
 
 void View::expectNewPoint(int line0)
 {
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING")) fprintf(stderr, "[wait] expectNewPoint line0=%d wait.on=%d fresh=%d\n", line0, int(m_wait.on), int(m_wait.fresh));
     if (!m_wait.on) return;
     if (line0 < 0) { cancelWaitingGrip(); return; }
     m_wait.lines = QList<int>{line0};
@@ -6044,6 +6442,15 @@ int View::pointStyleOf(const Shape* s) const
     return s ? s->pointStyle() : 0;
 }
 
+bool View::pointOfBody(const Shape* s) const
+{
+    // (a body of points has no list of controls to find the point in, as a profile or a line has: it is asked which points it is made of)
+    if (!s || !s->isPoint()) return false;
+    for (const Shape* b : shapes)
+        if (b->hasMorph() && b->morphUses(s)) return true;
+    return false;
+}
+
 bool View::planarRingNormal(const Shape* s, QVector3D& normal) const
 {
     if (!s || !s->isPoint()) return false;
@@ -6060,7 +6467,8 @@ bool View::planarRingNormal(const Shape* s, QVector3D& normal) const
 
 bool View::gizmoFrame(const Shape* s, QVector3D F[3]) const
 {
-    if (gizmo_drag && gizmo_oriented && gizmo_frame_shape == s)
+    // (the frame held from the press is for a point and a symmetry, whose frame the drag does not move; a body's arrows follow its rotation numbers as they change: live, the user, 2026-11-04)
+    if (gizmo_drag && gizmo_oriented && gizmo_frame_shape == s && s && ((s->isPoint() && !pointOfBody(s)) || s->isSymmetry()))
     {
         for (int a = 0; a < 3; ++a) F[a] = gizmo_frame[a];
         return true;
@@ -6084,6 +6492,27 @@ bool View::gizmoFrame(const Shape* s, QVector3D F[3]) const
         if (world) return false;
         for (int a = 0; a < 3; ++a) F[a] = own[a].normalized();
         return true;
+    }
+    if (s && (!s->isPoint() || pointOfBody(s)) && !s->gizmoMapped())
+    {
+        // (a point of a body of points is turned by its rings like any body: its arrows follow, live, the user, 2026-11-04, H135, "NOT ROTATING WITH THE GIZMO")
+        // A body that is turned has its arrows along its own axes (the user, 2026-11-04: "the positional gizmo does not get rotated with the body. It should."); a body that is not turned keeps the world's
+        const auto& h = s->gizmo();
+        const auto& vars = s->getVars();
+        for (int a = 0; a < 3; ++a)
+        {
+            if (!h.present || !h.move[a] || !vars.count(h.move[a]) || !h.rotate[a] || !vars.count(h.rotate[a])) return false;
+        }
+        const QMatrix4x4 R = s->gizmoOrientation();
+        bool world = true;
+        for (int a = 0; a < 3; ++a)
+        {
+            QVector3D e;
+            e[a] = 1.0f;
+            F[a] = R.mapVector(e).normalized();
+            world = world && std::max({std::fabs(F[a].x()), std::fabs(F[a].y()), std::fabs(F[a].z())}) > 0.99999f;
+        }
+        return !world;
     }
     if (!s || !s->isPoint()) return false;
     int index = -1;
@@ -6111,19 +6540,86 @@ bool View::gizmoFrame(const Shape* s, QVector3D F[3]) const
     return true;
 }
 
+// The point a mirror point -- the image of a point in a symmetry -- is the image of: the point of the scene (not an image itself) that shares the most numbers with it, the numbers of the position the image
+// is made of.  The wheel over the dot of a mirror point acts on that point, as a drag of the dot does (the user, 2026-11-04, H119, "The points of the mirror are not scrollable. They should be."; measured
+// in the window: the notch selected the mirror point and changed nothing, for a mirror point has no scale or influence numbers of its own).  Null when there is none
+Shape* View::originalOfImage(const Shape* image) const
+{
+    if (!image || !image->isPoint() || !image->isSymmetryImage()) return nullptr;
+    // (the point the image was made from, which the script names -- `_symmetry_of` -- and the scene links: the wheel over the mirror of a spline point of the sheep horn found the wrong original by the
+    // numbers below, a tie that went to the first point of the file, profile_1_p1: the user, 2026-11-04, H119, "IT IS OBVIOUSLY THE FUCKING SPLINE POINTS")
+    if (Shape* followed = image->followedShape())
+        if (followed->isPoint() && !followed->isSymmetryImage()) return followed;
+    const auto& mine = image->getVars();
+    Shape* best = nullptr;
+    size_t bestCommon = 0;
+    for (Shape* c : shapes)
+    {
+        if (c == image || !c->isPoint() || c->isSymmetryImage()) continue;
+        const auto& theirs = c->getVars();
+        size_t common = 0;
+        for (const auto& v : mine) common += theirs.count(v.first);
+        if (common > bestCommon)
+        {
+            bestCommon = common;
+            best = c;
+        }
+    }
+    return best;
+}
+
 // The scale numbers of `only` (or, with none given, of every selected shape) times `factor`: every shape that is scaled and has numbers to scale it by -- a point's are what a spline leaves it by
 // and how thick a sweep is at it.  False when none of them has numbers
-bool View::applyWheelFactor(float factor, Shape* only)
+// The numbers the wheel scales on a shape, read from the gizmo it was made with -- selected or not: the wheel scales what the mouse is on, it does not pick it (the user, 2026-10-29, the wheel over a point
+// of a morph cube did nothing: Shape::hasGizmo is false for a point that is not selected, so the wheel had selected it, written, and waited for numbers that never counted).  A point's is its influence,
+// `influence=var(...)` -- or, for a point that says none of its own, its scale numbers, which are its influence --; the spline point of a path extrude has its size (its scale numbers) for the plain wheel and
+// its influence with Shift.  Any other shape: its scale numbers
+bool View::wheelNumbers(const Shape* s, bool shift, std::vector<libfive::Tree::Id>& ids) const
+{
+    // (a mirror point has no numbers of its own: the numbers are its original's)
+    if (s->isPoint() && s->isSymmetryImage())
+    {
+        const Shape* original = originalOfImage(s);
+        return original && wheelNumbers(original, shift, ids);
+    }
+    const auto& h = s->gizmo();
+    if (!h.present) return false;
+    const auto& vars = s->getVars();
+    auto scaleIds = [&] { for (int a = 0; a < 3; ++a) if (h.scale[a] && vars.count(h.scale[a]) > 0) ids.push_back(h.scale[a]); };
+    if (s->isPoint())
+    {
+        if (!h.splinePoint || shift)
+        {
+            // (the influence, for every point; the size only for the points of a path extrude -- the user, 2026-10-28.  A point that has not got the number is selected and given it, see scaleSelectionByWheel)
+            if (h.influence && vars.count(h.influence) > 0) ids.push_back(h.influence);
+        }
+        else scaleIds();
+        return !ids.empty();
+    }
+    if (!s->hasGizmo()) return false;
+    scaleIds();
+    return !ids.empty();
+}
+
+bool View::applyWheelFactor(float factor, Shape* only, bool shift)
 {
     std::map<libfive::Tree::Id, float> numbers;
     auto scaleOf = [&](Shape* s) {
-        if (!s->hasGizmo() || s->isLocked()) return;
-        const auto& h = s->gizmo();
-        const auto& vars = s->getVars();
-        for (int a = 0; a < 3; ++a)
+        std::vector<libfive::Tree::Id> ids;
+        if ((s->isLocked() && !s->isPoint()) || !wheelNumbers(s, shift, ids)) return;
+        // (and the value they have, and the limit of the influence, are the original's too)
+        const Shape* owner = (s->isPoint() && s->isSymmetryImage()) ? originalOfImage(s) : s;
+        if (!owner) return;
+        const auto& vars = owner->getVars();
+        for (const auto id : ids)
         {
-            const auto it = h.scale[a] ? vars.find(h.scale[a]) : vars.end();
-            if (it != vars.end()) numbers[h.scale[a]] = std::max(0.01f, it->second * factor);
+            const auto it = vars.find(id);
+            if (it == vars.end()) continue;
+            float v = std::max(0.01f, it->second * factor);
+            // (a number past what the drawing can show is pulled back to the limit by the first notch, either way: the user, 2026-11-02, "THE VALUES SHOULD BE FUCKING CAPPED, NOT JUST NOT DISPLAY")
+            const auto& gz = owner->gizmo();
+            if (gz.influenceMax > 0.0 && id == gz.influence) v = std::min(v, float(gz.influenceMax));
+            numbers[id] = v;
         }
     };
     if (only)
@@ -6132,6 +6628,29 @@ bool View::applyWheelFactor(float factor, Shape* only)
     }
     else
     {
+        // A selected sweep is placed by the points of its profile and its path (see groupGizmo): the wheel scales them about the middle of them all -- each point moves along the line from the middle to it -- as the ring of
+        // its gizmo does
+        bool sweepSelected = false;
+        // (and so is the image of a sweep in a symmetry: its group is its original's points, see groupGizmo -- the user, 2026-11-03, of a mirrored path extrude: "scaling it scales all points at once instead of the shape
+        // like it should")
+        for (const Shape* s : shapes) sweepSelected = sweepSelected || (s->isSelected() && s->hasSweep());
+        QList<Shape*> members;
+        QVector3D middle;
+        if (sweepSelected && groupGizmo(members, middle))
+        {
+            for (Shape* m : members)
+            {
+                const QVector3D d = (m->gizmoPivot() - middle) * (factor - 1.0f);
+                const auto& h = m->gizmo();
+                const auto& vars = m->getVars();
+                for (int a = 0; a < 3; ++a)
+                {
+                    if (!h.move[a]) continue;
+                    const auto it = vars.find(h.move[a]);
+                    if (it != vars.end()) numbers[h.move[a]] = it->second + d[a];
+                }
+            }
+        }
         for (Shape* s : shapes)
         {
             if (s->isSelected()) scaleOf(s);
@@ -6150,9 +6669,10 @@ bool View::applyWheelFactor(float factor, Shape* only)
 
 // A point has the numbers of its scale once it is selected (selecting it writes the gizmo into the script and the script runs again), which takes a moment: the notches that come over it meanwhile
 // are kept, as one factor, and applied when it has them -- they neither zoom the view nor get lost
-void View::waitForWheelNumbers(float factor)
+void View::waitForWheelNumbers(float factor, bool shift)
 {
     m_wheelPending *= factor;
+    m_wheelPendingShift = shift;
     m_wheelPendingTries = 0;
     if (!m_wheelPendingTimer.isActive()) m_wheelPendingTimer.start();
 }
@@ -6160,7 +6680,7 @@ void View::waitForWheelNumbers(float factor)
 void View::applyPendingWheel()
 {
     if (m_wheelPending == 1.0f) { m_wheelPendingTimer.stop(); return; }
-    if (applyWheelFactor(m_wheelPending, nullptr))
+    if (applyWheelFactor(m_wheelPending, nullptr, m_wheelPendingShift))
     {
         m_wheelPending = 1.0f;
         m_wheelPendingTimer.stop();
@@ -6171,33 +6691,74 @@ void View::applyPendingWheel()
     {
         m_wheelPending = 1.0f;
         m_wheelPendingTimer.stop();
+        finishWheelSelection();
     }
 }
 
-bool View::scaleSelectionByWheel(int delta, QPoint at)
+// A point that the wheel had to select -- selecting it writes the numbers of its scale and influence into the script -- is let go of when the notches are done, and what was selected before is selected again:
+// the wheel scales a point, it does not pick it
+void View::finishWheelSelection()
+{
+    if (!m_wheelRestore) return;
+    m_wheelRestore = false;
+    if (m_scene)
+    {
+        m_scene->clearSelection();
+        if (!m_wheelRestoreLines.isEmpty()) m_scene->selectLines(m_wheelRestoreLines, false);
+    }
+    m_wheelRestoreLines.clear();
+    m_overlay->update();
+    update();
+}
+
+bool View::scaleSelectionByWheel(int delta, QPoint at, bool shift, bool plain)
 {
     if (gizmo_drag || m_pullActive || m_faceActive) return false;
     const float factor = std::pow(1.1f, float(delta) / 120.0f);
     // The point whose dot the mouse is on is scaled whether it is selected or not -- the wheel acts on what the mouse is pointing at.  One of several selected points stands for them all
-    // (as a drag of its dot moves them all), and a point that is not selected is scaled alone
+    // (as a drag of its dot moves them all), and a point that is not selected is scaled alone.  Its size, or with Shift its influence; the wheel without Shift acts on a point and on nothing else
     Shape* hovered = pointDotAt(at);
-    if (hovered && !hovered->isSelected())
+    if (plain && !hovered) return false;
+    if (hovered)
     {
-        if (hovered->sourceLine() < 0 || hovered->isLocked()) return false;
-        if (!hovered->hasGizmo())
+        if (hovered->sourceLine() < 0) return false;
+        // (H98, the user, 2026-11-03: "When hovering a point that is not scrollable the zoom gesture still gets disabled.  This makes no sense and serves no purpose.  Only points that actually interact with
+        // getting hovered and scroll wheeled should ever take up the gesture".  A point that the ring of the gizmo does not scale -- the hard corner of a profile, a corner point of a body of points: see
+        // gizmoAt -- has nothing for the wheel to turn: the notch zooms the view, and the point is neither selected nor waited for)
+        QVector3D wheelPlane;
+        if (hovered->isPoint() && (planarRingNormal(hovered, wheelPlane) || pointOfBody(hovered)) && pointStyleOf(hovered) != 2 && pointStyleOf(hovered) != 3) return false;
+        // (H98, the window test of 2026-11-03: the wheel over a free point did not zoom and selected it.  A point that nothing uses -- no control of a profile, a line or a spline, no point of a body -- has nothing
+        // for the wheel to turn, whatever numbers it could be given: the notch zooms the view, and the point is neither selected nor written to)
         {
-            // (it is selected, which gives it its numbers; this notch and the ones that follow are applied when it has them)
-            waitForWheelNumbers(factor);
-            emit(shapeClicked(hovered->sourceLine()));
+            int ownerIndex = -1;
+            if (hovered->isPoint() && !controlOwner(hovered, ownerIndex) && !pointOfBody(hovered)) return false;
+        }
+        std::vector<libfive::Tree::Id> have;
+        if (!wheelNumbers(hovered, shift, have))
+        {
+            if (hovered->isLocked()) return false;
+            // The point has not got the number the wheel scales -- a point made from the menu says no influence, and a point that was never selected has no gizmo numbers: selecting it writes them into the
+            // script, ONCE.  The notches that come before the script has run again are kept and applied when it has them (a write for each notch hit a call whose text had moved on: the script was corrupted
+            // -- the user's morph cube, 2026-10-28), and a point that had to be selected for it is let go of afterwards: the wheel scales a point, it does not pick it
+            if (!m_wheelPendingTimer.isActive())
+            {
+                if (!hovered->isSelected() && !m_wheelRestore)
+                {
+                    m_wheelRestore = true;
+                    m_wheelRestoreLines = m_scene ? m_scene->selectedRowLines() : QList<int>();
+                }
+                emit(shapeClicked(hovered->sourceLine()));
+            }
+            waitForWheelNumbers(factor, shift);
             return true;
         }
-        return applyWheelFactor(factor, hovered);
+        if (!hovered->isSelected()) return applyWheelFactor(factor, hovered, shift);
     }
-    if (applyWheelFactor(factor, nullptr)) return true;
+    if (applyWheelFactor(factor, nullptr, shift)) return true;
     // (a point that a notch has just selected has no numbers until its script has run again: the notches that come meanwhile wait for them)
     if (m_wheelPendingTimer.isActive())
     {
-        waitForWheelNumbers(factor);
+        waitForWheelNumbers(factor, shift);
         return true;
     }
     return false;
@@ -6222,9 +6783,12 @@ void View::wheelEvent(QWheelEvent *event)
         pick_timer.start();
         return;
     }
-    // Shift + wheel scales what can be scaled: the point the mouse is on (selected or not), else the selection.  When there is nothing like that the wheel zooms, as it does
-    if ((event->modifiers() & Qt::ShiftModifier) &&
-        scaleSelectionByWheel(event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x(), event->pos())) return;
+    // The wheel over a point scales it: its size, and with Shift its influence (the user, 2026-10-28), selected or not and without selecting it.  Shift + wheel over nothing scales the selection.  When there is
+    // nothing like that the wheel zooms, as it does
+    {
+        const bool shift = event->modifiers() & Qt::ShiftModifier;
+        if (scaleSelectionByWheel(event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x(), event->pos(), shift, !shift)) return;
+    }
     const QPoint& center = zoom_cursor_centric ? mouse.pos : rect().center();
     camera.zoomIncremental(event->angleDelta().y(), center);
     update();
@@ -6658,7 +7222,17 @@ bool View::fieldGripPoint(const QString& key, int part, QPoint& out) const
     QPointF m, u, w, n;
     float len;
     if (!fieldGizmo(*v, m, u, w, n, len)) return false;
-    const QPointF p = part == 1 ? m + 0.6 * (u - m) : part == 2 ? m + 0.6 * (w - m) : part == 4 ? m + 0.7 * (n - m) : m;
+    QPointF p = part == 1 ? m + 0.6 * (u - m) : part == 2 ? m + 0.6 * (w - m) : part == 4 ? m + 0.7 * (n - m) : m;
+    if (part == 5)
+    {
+        // (a place on the rim, at 45 degrees round, clear of the arrows)
+        const int ax = v->axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
+        QVector3D q = fieldPlace(*v);
+        const float R = fieldRadius(*v);
+        q[ua] += 0.7071f * R;
+        q[va] += 0.7071f * R;
+        p = toScreen(q);
+    }
     out = QPoint(int(std::lround(p.x())), int(std::lround(p.y())));
     return fieldGizmoHit(*v, out) == part;
 }
@@ -7423,6 +7997,23 @@ int View::fieldGizmoHit(const FieldViewer& v, QPoint pos) const
     if (distanceToSegment(p, m, u) < 9) return 1;
     if (distanceToSegment(p, m, w) < 9) return 2;
     if (onArrow(pos, m, n)) return 4;                                          // (the double arrow along the normal)
+    // (the rim of the disc: a drag of it sets the radius -- the user, 2026-11-04, H143, "I caught my self intuitively dragging the side of the field viewer circle to resize it. That should be a feature")
+    {
+        const int ax = v.axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
+        const QVector3D c = fieldPlace(v);
+        const float R = fieldRadius(v);
+        QPointF prev;
+        for (int i = 0; i <= 96; ++i)
+        {
+            const double t = 2.0 * M_PI * double(i) / 96.0;
+            QVector3D q = c;
+            q[ua] += float(std::cos(t) * R);
+            q[va] += float(std::sin(t) * R);
+            const QPointF s = toScreen(q);
+            if (i > 0 && std::isfinite(s.x()) && std::isfinite(prev.x()) && distanceToSegment(p, prev, s) < 7) return 5;
+            prev = s;
+        }
+    }
     return 0;
 }
 
@@ -7477,6 +8068,21 @@ void View::dragFieldGrip(QPoint pos)
     const int ax = v->axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
     QVector3D c = m_fgStart;
     const int part = m_fieldGripActive.part;
+    if (part == 5)
+    {
+        // (the rim: the radius is how far the cursor is from the middle of the disc, in the plane of the disc)
+        const QVector3D a = toModelPos(pos, 0), b = toModelPos(pos, 0.25);
+        if (b[ax] == a[ax] || !std::isfinite(a[ax]) || !std::isfinite(b[ax])) return;
+        const float t = (m_fgStart[ax] - a[ax]) / (b[ax] - a[ax]);
+        const QVector3D hit = a + t * (b - a);
+        const float r = std::hypot(hit[ua] - m_fgStart[ua], hit[va] - m_fgStart[va]);
+        if (!std::isfinite(r)) return;
+        v->radius = std::max(r, 0.01f);
+        if (v->open) requestFieldSlice(v);
+        emit(fieldMoved(v->key, fieldSettings(*v)));
+        update();
+        return;
+    }
     if (part == 1 || part == 2 || part == 4)
     {
         const double l2 = QPointF::dotProduct(m_fgDir, m_fgDir);
@@ -7510,6 +8116,28 @@ void View::drawFieldGizmo(QPainter& painter, const FieldViewer& v)
     int part = 0;                                                              // (the one that is held, else the one under the cursor)
     if (m_fieldGripDrag && m_fieldGripActive.v == &v) part = m_fieldGripActive.part;
     else if (m_fieldGrip.v == &v) part = m_fieldGrip.part;
+    if (part == 5)
+    {
+        // (the rim is lit up where it can be taken, and while it is held)
+        const QVector3D c = fieldPlace(v);
+        const float R = fieldRadius(v);
+        QPolygonF rim;
+        for (int i = 0; i <= 96; ++i)
+        {
+            const double t = 2.0 * M_PI * double(i) / 96.0;
+            QVector3D q = c;
+            q[ua] += float(std::cos(t) * R);
+            q[va] += float(std::sin(t) * R);
+            rim << toScreen(q);
+        }
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(0, 0, 0, 110), 5, Qt::SolidLine, Qt::RoundCap));
+        painter.drawPolyline(rim);
+        painter.setPen(QPen(Qt::white, 2.5, Qt::SolidLine, Qt::RoundCap));
+        painter.drawPolyline(rim);
+        painter.restore();
+    }
     paintNormalArrow(painter, m, n, part == 4);
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
@@ -7633,6 +8261,44 @@ QString View::hoverDescription(QPoint pos) const
         .arg(selectedShapeCount()).arg(hover_target == s ? "is it" : hover_target ? "is another" : "none");
 }
 
+// The parts an operation is made of, which its gizmo moves (the user, 2026-11-03, H93: "the operation and the underlying parts should always stay on top of each other"; "only a one way link is
+// necessary"): an operation -- a union, a difference, a shell, a mirror -- reads the field of its parts, so a part that moves changes the operation already, and an operation that is moved
+// has to move its parts by the same step, or the two are no longer in the same place.  The parts are the shapes with numbers of their own to move (`position=var(...)`) that its field is
+// made of -- the lowest ones: a part that is made of others follows through them.  Nothing of this is written anywhere, in the script or in the tree: it is read from the fields
+// (the program reads the parts an operation carries from the numbers its script gives it -- `_carried`, parsed by the interpreter into Shape::carried(): see made_from._note_carried)
+
+// Whether an operation that carries parts is selected (see Shape::carried): its gizmo is the shared gizmo of its parts, with the arrows, the rings and the knobs of any shape
+template <class Container>
+static bool carrierSelected(const Container& all)
+{
+    for (const Shape* s : all)
+    {
+        if (s->isSelected() && !s->gizmo().dotOnly && s->carriesParts()) return true;
+    }
+    return false;
+}
+
+// Whether `p` is a part that a selected operation carries (see Shape::carried): the gizmo of the operation is the one gizmo of the whole, and its parts show and answer to none of their own (the user,
+// 2026-11-03, H96, with two pictures of a fillet and of a difference that showed the gizmos of their parts stacked on theirs: "linking should not show the gizmo of the linked objects.  There
+// should be just one gizmo visible.")
+template <class Container>
+static bool partOfSelectedCarrier(const Container& all, const Shape* p)
+{
+    const auto& mine = p->gizmo();
+    for (const Shape* c : all)
+    {
+        if (c == p || !c->isSelected() || !c->carriesParts()) continue;
+        for (const Shape::Gizmo& g : c->carried())
+        {
+            for (int a = 0; a < 3; ++a)
+            {
+                if (g.move[a] && g.move[a] == mine.move[a]) return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
 {
     // The multi-select state: two or more shapes selected.  The ones that can be moved (they have move numbers) share
@@ -7640,13 +8306,38 @@ bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
     members.clear();
     int selected = 0;
     bool anyShown = false, anyLocked = false;
+    bool carried = false;                                               // (an operation is selected: its gizmo is the shared gizmo of its parts)
+    QList<const Shape*> swept;                                          // (the sweeps that are selected: they have the gizmo of their points)
     const QList<const Shape*> outlines = outlinesWithGizmo();           // (the profiles and lines whose gizmo is shown: shapes drawn from the numbers of their points)
     for (Shape* s : shapes)
     {
         // (the dots of the paths that are drawn with the images of a sweep are pressed and dragged, they are not part of a selection of the row)
+        // (and an image's gizmo is its original's: the numbers it moves are the original's, which are moved by the original -- a shared gizmo that had both of them moved each number twice, the second time
+        // as a mirror image, and the pivot of the group was half way between the original and its image, in the plane of the symmetry: the user, 2026-10-28, "it just doesnt move the points, but like
+        // morphs them around a little bit", "in the symmetry plane, not in the middle of the spline itself")
         if (!s->isSelected() || s->gizmo().dotOnly) continue;
+        // A sweep (path_extrude) is placed by the points of its profile and its path, not by a placement of its own: its gizmo is the shared gizmo of those points, so the part and its spline
+        // are one thing -- moved, turned and scaled together -- and cannot be in two places (the user, 2026-10-29: "I want the field and the path to be linked").  The same for its image in a symmetry:
+        // the numbers its controls are made of are the original's points' (mirrored), so the points that move it are the original's -- the image itself is not a member
+        if (s->hasSweep())
+        {
+            ++selected;
+            anyLocked |= s->isLocked();
+            swept << s;
+            continue;
+        }
+        if (s->gizmoMapped()) continue;
         ++selected;
         anyLocked |= s->isLocked();
+        // An operation is made of its parts and has no position that is only its own: its gizmo moves, turns and scales the parts (the numbers their gizmos have, see Shape::carried), whether
+        // they are shown or hidden
+        if (s->carriesParts())
+        {
+            members << s;
+            anyShown |= s->gizmo().mode != Shape::Gizmo::NEVER;
+            carried = true;
+            continue;
+        }
         if (!s->hasMoveVars()) continue;
         members << s;
         anyShown |= s->gizmo().mode != Shape::Gizmo::NEVER;
@@ -7658,10 +8349,44 @@ bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
     {
         for (Shape* p : shapes)
         {
-            if (!p->isPoint() || p->gizmo().dotOnly || members.contains(p)) continue;
+            if (!p->isPoint() || p->gizmo().dotOnly || p->gizmoMapped() || members.contains(p)) continue;
             bool ofOutline = false;
-            for (const Shape* o : outlines) ofOutline = ofOutline || o->controlOf(p) >= 0;
+            for (const Shape* o : outlines) ofOutline = ofOutline || o->controlOf(p) >= 0 || o->morphUses(p);
             if (!ofOutline) continue;
+            anyLocked |= p->isLocked();
+            if (!p->hasMoveVars()) continue;
+            members << p;
+        }
+        // The line a sweep goes along, and its profile, are moved WITH the sweep: the sweep starts at its profile and its path is drawn through the middle of it, so a move of the path alone changes
+        // nothing -- the path is drawn onto the profile again after the move: the user's horn, "once you let go of the dragged spline it snaps back inside of the horns", "when you move the spline you
+        // dont move the mesh".  The points of the sweep's profile and of its path are one group, whichever of them the outline is (the user: "I want the field and the path to be linked")
+        const QList<Shape*> now = members;
+        for (const Shape* sw : shapes)
+        {
+            if (!sw->hasSweep() || sw->isSymmetryImage()) continue;
+            bool uses = false;
+            for (const Shape* m : now) uses = uses || sw->sweepControlOf(m) >= 0;
+            if (!uses) continue;
+            for (Shape* p : shapes)
+            {
+                if (!p->isPoint() || p->gizmo().dotOnly || p->gizmoMapped() || members.contains(p) || sw->sweepControlOf(p) < 0) continue;
+                anyLocked |= p->isLocked();
+                if (!p->hasMoveVars()) continue;
+                members << p;
+            }
+        }
+        anyShown = true;
+        selected = std::max(selected, 2);
+    }
+    // The points of a selected sweep join the shared gizmo, selected themselves or not (see above): its profile's and its path's
+    if (!swept.isEmpty())
+    {
+        for (Shape* p : shapes)
+        {
+            if (!p->isPoint() || p->gizmo().dotOnly || p->gizmoMapped() || members.contains(p)) continue;
+            bool ofSweep = false;
+            for (const Shape* o : swept) ofSweep = ofSweep || o->sweepControlOf(p) >= 0;
+            if (!ofSweep) continue;
             anyLocked |= p->isLocked();
             if (!p->hasMoveVars()) continue;
             members << p;
@@ -7669,6 +8394,8 @@ bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
         anyShown = true;
         selected = std::max(selected, 2);
     }
+    // (an operation alone is a group of its parts: they share the gizmo even when there is one operation selected)
+    if (carried) selected = std::max(selected, 2);
     // (a locked shape in the selection: the selection is not moved or edited -- there is no gizmo for it)
     if (selected < 2 || anyLocked || members.isEmpty() || !anyShown) return false;
     QVector3D lo, hi;
@@ -7720,7 +8447,7 @@ QList<const Shape*> View::outlinesWithGizmo() const
     for (const Shape* s : shapes) anySelected = anySelected || (s->isSelected() && !s->gizmo().dotOnly);
     for (const Shape* s : shapes)
     {
-        if (!s->hasControls() || s->isPoint() || s->gizmo().dotOnly) continue;
+        if ((!s->hasControls() && !s->hasMorph()) || s->isPoint() || s->gizmo().dotOnly) continue;
         const Shape::Gizmo::Mode mode = s->outlineMode();
         if (mode == Shape::Gizmo::NEVER) continue;
         if (s->isSelected() || (mode == Shape::Gizmo::ALWAYS && !anySelected && !s->isLocked())) out << s;
@@ -7732,7 +8459,14 @@ QList<const Shape*> View::outlinesWithGizmo() const
 // the middle of them -- and not that of a few points, whose rings change each point's own numbers
 bool View::outlineSelected() const
 {
-    return !outlinesWithGizmo().isEmpty();
+    if (!outlinesWithGizmo().isEmpty()) return true;
+    // An operation that carries parts has the gizmo of any shape (arrows, a ring and a knob on each axis): the rings turn and scale its parts about the middle of them all (H93)
+    if (carrierSelected(shapes)) return true;
+    // A selected sweep has the shared gizmo of the points of its profile and its path (see groupGizmo), and the rings of an outline: they turn and scale the whole arrangement about its middle, as they do a profile's
+    // points (the user, 2026-10-29, the sweep of his sheep horn: "They should be linked")
+    for (const Shape* s : shapes)
+        if (s->isSelected() && s->hasSweep() && !s->gizmo().dotOnly) return true;          // (an image of a sweep in a symmetry too: the same group, the original's points -- 2026-11-03, "the gizmo is the wrong gizmo and scaling it scales all points at once instead of the shape")
+    return false;
 }
 
 QVector3D View::groupRingNormal(const QList<Shape*>& members) const
@@ -7752,6 +8486,14 @@ bool anyMoveVar(const QList<Shape*>& shapes, int a)
     {
         const auto& h = s->gizmo();
         if (h.move[a] && s->getVars().count(h.move[a])) return true;
+        // (an operation: the parts it is made of)
+        if (s->carriesParts())
+        {
+            for (const Shape::Gizmo& c : s->carried())
+            {
+                if (c.move[a] && s->getVars().count(c.move[a])) return true;
+            }
+        }
     }
     return false;
 }
@@ -7870,6 +8612,42 @@ bool View::eventFilter(QObject* watched, QEvent* event)
     return QOpenGLWidget::eventFilter(watched, event);
 }
 
+// The free-rotation arrow of the Shift gizmo (H131): the turn made since the press, as a matrix, and where the cursor was at the last move
+static QMatrix4x4 s_freeTurn;
+static QMatrix4x4 s_freeR0;                // (the rotation of the part at the press: the arrow lies along its +Y)
+static QPoint s_freeLast;
+
+// The orientation of the gizmo of a group of points selected together (a morph body, a profile, a line, a point cloud, random points: the user, 2026-11-04, "the real time rotation for the position
+// gizmo only works for standard objects, not for points and not for point based objects").  The points have no rotation of their own to turn it with: the group's gizmo keeps the turn the free-rotation
+// arrow has given it, and while that arrow is dragged the move arrows and squares follow it live.  A new selection starts upright
+static QMatrix4x4 s_groupFrame;
+static qint64 s_groupKey = 0;
+static bool groupFrameOf(const QList<Shape*>& members, bool dragging, QVector3D F[3])
+{
+    for (int a = 0; a < 3; ++a) { F[a] = QVector3D(0, 0, 0); F[a][a] = 1.0f; }
+    if (members.isEmpty()) return false;
+    // (the group is told by the lines of the script its members are made on, not by their addresses: when the mouse is let go the script runs again and every shape is made again, at another address --
+    // the frame the user turned the gizmo to was lost at that moment and the gizmo went back to the world's axes: the user, 2026-11-04, H135, "it works in real time, BUT ONLY IN REAL TIME")
+    qint64 key = members.size();
+    for (const Shape* m : members) key = key * 1000003 + (m->sourceLine() + 2);
+    if (key != s_groupKey)
+    {
+        s_groupKey = key;
+        s_groupFrame.setToIdentity();
+    }
+    const QMatrix4x4 R = dragging ? s_freeTurn * s_groupFrame : s_groupFrame;
+    bool turned = false;
+    for (int a = 0; a < 3; ++a)
+    {
+        QVector3D e(0, 0, 0);
+        e[a] = 1.0f;
+        F[a] = R.mapVector(e).normalized();
+        turned = turned || std::max({std::fabs(F[a].x()), std::fabs(F[a].y()), std::fabs(F[a].z())}) < 0.99999f;
+    }
+    return turned;
+}
+static void groupFrameCommit() { s_groupFrame = s_freeTurn * s_groupFrame; }
+
 View::GizmoGrip View::gizmoAt(QPoint pos) const
 {
     GizmoGrip best;
@@ -7894,25 +8672,25 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             // (points of one profile have no arrows and no squares: the dot moves them, in the plane of the profile -- unless the profile itself is selected: all of it can move anywhere)
             QVector3D profileNormal;
             const bool inProfile = groupInProfilePlane(members, profileNormal) && !outlineSelected();
+            QVector3D GF[3];
+            groupFrameOf(members, gizmo_drag && (gizmo_active.kind == 9 || gizmo_active.kind == 1 || gizmo_active.kind == 6) && gizmo_active.group, GF);
             for (int a = 0; a < 3 && !inProfile; ++a)
             {
                 if (shift)
                 {
                     // (Shift: the squares of the planes instead of the arrows)
                     if (anyMoveVar(members, (a + 1) % 3) && anyMoveVar(members, (a + 2) % 3) &&
-                        planeSquare(groupCenter, L, a).containsPoint(at, Qt::OddEvenFill))
+                        planeSquareIn(groupCenter, L, GF[(a + 1) % 3], GF[(a + 2) % 3]).containsPoint(at, Qt::OddEvenFill))
                     {
                         return GizmoGrip{members[0], 4, a, true};
                     }
                     continue;
                 }
                 if (!anyMoveVar(members, a)) continue;
-                QVector3D e;
-                e[a] = L;
-                const double d = distanceToSegment(at, p0, toScreen(groupCenter + e));
+                const double d = distanceToSegment(at, p0, toScreen(groupCenter + GF[a] * L));
                 if (d < bestDist) { bestDist = d; best = GizmoGrip{members[0], 0, a, true}; }
             }
-            if (groupOfPoints(members))
+            if (groupOfPoints(members) || carrierSelected(shapes))
             {
                 const bool outline = outlineSelected();
                 if (outline && !shift)
@@ -7920,14 +8698,14 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
                     // The outline selected as a whole has the gizmo of any shape: a scale knob on each axis (it wins over the arrow behind it) and a ring about each axis
                     for (int a = 0; a < 3; ++a)
                     {
-                        const QPointF q = toScreen(groupCenter + unitAxis(a) * (kKnobAt * L));
+                        const QPointF q = toScreen(groupCenter + GF[a] * (kKnobAt * L));
                         const double d = std::hypot(at.x() - q.x(), at.y() - q.y()) - 3.5;
                         if (d < bestDist) { bestDist = d; best = GizmoGrip{members[0], 2, a, true}; }
                     }
                     for (int a = 0; a < 3; ++a)
                     {
                         QVector3D ru, rv;
-                        planeBasis(unitAxis(a), ru, rv);
+                        planeBasis(GF[a], ru, rv);
                         QPointF rprev;
                         for (int k = 0; k <= kRingSegments; ++k)
                         {
@@ -7962,12 +8740,19 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
                         prev = q;
                     }
                 }
+                // The free-rotation arrow of the Shift gizmo for a body of points selected as a whole (H131, the user, 2026-11-04: "For point based objects like the morph shapes it doesnt display at all"):
+                // along the world's +Y from the middle; dragged, it turns the arrangement of the points freely about it
+                if (shift && outline)
+                {
+                    const double d = distanceToSegment(at, p0, toScreen(groupCenter + GF[1] * L));
+                    if (d < bestDist) { bestDist = d; best = GizmoGrip{members[0], 9, 0, true}; }
+                }
             }
         }
     }
     for (Shape* s : shapes)
     {
-        if (!s->hasGizmo() || (group && members.contains(s))) continue;
+        if (!s->hasGizmo() || (group && (members.contains(s) || (s->hasSweep() && s->isSelected()) || partOfSelectedCarrier(shapes, s)))) continue;          // (a selected sweep has no gizmo of its own: it moves with its points'; nor has a part of a selected operation: H96)
         const auto& h = s->gizmo();
         const auto& vars = s->getVars();
         const QVector3D P = s->gizmoPivot();
@@ -7986,6 +8771,11 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         // (a point of a profile has no arrows and no squares: it is moved by its dot, in the plane of the profile -- and has its one ring and its scale knobs)
         QVector3D facePlane;
         const bool inPlane = planarRingNormal(s, facePlane);
+        // (H55, the user, 2026-11-02: "points should automatically hide their influence and rotation by default ... only if they become a part of or are created through an object that makes those gizmos
+        // relevant, should they be displayed" -- and at night, of a selected point of a morph body that showed nothing but its arrows: "WHEN IT IS USED THEY HAVE TO BE THERE".  What a point shows follows from
+        // what its owner uses of it, by the kind of the point (pointStyleOf, asked for every ring below): a spline point of a body has the rotation rings and the ring of its scale and influence, a sphere
+        // point the ring that is its radius, a corner only its arrows.  No other condition -- not Shift, not "a number that is not standard" -- hides a knob that the owner uses)
+        const bool extras = true;
         // (a point of a curve: the arrows, the squares and the rings are along the way the curve faces there, see gizmoFrame -- and need all three numbers of a kind)
         QVector3D F[3] = {QVector3D(1, 0, 0), QVector3D(0, 1, 0), QVector3D(0, 0, 1)};
         const bool turned = !inPlane && gizmoFrame(s, F);
@@ -8017,7 +8807,7 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
             any = any || (h.influence && vars.count(h.influence));
             // (the hard corner of a profile has no ring, as it has no rotation ring: its scale is how strongly a spline leaves a spline point, or the radius of a round corner)
-            if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))             // (the radius of a round corner is the factor of this ring)
+            if (any && extras && !((inPlane || pointOfBody(s)) && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))             // (the radius of a round corner is the factor of this ring)
             {
                 // (the ring: within a few pixels of the circle round the middle)
                 const double d = std::fabs(std::hypot(at.x() - p0.x(), at.y() - p0.y()) - kUniformRingPx) - 3.5;
@@ -8035,6 +8825,13 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         QVector3D ring[3];
         gizmoRingAxes(s, ring);
         if (inPlane) ring[2] = facePlane;
+        // The free-rotation arrow of the Shift gizmo (H131, the user, 2026-11-04: "an arrow that points in the forward facing direction for the objects and when dragged rotates around the center
+        // point and the body follows rotation. So completely free rotation"): along the part's own +Y, for a shape that has all three rotation numbers
+        if (shift && (!s->isPoint() || !pointOfBody(s) || pointStyleOf(s) == 2) && !inPlane && !s->gizmoMapped() && h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) && h.rotate[2] && vars.count(h.rotate[2]))
+        {
+            const double d = distanceToSegment(at, p0, toScreen(P + R.mapVector(unitAxis(1)) * L));
+            if (d < bestDist) { bestDist = d; best = {s, 8, 0}; }
+        }
         const bool rotatesAll = h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) && h.rotate[2] && vars.count(h.rotate[2]);
         if (turned) for (int a = 0; a < 3; ++a) ring[a] = F[a];
         for (int a = 0; a < 3; ++a)
@@ -8043,6 +8840,9 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             if (turned && !rotatesAll) continue;
             // (a point of a profile has the one ring in the plane, and only a spline point: the rotation of a corner turns nothing)
             if (inPlane && (a != 2 || pointStyleOf(s) != 2)) continue;
+            // (a point of a body of points: the rings of the gizmo turn the plane a SPLINE point leaves its surface in; a corner and a sphere point have none -- the user, 2026-11-02, "the points still dont have
+            // their gizmo restricted based on their context")
+            if (pointOfBody(s) && (pointStyleOf(s) != 2 || !extras)) continue;
             QVector3D u, v;
             planeBasis(ring[a], u, v);
             QPointF prev;
@@ -8074,7 +8874,7 @@ bool View::gizmoGripPoint(int kind, int axis, QPoint& pos) const
         if (kind == 1 || kind == 2)
         {
             // (the rings and the knobs of an outline's own gizmo: a knob on its arrow, a ring at 45 degrees round, clear of the arrows)
-            if (!groupOfPoints(members) || !outlineSelected()) return false;
+            if (!(groupOfPoints(members) || carrierSelected(shapes)) || !outlineSelected()) return false;
             if (kind == 2)
             {
                 pos = toScreen(groupCenter + unitAxis(axis) * (kKnobAt * L)).toPoint();
@@ -8090,7 +8890,7 @@ bool View::gizmoGripPoint(int kind, int axis, QPoint& pos) const
         }
         if (kind == 5 || kind == 6)
         {
-            if (!groupOfPoints(members)) return false;
+            if (!(groupOfPoints(members) || carrierSelected(shapes))) return false;
             if (kind == 5)
             {
                 pos = (toScreen(groupCenter) + QPointF(0.7071, -0.7071) * kUniformRingPx).toPoint();
@@ -8169,6 +8969,8 @@ void View::setProvisionalGizmo(bool on, QVector3D pivot, QList<int> lines0)
 bool View::provisionalVisible() const
 {
     if (!m_prov || m_provLines.isEmpty()) return false;
+    // (an operation that carries parts is selected: its gizmo is the shared one of its parts, drawn at the middle of them; the provisional one is drawn at the middle of the BOX of the selected model, which is the pivot of no part -- a second gizmo, the box's pivot, in the picture of the difference of a box and a sphere: the user, 2026-11-03, H96, "There should be just one gizmo visible")
+    if (carrierSelected(shapes)) return false;
     for (const Shape* s : shapes)
     {
         // (the real gizmo is there: it is the one that is drawn, and dragged)
@@ -8296,6 +9098,12 @@ void View::startWaitingGrip()
     // A press on the provisional gizmo that is waiting for the real one: the drag begins when it is there, if the button is
     // still down (the numbers of the model are in the script by then)
     if (!m_wait.on) { m_waitTimer.stop(); return; }
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING") && (m_wait.ticks < 2 || m_wait.ticks % 20 == 0))
+    {
+        fprintf(stderr, "[wait] tick %d leftDown=%d fresh=%d lines=%d first=%d shapes=%d\n", m_wait.ticks, int(m_leftDown), int(m_wait.fresh), int(m_wait.lines.size()), m_wait.lines.isEmpty() ? -1 : m_wait.lines.first(), int(shapes.size()));
+        for (Shape* s : shapes)
+            if (s->isPoint() && s->hasGizmo() && s->isSelected()) fprintf(stderr, "[wait]   a selected point with a gizmo: source line %d\n", s->sourceLine());
+    }
     if (!m_leftDown || ++m_wait.ticks > 600)
     {
         cancelWaitingGrip();
@@ -8304,13 +9112,22 @@ void View::startWaitingGrip()
     for (Shape* s : shapes)
     {
         if (!s->hasGizmo()) continue;
-        if (m_wait.selected ? !(s->isSelected() && (s->isPoint() || s->isFlat())) : !m_wait.lines.contains(s->sourceLine())) continue;
+        // (a point put in by a press on the surface of a body: only the point on the line that the script names -- until it names one nothing is grabbed, and a point that was selected before is never the one: H71)
+        if (m_wait.fresh ? !m_wait.lines.contains(s->sourceLine()) : (m_wait.selected ? !(s->isSelected() && (s->isPoint() || s->isFlat())) : !m_wait.lines.contains(s->sourceLine()))) continue;
         const GizmoGrip g{s, m_wait.kind, m_wait.axis};
-        const QPoint pos = m_lastPos;
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) fprintf(stderr, "[wait] the drag begins on the point at source line %d\n", s->sourceLine());
+        // (from where the button went down, when that is known: the point is there, and the hand has moved on while the script ran -- the drag then catches up with the hand at once)
+        const bool fromPress = m_wait.pressed && m_wait.press != m_lastPos;
+        const QPoint pos = m_wait.pressed ? m_wait.press : m_lastPos;
         m_wait.on = false;
         m_waitTimer.stop();
         unsetCursor();
         beginGizmoDrag(g, pos);
+        if (fromPress && gizmo_drag)
+        {
+            dragGizmo(m_lastPos);
+            mouse.pos = m_lastPos;
+        }
         return;
     }
 }
@@ -8445,7 +9262,7 @@ void View::drawOutlines(QPainter& painter)
         if (s->outlines().empty() || (!s->isFlat() && !s->isCurve() && !s->isFace())) continue;
         const bool hot = s == m_outlineHover || (s->isHovered() && (s->isFlat() || s->isFace()));
         const bool on = s->isSelected();
-        QColor c = hot ? QColor(120, 195, 255) : on ? QColor(105, 180, 255) : QColor(52, 140, 245);
+        QColor c = s->isLost() ? QColor(245, 166, 35) : hot ? QColor(120, 195, 255) : on ? QColor(105, 180, 255) : QColor(52, 140, 245);      // (orange, as a placeholder is: the edge it stands for was not found)
         painter.setPen(QPen(c, hot ? 3.4 : on ? 2.8 : 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         std::vector<OutlinePoint> points;
         for (size_t li = 0; li < s->outlines().size(); ++li)
@@ -8465,6 +9282,15 @@ void View::drawOutlines(QPainter& painter)
             }
             if (poly.size() > 1) painter.drawPolyline(poly);
         }
+    }
+    // The preview of a 2D entry: the boundary of its sheet, drawn as the outline of the shape it makes is (not selected, not hovered)
+    if (m_ghostOn && m_ghostFlat)
+    {
+        const QMatrix4x4 M = camera.M();
+        painter.setPen(QPen(QColor(52, 140, 245), 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        auto front = [&](const QVector3D& p) { return M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f; };
+        for (const auto& e : m_ghostOutline)
+            if (front(e.first) && front(e.second)) painter.drawLine(toScreen(e.first), toScreen(e.second));
     }
     painter.restore();
 }
@@ -8566,7 +9392,7 @@ void View::drawHints(QPainter& painter)
 }
 
 // The editable outline that passes under a position: the nearest piece of any line of any editable shape
-bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) const
+bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece, bool everyLine) const
 {
     double best = 8.0 * 8.0;
     bool found = false;
@@ -8575,7 +9401,9 @@ bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) cons
     std::vector<OutlinePoint> points;
     for (Shape* s : shapes)
     {
-        if (!s->isEditable() || s->outlines().empty()) continue;
+        // (the lines that are drawn as outlines whether or not a point can be put on them: the curve of an edge made of a body, the outline of a 2D shape)
+        const bool drawnLine = everyLine && (s->isCurve() || s->isFlat() || s->isFace());
+        if (!(s->isEditable() || drawnLine) || s->outlines().empty()) continue;
         int count = 0;
         for (size_t li = 0; li < s->outlines().size(); ++li)
         {
@@ -8732,17 +9560,17 @@ void View::drawGizmo(QPainter& painter)
             };
             QVector3D profileNormal;
             const bool inProfile = groupInProfilePlane(members, profileNormal) && !outlineSelected();      // (points of one profile: the dot only, it moves them in the plane -- but the profile itself, selected, has the arrows)
+            QVector3D GF[3];
+            groupFrameOf(members, gizmo_drag && (gizmo_active.kind == 9 || gizmo_active.kind == 1 || gizmo_active.kind == 6) && gizmo_active.group, GF);
             for (int a = 0; a < 3 && !inProfile; ++a)
             {
                 if (shift)
                 {
-                    if (anyMoveVar(members, (a + 1) % 3) && anyMoveVar(members, (a + 2) % 3)) square(groupCenter, L, a, hotG(4, a));
+                    if (anyMoveVar(members, (a + 1) % 3) && anyMoveVar(members, (a + 2) % 3)) squareOf(planeSquareIn(groupCenter, L, GF[(a + 1) % 3], GF[(a + 2) % 3]), a, hotG(4, a));
                     continue;
                 }
                 if (!anyMoveVar(members, a)) continue;
-                QVector3D e;
-                e[a] = L;
-                const QPointF q = toScreen(groupCenter + e);
+                const QPointF q = toScreen(groupCenter + GF[a] * L);
                 const bool on = hotG(0, a);
                 QColor c = kGizmoColor[a];
                 if (on) c = c.lighter(140);
@@ -8760,7 +9588,7 @@ void View::drawGizmo(QPainter& painter)
                 painter.setBrush(c);
                 painter.drawPolygon(head);
             }
-            if (groupOfPoints(members))
+            if (groupOfPoints(members) || carrierSelected(shapes))
             {
                 // The rings of a group of points: the one in the plane turns them about the middle of them all, the gold one scales them evenly.  The outline selected as a whole has the
                 // gizmo of any shape instead: a ring about each axis and a knob on each axis, and with Shift the one gold ring
@@ -8771,7 +9599,7 @@ void View::drawGizmo(QPainter& painter)
                     for (int a = 0; a < 3; ++a)
                     {
                         QVector3D ru, rv;
-                        planeBasis(unitAxis(a), ru, rv);
+                        planeBasis(GF[a], ru, rv);
                         QPolygonF poly;
                         for (int k = 0; k <= kRingSegments; ++k)
                         {
@@ -8786,7 +9614,7 @@ void View::drawGizmo(QPainter& painter)
                     }
                     for (int a = 0; a < 3; ++a)
                     {
-                        const QPointF q = toScreen(groupCenter + unitAxis(a) * (kKnobAt * L));
+                        const QPointF q = toScreen(groupCenter + GF[a] * (kKnobAt * L));
                         const bool onKnob = hotG(2, a);
                         QColor kc = kGizmoColor[a];
                         if (onKnob) kc = kc.lighter(140);
@@ -8848,13 +9676,69 @@ void View::drawGizmo(QPainter& painter)
                     painter.setPen(QColor(0xee, 0xe8, 0xd5));
                     painter.drawText(box, Qt::AlignCenter, text);
                 }
+                // The free-rotation arrow of the Shift gizmo for a body of points selected as a whole (H131): along the world's +Y from the middle, see gizmoAt
+                if (shift && outline)
+                {
+                    const bool on = hotG(9, 0);
+                    const QPointF tip = toScreen(groupCenter + GF[1] * L);
+                    QPointF d = tip - p0;
+                    const double length = std::hypot(d.x(), d.y());
+                    if (length > 14.0)
+                    {
+                        d /= length;
+                        const QPointF w(-d.y(), d.x());
+                        QColor ac(0xee, 0xe8, 0xd5);
+                        if (on) ac = ac.lighter(115);
+                        painter.setPen(QPen(QColor(0, 0, 0, 90), on ? 6.0 : 4.5));
+                        painter.drawLine(p0, tip);
+                        painter.setPen(QPen(ac, on ? 3.5 : 2.2));
+                        painter.drawLine(p0, tip);
+                        QPolygonF head;
+                        head << tip + d * 6 << tip - d * 8 + w * 6 << tip - d * 8 - w * 6;
+                        painter.setPen(QPen(QColor(0, 0, 0, 90), 1));
+                        painter.setBrush(ac);
+                        painter.drawPolygon(head);
+                    }
+                }
             }
             dot(p0, hotG(3, 0));
         }
     }
+    if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION") && carrierSelected(shapes))
+    {
+        // (a measuring line, H96: what the view decides for each shape while an operation is selected, printed when it changes -- which gizmos are drawn, and why)
+        static QString lastGizmoLine;
+        QString line = QString("group %1 members %2").arg(group ? 1 : 0).arg(members.size());
+        for (Shape* s : shapes)
+        {
+            const QVector3D P = s->gizmoPivot();
+            line += QString(" | shape %1 selected %2 gizmo %3 carries %4 partOfCarrier %5 member %6 pivot (%7, %8, %9)")
+                        .arg(qulonglong(quintptr(s) % 100000)).arg(s->isSelected() ? 1 : 0).arg(s->hasGizmo() ? 1 : 0).arg(s->carriesParts() ? 1 : 0)
+                        .arg(partOfSelectedCarrier(shapes, s) ? 1 : 0).arg(members.contains(s) ? 1 : 0)
+                        .arg(double(P.x()), 0, 'g', 5).arg(double(P.y()), 0, 'g', 5).arg(double(P.z()), 0, 'g', 5);
+        }
+        if (line != lastGizmoLine)
+        {
+            lastGizmoLine = line;
+            fprintf(stderr, "[gizmo] %s\n", line.toUtf8().constData());
+        }
+    }
     for (Shape* s : shapes)
     {
-        if (!s->hasGizmo() || (group && members.contains(s))) continue;
+        if (!s->hasGizmo() || (group && (members.contains(s) || (s->hasSweep() && s->isSelected()) || partOfSelectedCarrier(shapes, s)))) continue;          // (a selected sweep has no gizmo of its own: it moves with its points'; nor has a part of a selected operation: H96)
+        if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION") && carrierSelected(shapes))
+        {
+            // (a measuring line, H96: a shape that draws a gizmo of its own while an operation is selected, said once for each shape and state)
+            static QSet<QString> told;
+            const QString key = QString("%1/%2/%3/%4").arg(qulonglong(quintptr(s) % 100000)).arg(group ? 1 : 0).arg(members.contains(s) ? 1 : 0).arg(partOfSelectedCarrier(shapes, s) ? 1 : 0);
+            if (!told.contains(key))
+            {
+                told.insert(key);
+                const QVector3D pv = s->gizmoPivot();
+                fprintf(stderr, "[gizmo-draw] shape %s line %d draws a gizmo of its own: group %d member %d partOfCarrier %d carries %d pivot (%g, %g, %g)\n", qPrintable(QString::number(qulonglong(quintptr(s) % 100000))), s->sourceLine() + 1,
+                        group ? 1 : 0, members.contains(s) ? 1 : 0, partOfSelectedCarrier(shapes, s) ? 1 : 0, s->carriesParts() ? 1 : 0, double(pv.x()), double(pv.y()), double(pv.z()));
+            }
+        }
         const auto& h = s->gizmo();
         const auto& vars = s->getVars();
         const QVector3D P = s->gizmoPivot();
@@ -8870,7 +9754,12 @@ void View::drawGizmo(QPainter& painter)
         QVector3D ring[3];
         gizmoRingAxes(s, ring);
         QVector3D facePlane;
-        const bool inPlane = planarRingNormal(s, facePlane);        // (a point of a profile: one ring, in the plane of the profile)
+        const bool inPlane = planarRingNormal(s, facePlane);
+        // (H55, the user, 2026-11-02: "points should automatically hide their influence and rotation by default ... only if they become a part of or are created through an object that makes those gizmos
+        // relevant, should they be displayed" -- and at night, of a selected point of a morph body that showed nothing but its arrows: "WHEN IT IS USED THEY HAVE TO BE THERE".  What a point shows follows from
+        // what its owner uses of it, by the kind of the point (pointStyleOf, asked for every ring below): a spline point of a body has the rotation rings and the ring of its scale and influence, a sphere
+        // point the ring that is its radius, a corner only its arrows.  No other condition -- not Shift, not "a number that is not standard" -- hides a knob that the owner uses)
+        const bool extras = true;        // (a point of a profile: one ring, in the plane of the profile)
         if (inPlane) ring[2] = facePlane;
         // (a point of a curve: the gizmo is along the way the curve faces there, see gizmoFrame)
         QVector3D F[3] = {QVector3D(1, 0, 0), QVector3D(0, 1, 0), QVector3D(0, 0, 1)};
@@ -8883,6 +9772,7 @@ void View::drawGizmo(QPainter& painter)
             if (!h.rotate[a] || !vars.count(h.rotate[a])) continue;
             if (turned && !rotatesAll) continue;
             if (inPlane && (a != 2 || pointStyleOf(s) != 2)) continue;       // (see gizmoAt: one ring in the plane, on a spline point only)
+            if (pointOfBody(s) && (pointStyleOf(s) != 2 || !extras)) continue;            // (a point of a body of points: the rings turn the plane a spline point leaves its surface in -- a corner and a sphere point have none: see gizmoAt)
             QVector3D u, v;
             planeBasis(ring[a], u, v);
             QPolygonF poly;
@@ -8936,7 +9826,7 @@ void View::drawGizmo(QPainter& painter)
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
             any = any || (h.influence && vars.count(h.influence));
-            if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))              // (not on the hard corner of a profile: see gizmoAt)
+            if (any && extras && !((inPlane || pointOfBody(s)) && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))              // (not on the hard corner of a profile: see gizmoAt)
             {
                 const GizmoGrip& now = gizmo_drag ? gizmo_active : gizmo_hover;
                 const bool on = now.kind == 2 && now.shape == s;
@@ -8986,6 +9876,30 @@ void View::drawGizmo(QPainter& painter)
             painter.setBrush(c);
             painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
         }
+        // The free-rotation arrow of the Shift gizmo (H131): along the part's own +Y, see gizmoAt
+        if (shift && (!s->isPoint() || !pointOfBody(s) || pointStyleOf(s) == 2) && !inPlane && !s->gizmoMapped() && h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) && h.rotate[2] && vars.count(h.rotate[2]))
+        {
+            const bool on = hot(8, 0);
+            const QPointF tip = toScreen(P + R.mapVector(unitAxis(1)) * L);
+            QPointF u = tip - p0;
+            const double length = std::hypot(u.x(), u.y());
+            if (length > 14.0)
+            {
+                u /= length;
+                const QPointF w(-u.y(), u.x());
+                QColor c(0xee, 0xe8, 0xd5);
+                if (on) c = c.lighter(115);
+                painter.setPen(QPen(QColor(0, 0, 0, 140), on ? 5.5 : 4.5));
+                painter.drawLine(p0 + u * 10.0, tip - u * 8.0);
+                painter.setPen(QPen(c, on ? 3.0 : 2.0));
+                painter.drawLine(p0 + u * 10.0, tip - u * 8.0);
+                QPolygonF head;
+                head << tip + u * 6 << tip - u * 8 + w * 6 << tip - u * 8 - w * 6;
+                painter.setPen(QPen(QColor(0, 0, 0, 90), 1));
+                painter.setBrush(c);
+                painter.drawPolygon(head);
+            }
+        }
         dot(p0, hot(3, 0));
     }
     painter.restore();
@@ -9027,9 +9941,11 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
         if (s->previewGizmoVars(m, allowed)) { moved = true; continue; }
         changed |= s->updateVars(m);
     }
+    const qint64 shapesNs = timing ? clock.nsecsElapsed() : 0;
     if (moved) update();
     // (the region holds what is dragged, drawn moved or meshed again: the one that is meshed again must not be meshed in a region that cuts it off)
-    if (moved || changed) growRegionForPreview();
+    if (moved || changed) growRegionForPreview(&m);
+    const qint64 regionNs = timing ? clock.nsecsElapsed() : 0;
     if (changed)
     {
         busy.show();
@@ -9055,20 +9971,64 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
     }
     m_overlay->update();
     if (timing)
-        std::fprintf(stderr, "[drag] numbers: %.1f ms in all, %.1f ms of it writing the script; %s\n", double(clock.nsecsElapsed()) / 1e6, double(written) / 1e6,
+        std::fprintf(stderr, "[drag] numbers: %.1f ms in all, %.1f ms of it writing the script, the shapes took %.1f ms, the region %.1f ms; %s\n", double(clock.nsecsElapsed()) / 1e6, double(written) / 1e6, double(shapesNs - written) / 1e6, double(regionNs - shapesNs) / 1e6,
                      moved ? (changed ? "some shapes moved, others meshed" : "shapes moved, nothing meshed") : (changed ? "meshed again" : "nothing changed"));
 }
 
-void View::growRegionForPreview()
+// A surface that goes on for ever -- a sheet like wave_surface, whose field is negative on one side of it everywhere -- is found everywhere in the box the region search runs over, whatever its numbers are:
+// its extent reaches the edge of that box.  The region does not grow to hold it (it would grow by the whole search box at every move of the drag, and meshing it would never finish: the user, 2026-11-04, "surfaces are
+// still broken ... It just fluxuates wildly when I try to move it and never reall renders correctly"; a move of 6 mm of such a sheet made the region 105 mm wider, measured)
+static bool reachesSearch(const QVector3D& lo, const QVector3D& hi, const QVector3D& slo, const QVector3D& shi)
+{
+    for (int k = 0; k < 3; ++k)
+    {
+        const float span = std::max(1.0f, shi[k] - slo[k]), slack = 0.05f * span;
+        if (lo[k] <= slo[k] + slack || hi[k] >= shi[k] - slack) return true;
+    }
+    return false;
+}
+
+void View::growRegionForPreview(const std::map<libfive::Tree::Id, float>* dragged)
 {
     // Auto scale off: the region is what the script says.  The picture of a model that is dragged is its mesh moved: the box of it is where it will be, and the region
     // must hold that -- now, not after the drag is let go and the script has run
     if (!settings.autoScale) return;
     double nlo[3], nhi[3];
     bool any = false;
+    // (H95, the user, 2026-11-03: "The drag of an operation in the current form does not update the render region in real time, meaning that you can drag it out of visibilty until it starts to
+    // actually render".  An operation that is dragged is not drawn moved: the numbers that move are its parts', it is made of them and is meshed again from them, in the region it has -- and its box
+    // is its mesh's, where it WAS.  Where it will be is searched for in its field at the numbers that are dragged, as for a surface that is pulled: see growRegionForSurfaceDrag)
+    const QVector3D size = settings.max - settings.min;
+    const float reach = std::max({size.x(), size.y(), size.z(), 1.0f});
+    const QVector3D slo = settings.min - QVector3D(reach, reach, reach), shi = settings.max + QVector3D(reach, reach, reach);
     for (auto& s : shapes)
     {
         QVector3D lo, hi;
+        // (a surface patch -- wave_surface, foam_surface -- goes on for ever: its box is whatever the region it is meshed in is, so the region followed it and grew at every step of a drag; the user, 2026-11-04, H128, "become bigger or larger just when moving them around")
+        if (s->isSurfacePatch())
+        {
+            // (one that has a box of its own -- a finite sheet -- is held by the region as that box says; the box of an infinite one is the region's, and it is left alone)
+            if (!s->scriptBox(lo, hi)) continue;
+            for (int k = 0; k < 3; ++k)
+            {
+                nlo[k] = any ? std::min(nlo[k], double(lo[k])) : double(lo[k]);
+                nhi[k] = any ? std::max(nhi[k], double(hi[k])) : double(hi[k]);
+            }
+            any = true;
+            continue;
+        }
+        // (a shape whose mesh fills the region from one side to the other in two axes -- a wave_surface, a sheet that goes on -- is cut by the region: its true extent is not known, and the box of it moved by the drag made the region grow at every step, the mesh then filled the larger region and the next step grew it again; measured in a window of the 18:06 build, H128: [-20..20] became [-20..123] in one move of 30 steps; the user, 2026-11-04, "SURFACES HAVE LIMITS")
+        if (s->hasMesh())
+        {
+            const auto& mb = s->getMeshBounds();
+            int spanned = 0;
+            for (int k = 0; k < 3; ++k)
+            {
+                const float tol = 0.02f * std::max(size[k], 1e-3f);
+                if (mb.lower[k] <= settings.min[k] + tol && mb.upper[k] >= settings.max[k] - tol) ++spanned;
+            }
+            if (spanned >= 2) continue;
+        }
         // (a shape drawn moved, or one that is meshed again as it is dragged -- both are where the numbers of its gizmo put them, not where the mesh it has is)
         if (!s->previewBox(lo, hi) && !s->movedBox(lo, hi))
         {
@@ -9076,6 +10036,20 @@ void View::growRegionForPreview()
             const auto& b = s->getMeshBounds();
             lo = QVector3D(b.lower.x(), b.lower.y(), b.lower.z());
             hi = QVector3D(b.upper.x(), b.upper.y(), b.upper.z());
+            if (dragged)
+            {
+                bool uses = false;
+                for (const auto& kv : *dragged) uses = uses || s->usesVar(kv.first);
+                QVector3D elo, ehi;
+                if (uses && s->extentWith(*dragged, slo, shi, elo, ehi) && !reachesSearch(elo, ehi, slo, shi))
+                {
+                    for (int k = 0; k < 3; ++k)
+                    {
+                        lo[k] = std::min(lo[k], elo[k]);
+                        hi[k] = std::max(hi[k], ehi[k]);
+                    }
+                }
+            }
         }
         for (int k = 0; k < 3; ++k)
         {
@@ -9121,7 +10095,7 @@ void View::growRegionForSurfaceDrag(const QVector3D& at, const std::map<libfive:
         bool uses = false;
         for (const auto& kv : vs) uses = uses || s->usesVar(kv.first);
         QVector3D lo, hi;
-        if (uses && s->extentWith(vs, slo, shi, lo, hi)) hold(lo, hi);
+        if (uses && s->extentWith(vs, slo, shi, lo, hi) && !reachesSearch(lo, hi, slo, shi)) hold(lo, hi);
     }
     growRegionToHold(nlo, nhi);
 }
@@ -9146,22 +10120,169 @@ void View::growRegionToHold(const double nlo[3], const double nhi[3])
     onSettingsFromScript(next, false);          // (what is shown starts meshing again, in the larger region)
 }
 
+QVector<View::PlaneTurn> View::ownPlanes(const QList<Shape*>& members, Shape** shared) const
+{
+    // The symmetry planes that turn and move with a profile or a body of points that is moved, turned or scaled as a whole (the user, 2026-11-02, H62: "that plane should rotate with the body" -- the images across a plane
+    // that stayed would make the body another shape).  Only when everything that is made through the plane is made of this body: a plane that another body is an image through is not moved or turned -- `shared` is set to
+    // it, and the body is given a plane of its own (splitSharedPlane)
+    QVector<PlaneTurn> out;
+    std::vector<libfive::Tree::Id> moving;
+    for (const Shape* s : members)
+    {
+        const auto& h = s->gizmo();
+        const auto& vars = s->getVars();
+        for (int a = 0; a < 3; ++a)
+            if (h.move[a] && vars.find(h.move[a]) != vars.end()) moving.push_back(h.move[a]);
+    }
+    const auto madeOfMembers = [&](Shape* u) {
+        if (members.contains(u)) return true;
+        for (const auto id : moving)
+            if (u->dependsOnVar(id)) return true;
+        return false;
+    };
+    // Whether the plane SPLITS a body that is turned (the user, 2026-11-02, H62: "the rotation should rotate the symmetry with it for SYMMETRIES THAT SPLIT THE BODY IN HALF", and not "the symmetry that
+    // does not split the part in half"): a point that the body is made of is an image through the plane -- the left half made, the right half its images.  A plane that only makes a CLONE of the body
+    // (the images of the whole body, as the second plane of example 38 does) is no such plane: the clone follows the body, and the plane stays where it is
+    const QList<const Shape*> turned = outlinesWithGizmo();
+    const auto splitsBody = [&](const PlaneTurn& pt) {
+        for (Shape* u : shapes)
+        {
+            if (!u->isSymmetryImage() && !u->gizmoMapped()) continue;
+            bool through = false;
+            for (int a = 0; a < 3 && !through; ++a)
+                through = (pt.id[a] && u->dependsOnVar(pt.id[a])) || (pt.rotId[a] && u->dependsOnVar(pt.rotId[a]));
+            if (!through) continue;
+            for (const Shape* o : turned)
+                if (o->morphUses(u) || o->controlOf(u) >= 0)
+                {
+                    if (qEnvironmentVariableIsSet("FIELDES_TIMING")) fprintf(stderr, "[planes]   it splits through the shape at source line %d: point %d, image %d, mapped %d, morphUses %d, controlOf %d\n", u->sourceLine(), int(u->isPoint()), int(u->isSymmetryImage()), int(u->gizmoMapped()), int(o->morphUses(u)), o->controlOf(u));
+                    return true;
+                }
+        }
+        return false;
+    };
+    for (Shape* p : shapes)
+    {
+        if (!p->isSymmetry()) continue;
+        const auto& ph = p->gizmo();
+        const auto& pv = p->getVars();
+        PlaneTurn pt;
+        pt.pos0 = p->gizmoPivot();
+        bool any = false;
+        for (int a = 0; a < 3; ++a)
+        {
+            const auto it = ph.move[a] ? pv.find(ph.move[a]) : pv.end();
+            pt.id[a] = it != pv.end() ? ph.move[a] : nullptr;
+            pt.value0[a] = it != pv.end() ? it->second : 0.0f;
+            const auto ro = ph.rotate[a] ? pv.find(ph.rotate[a]) : pv.end();
+            pt.rotId[a] = ro != pv.end() ? ph.rotate[a] : nullptr;
+            pt.rot0[a] = ro != pv.end() ? ro->second : 0.0f;
+            any = any || pt.id[a] || pt.rotId[a];
+        }
+        if (!any) continue;
+        bool ours = false, others = false;
+        for (Shape* u : shapes)
+        {
+            if (u == p) continue;
+            bool through = false;
+            for (int a = 0; a < 3 && !through; ++a)
+                through = (pt.id[a] && u->dependsOnVar(pt.id[a])) || (pt.rotId[a] && u->dependsOnVar(pt.rotId[a]));
+            if (!through) continue;
+            if (madeOfMembers(u)) ours = true;
+            else others = true;
+        }
+        const bool splits = ours && splitsBody(pt);
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) fprintf(stderr, "[planes] the plane at source line %d: made of the members %d, of others %d, splits the body %d\n", p->sourceLine(), int(ours), int(others), int(splits));
+        if (!ours || !splits) continue;
+        if (!others) out.append(pt);
+        else if (shared && !*shared) *shared = p;
+    }
+    return out;
+}
+
+bool View::splitSharedPlane(Shape* plane, const QList<Shape*>& members)
+{
+    if (!m_scene || !plane) return false;
+    const QString planeName = m_scene->varAtLine(plane->sourceLine());
+    QJsonArray names;
+    for (const Shape* s : members)
+    {
+        const QString n = m_scene->varAtLine(s->sourceLine());
+        if (!n.isEmpty()) names.append(n);
+    }
+    if (planeName.isEmpty() || names.isEmpty()) return false;
+    return m_scene->splitSharedPlane(planeName, names);
+}
+
 void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
 {
     m_regionGrown = false;
     gizmo_oriented = false;
     gizmo_frame_shape = nullptr;
     gizmo_sign = 1.0f;
-    if ((g.kind == 1 || g.kind == 2 || g.kind == 5 || g.kind == 6) && g.group)
+    if (g.kind == 8)
+    {
+        // The free-rotation arrow of the Shift gizmo (H131): the three rotation numbers and their values now; the turn so far is none
+        const auto& h = g.shape->gizmo();
+        const auto& vars = g.shape->getVars();
+        for (int a = 0; a < 3; ++a)
+        {
+            const auto it = h.rotate[a] ? vars.find(h.rotate[a]) : vars.end();
+            if (it == vars.end()) return;
+            gizmo_rot_id[a] = h.rotate[a];
+            gizmo_rot0[a] = it->second;
+        }
+        gizmo_active = g;
+        gizmo_press = pos;
+        gizmo_pivot = g.shape->gizmoPivot();
+        s_freeTurn.setToIdentity();
+        s_freeR0 = Shape::gizmoRotation(QVector3D(gizmo_rot0[0], gizmo_rot0[1], gizmo_rot0[2]));
+        s_freeLast = pos;
+        m_dotPressLine = -1;
+        m_dotMoved = false;
+        gizmo_drag = true;
+        setCursor(Qt::ClosedHandCursor);
+        emit(dragStart());
+        m_overlay->update();
+        return;
+    }
+    if ((g.kind == 1 || g.kind == 2 || g.kind == 5 || g.kind == 6 || g.kind == 9) && g.group)
     {
         // A ring or a knob of a group of points: it scales or turns them about the middle of them all.  The place of each and the numbers that move it are noted now
+        // (kind 9, the free-rotation arrow of the outline selected as a whole: it turns them freely, the arrow along the world's +Y)
         QList<Shape*> members;
         QVector3D groupCenter;
-        if (!groupGizmo(members, groupCenter) || !groupOfPoints(members)) return;
+        if (!groupGizmo(members, groupCenter) || !(groupOfPoints(members) || carrierSelected(shapes))) return;
         gizmo_group.clear();
-        gizmo_group_outline = outlineSelected();
+        // (a group of points -- the points of a body, a point cloud, random points -- is an arrangement like an outline: its rings turn and scale the whole of it about its middle.  They used to change only each
+        // point's own rotation and scale and leave the points where they were, so nothing seemed to turn: the user, 2026-11-04, H135, "The main gizmo of point based objects dont rotate at all")
+        gizmo_group_outline = outlineSelected() || groupOfPoints(members);
         for (const Shape* s : members)
         {
+            if (s->carriesParts())
+            {
+                // An operation (H93): each of the parts it is made of is a member of the group, at the place its numbers put it
+                const auto& cv = s->getVars();
+                for (const Shape::Gizmo& c : s->carried())
+                {
+                    GroupPoint cp;
+                    cp.pos0 = s->carriedPivotOf(c);
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        const auto im = c.move[a] ? cv.find(c.move[a]) : cv.end();
+                        cp.id[a] = im != cv.end() ? c.move[a] : nullptr;
+                        cp.value0[a] = im != cv.end() ? im->second : 0.0f;
+                        const auto sc = c.scale[a] ? cv.find(c.scale[a]) : cv.end();
+                        cp.scaleId[a] = sc != cv.end() ? c.scale[a] : nullptr;
+                        cp.scale0[a] = sc != cv.end() ? sc->second : 1.0f;
+                        const auto ro = c.rotate[a] ? cv.find(c.rotate[a]) : cv.end();
+                        cp.rotId[a] = ro != cv.end() ? c.rotate[a] : nullptr;
+                        cp.rot0[a] = ro != cv.end() ? ro->second : 0.0f;
+                    }
+                    gizmo_group.append(cp);
+                }
+                continue;
+            }
             const auto& h = s->gizmo();
             const auto& vars = s->getVars();
             GroupPoint gp;
@@ -9180,6 +10301,17 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
             }
             gizmo_group.append(gp);
         }
+        // A profile or a body of points that is selected as a whole and turned or scaled: the symmetry plane its points are images through turns and moves with it (the user, 2026-11-02, H62: "that plane should
+        // rotate with the body" -- the images across a plane that stayed would make the body another shape).  Only when everything that is made through the plane is made of this body: a plane that another
+        // body is an image through is left where it is, or that body would be broken by it
+        gizmo_planes.clear();
+        if (gizmo_group_outline && !carrierSelected(shapes))
+        {
+            Shape* shared = nullptr;
+            gizmo_planes = ownPlanes(members, &shared);
+            // (a plane that other bodies are made through too: this body gets a copy of its own first, and the drag does not begin -- the script runs again, and the next press turns the body with its own plane)
+            if (shared && splitSharedPlane(shared, members)) { gizmo_group.clear(); gizmo_planes.clear(); return; }
+        }
         gizmo_active = g;
         gizmo_press = pos;
         gizmo_pivot = groupCenter;
@@ -9194,12 +10326,31 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
             // (a scale knob of the outline's own gizmo: along its axis, as the knob of any shape is)
             gizmo_len = gizmoLength(gizmo_pivot);
             gizmo_factor = 1.0f;
-            gizmo_dir = toScreen(gizmo_pivot + unitAxis(g.axis) * gizmo_len) - toScreen(gizmo_pivot);
+            {
+                QVector3D knobFrame[3];
+                groupFrameOf(members, false, knobFrame);
+                gizmo_axis = knobFrame[g.axis];       // (the knob sits on the turned frame of the group: it stretches along that axis)
+            }
+            gizmo_dir = toScreen(gizmo_pivot + gizmo_axis * gizmo_len) - toScreen(gizmo_pivot);
             if (std::hypot(gizmo_dir.x(), gizmo_dir.y()) < 1.0) return;    // pointing at the camera
+        }
+        else if (g.kind == 9)
+        {
+            s_freeTurn.setToIdentity();
+            {
+                QVector3D unusedFrame[3];
+                groupFrameOf(members, false, unusedFrame);
+            }
+            s_freeR0 = s_groupFrame;                 // (the arrow lies along the +Y of the group's frame)
+            s_freeLast = pos;
         }
         else
         {
-            gizmo_axis = g.kind == 1 ? unitAxis(g.axis) : groupRingNormal(members);       // (a ring of the outline's own gizmo is about its axis)
+            // (a turn ring: the gizmo's frame is turned with the points, from the frame it has now)
+            s_freeTurn.setToIdentity();
+            QVector3D ringFrame[3];
+            groupFrameOf(members, false, ringFrame);
+            gizmo_axis = g.kind == 1 ? ringFrame[g.axis] : groupRingNormal(members);       // (a ring of the outline's own gizmo is about its axis, on the group's turned frame)
             QVector3D at;
             if (!ringPoint(pos, gizmo_pivot, gizmo_axis, at)) return;
             gizmo_vec = at - gizmo_pivot;
@@ -9222,12 +10373,29 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
         gizmo_vars.clear();
         // (the gizmo of a point of a curve is along the way the curve faces there: an arrow or a square moves all three numbers, by how much of the move is along each)
         QVector3D F[3] = {QVector3D(1, 0, 0), QVector3D(0, 1, 0), QVector3D(0, 0, 1)};
-        const bool turned = !g.group && (g.kind == 0 || g.kind == 4) && gizmoFrame(g.shape, F);
+        const bool turned = (g.kind == 0 || g.kind == 4) && (g.group ? groupFrameOf(members, false, F) : gizmoFrame(g.shape, F));
         gizmo_oriented = turned;
         gizmo_frame_shape = turned ? g.shape : nullptr;
         for (int a = 0; a < 3; ++a) gizmo_frame[a] = F[a];
         for (const Shape* s : members)
         {
+            if (s->carriesParts())
+            {
+                // An operation (H93): the numbers that move each of the parts it is made of, whether they are shown or not -- a number that a part's own gizmo moves too is the same number, noted once
+                // more and set to the same value
+                for (const Shape::Gizmo& c : s->carried())
+                {
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        if (!turned && g.kind == 0 && a != g.axis) continue;
+                        if (!turned && g.kind == 4 && a == g.axis) continue;
+                        const auto it = c.move[a] ? s->getVars().find(c.move[a]) : s->getVars().end();
+                        if (it == s->getVars().end()) continue;
+                        gizmo_vars.append(GizmoVar{c.move[a], a, it->second});
+                    }
+                }
+                continue;
+            }
             const auto& h = s->gizmo();
             const auto& vars = s->getVars();
             for (int a = 0; a < 3; ++a)
@@ -9253,7 +10421,27 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
                 gizmo_vars.append(var);
             }
         }
-        if (gizmo_vars.isEmpty()) return;
+        // A body of points that is moved as a whole (the user, 2026-11-02, H62: "that plane should rotate with the body"): the symmetry plane its points are made through moves with it, by the same step; a plane that
+        // other bodies are made through too is given to this body as a copy of its own first (see ownPlanes), and the drag does not begin
+        if (g.group && outlineSelected() && !carrierSelected(shapes))
+        {
+            Shape* shared = nullptr;
+            const QVector<PlaneTurn> planes = ownPlanes(members, &shared);
+            if (shared && splitSharedPlane(shared, members)) return;
+            for (const PlaneTurn& pt : planes)
+                for (int a = 0; a < 3; ++a)
+                {
+                    if (!pt.id[a]) continue;
+                    if (g.kind == 0 && a != g.axis) continue;
+                    if (g.kind == 4 && a == g.axis) continue;
+                    gizmo_vars.append(GizmoVar{pt.id[a], a, pt.value0[a]});
+                }
+        }
+        if (gizmo_vars.isEmpty())
+        {
+            if (qEnvironmentVariableIsSet("FIELDES_TIMING")) fprintf(stderr, "[wait] beginGizmoDrag: no number to move for kind %d\n", g.kind);
+            return;
+        }
         gizmo_active = g;
         gizmo_press = pos;
         gizmo_pivot = g.group ? groupCenter : g.shape->gizmoPivot();
@@ -9442,7 +10630,48 @@ void View::dragGizmo(QPoint pos)
         dragFillet(pos);
         return;
     }
-    if ((gizmo_active.kind == 1 || gizmo_active.kind == 2 || gizmo_active.kind == 5 || gizmo_active.kind == 6) && gizmo_active.group)
+    if (gizmo_active.kind == 8 || gizmo_active.kind == 9)
+    {
+        // (kind 9: the same arrow of a body of points selected as a whole -- a morph body, a profile -- which turns the arrangement of its points about the middle of them, see the group below)
+        // The free-rotation arrow of the Shift gizmo (H131): the hand's movement turns the part about the middle of its gizmo, about the camera's up axis for a sideways movement and about its
+        // right axis for an up and down one; the turn so far is added to the angles the part had at the press, as the three angles of the sum (as the rings do)
+        // (the user, 2026-11-04: "A proper implementation should always face the hand ... Face it in 2D I mean, its 2d projection the user sees".  The arrow is turned so that what the user sees of it -- its
+        // projection on the screen -- points from the middle of the gizmo to the cursor, always.  The cursor says a direction on a sphere round the middle, as a trackball does: what it is over in the
+        // screen plane is the sideways part, and the rest -- towards the camera -- is what the sphere gives; beyond the sphere the arrow lies in the screen plane.  The part is turned by the
+        // smallest turn that takes the arrow it had at the press onto that direction)
+        if (!gizmo_active.shape) return;
+        s_freeLast = pos;
+        const float z = camera.M().map(gizmo_pivot).z();
+        const QVector3D hand = toModelPos(pos, z);
+        QVector3D right = toModelPos(pos + QPoint(100, 0), z) - hand, up = hand - toModelPos(pos + QPoint(0, 100), z);
+        const float perHundred = right.length();                     // (model length of 100 pixels at the depth of the middle)
+        if (perHundred < 1e-9f || up.length() < 1e-9f) return;
+        right.normalize();
+        up.normalize();
+        const QVector3D towards = QVector3D::crossProduct(right, up).normalized();      // (out of the screen, to the viewer)
+        const QVector3D v = hand - gizmo_pivot;
+        const float a = QVector3D::dotProduct(v, right), b = QVector3D::dotProduct(v, up);
+        const float radius = perHundred * 0.9f;                      // (the arrow is about 90 pixels long on the screen)
+        const float r = std::hypot(a, b);
+        QVector3D target;
+        if (r >= radius)
+            target = (a * right + b * up) / r;
+        else
+            target = ((a * right + b * up) + std::sqrt(radius * radius - r * r) * towards) / radius;
+        const QVector3D dir0 = s_freeR0.mapVector(QVector3D(0, 1, 0)).normalized();
+        QMatrix4x4 turn;
+        turn.rotate(QQuaternion::rotationTo(dir0, target.normalized()));
+        s_freeTurn = turn;
+        if (gizmo_active.kind == 8)
+        {
+            const QVector3D angles = gizmoEuler(s_freeTurn * s_freeR0);
+            std::map<libfive::Tree::Id, float> numbers;
+            for (int a = 0; a < 3; ++a) numbers[gizmo_rot_id[a]] = angles[a];
+            applyGizmoNumbers(numbers);
+            return;
+        }
+    }
+    if ((gizmo_active.kind == 1 || gizmo_active.kind == 2 || gizmo_active.kind == 5 || gizmo_active.kind == 6 || gizmo_active.kind == 9) && gizmo_active.group)
     {
         // The points' places now: scaled about the middle by how far the cursor is from it against where it was pressed, or turned about it by the cursor's turn; the numbers
         // that move each point change by what it has moved.  (Kinds 1 and 2, a ring about an axis and a knob on it, are those of the outline's own gizmo; 5 and 6 those of a few points)
@@ -9460,6 +10689,10 @@ void View::dragGizmo(QPoint pos)
             if (l2 < 1) return;
             const double t = QPointF::dotProduct(QPointF(pos - gizmo_press), gizmo_dir) / l2;
             gizmo_factor = std::max(0.01f, float(1.0 + t / kKnobAt));
+        }
+        else if (gizmo_active.kind == 9)
+        {
+            // (the turn so far is s_freeTurn, made above)
         }
         else
         {
@@ -9480,18 +10713,61 @@ void View::dragGizmo(QPoint pos)
             // its shape, bigger, stretched or turned -- and the numbers that move each point change by what it has moved.  The points' own scale and rotation numbers are left as they are
             const float turnedBy = snappedTurn(gizmo_turn);
             QMatrix4x4 about;
-            about.rotate(turnedBy, gizmo_axis.normalized());
+            if (gizmo_active.kind == 9) about = s_freeTurn;
+            else
+            {
+                about.rotate(turnedBy, gizmo_axis.normalized());
+                // (the gizmo of the group is turned with it, live, as it is by the free-rotation arrow: the user, 2026-11-04, H135, "THE GIZMO DOES NOT ROTATE")
+                if (gizmo_active.kind == 1 || gizmo_active.kind == 6) s_freeTurn = about;
+            }
+            // (an operation that carries parts, H93: its parts are shapes of their own, not points -- each is also turned and made bigger, about its own middle, by what the whole is turned and scaled by:
+            // its place goes where the turn or the scale takes it, and its own rotation and scale change with it)
+            const bool partsGroup = carrierSelected(shapes);
             for (const GroupPoint& gp : gizmo_group)
             {
                 QVector3D rel = gp.pos0 - gizmo_pivot;
                 if (gizmo_active.kind == 5) rel *= gizmo_factor;
-                else if (gizmo_active.kind == 2) rel[gizmo_active.axis] *= gizmo_factor;
+                else if (gizmo_active.kind == 2) rel += gizmo_axis * (QVector3D::dotProduct(rel, gizmo_axis) * (gizmo_factor - 1.0f));
                 else rel = about.mapVector(rel);
                 const QVector3D now = gizmo_pivot + rel;
                 const QVector3D d = now - gp.pos0;
                 for (int a = 0; a < 3; ++a)
                 {
                     if (gp.id[a]) numbers[gp.id[a]] = gp.value0[a] + d[a];
+                }
+                if (!partsGroup) continue;
+                if (gizmo_active.kind == 5)
+                {
+                    for (int a = 0; a < 3; ++a)
+                        if (gp.scaleId[a]) numbers[gp.scaleId[a]] = gp.scale0[a] * gizmo_factor;
+                }
+                else if (gizmo_active.kind == 2)
+                {
+                    const int ax = gizmo_active.axis;
+                    if (gp.scaleId[ax]) numbers[gp.scaleId[ax]] = gp.scale0[ax] * gizmo_factor;
+                }
+                else if (gp.rotId[0] && gp.rotId[1] && gp.rotId[2])
+                {
+                    const QVector3D angles = gizmoEuler(about * Shape::gizmoRotation(QVector3D(gp.rot0[0], gp.rot0[1], gp.rot0[2])));
+                    for (int a = 0; a < 3; ++a) numbers[gp.rotId[a]] = angles[a];
+                }
+            }
+            // (the symmetry planes the points are images through: moved by what their middle moves, and turned by the turn -- see beginGizmoDrag)
+            for (const PlaneTurn& pt : gizmo_planes)
+            {
+                QVector3D rel = pt.pos0 - gizmo_pivot;
+                if (gizmo_active.kind == 5) rel *= gizmo_factor;
+                else if (gizmo_active.kind == 2) rel += gizmo_axis * (QVector3D::dotProduct(rel, gizmo_axis) * (gizmo_factor - 1.0f));
+                else rel = about.mapVector(rel);
+                const QVector3D d = gizmo_pivot + rel - pt.pos0;
+                for (int a = 0; a < 3; ++a)
+                {
+                    if (pt.id[a]) numbers[pt.id[a]] = pt.value0[a] + d[a];
+                }
+                if (gizmo_active.kind != 5 && gizmo_active.kind != 2 && pt.rotId[0] && pt.rotId[1] && pt.rotId[2])
+                {
+                    const QVector3D angles = gizmoEuler(about * Shape::gizmoRotation(QVector3D(pt.rot0[0], pt.rot0[1], pt.rot0[2])));
+                    for (int a = 0; a < 3; ++a) numbers[pt.rotId[a]] = angles[a];
                 }
             }
             if (!numbers.empty()) applyGizmoNumbers(numbers);
@@ -9634,7 +10910,11 @@ void View::dragGizmo(QPoint pos)
         {
             if (!gizmo_scale_id[a]) continue;
             if (!together && a != gizmo_active.axis) continue;
-            numbers[gizmo_scale_id[a]] = std::max(0.01f, gizmo_scale0[a] * factor);
+            float v = std::max(0.01f, gizmo_scale0[a] * factor);
+            // (the number never goes past what the drawing can show: the user, 2026-11-02, "THE VALUES SHOULD BE FUCKING CAPPED, NOT JUST NOT DISPLAY")
+            if (gizmo_active.shape && gizmo_active.shape->gizmo().influenceMax > 0.0 && gizmo_scale_id[a] == gizmo_active.shape->gizmo().influence)
+                v = std::min(v, float(gizmo_active.shape->gizmo().influenceMax));
+            numbers[gizmo_scale_id[a]] = v;
         }
         if (!numbers.empty()) applyGizmoNumbers(numbers);
     }
@@ -9689,8 +10969,9 @@ void View::updateSectionReadout(QPoint pos)
             const float d = slice.sample(x[FieldSlice::uAxis(ax)], x[FieldSlice::vAxis(ax)]);
             if (std::isfinite(d) && d < slice.fade)
             {
-                sectionText = QString("d = %1  %2").arg(d, 0, 'g', 4)
-                                  .arg(d < 0 ? "inside" : "outside");
+                // (a field that is nowhere negative -- a surface's unsigned distance -- has no inside to name)
+                sectionText = slice.lo < 0 ? QString("d = %1  %2").arg(d, 0, 'g', 4).arg(d < 0 ? "inside" : "outside")
+                                           : QString("d = %1").arg(d, 0, 'g', 4);
             }
         }
     }

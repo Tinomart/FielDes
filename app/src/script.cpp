@@ -873,7 +873,7 @@ bool Script::foldRange(int blockNum, int* endOut) const
 bool Script::isFolded(int blockNum) const
 {
     QTextBlock b = document()->findBlockByNumber(blockNum);
-    return b.isValid() && b.isVisible() && b.next().isValid() && !b.next().isVisible();
+    return b.isValid() && b.isVisible() && b.next().isValid() && !b.next().isVisible() && !internalBlocks().contains(b.next().blockNumber());
 }
 
 void Script::setFolded(int blockNum, bool folded)
@@ -900,8 +900,10 @@ void Script::setFolded(int blockNum, bool folded)
     }
 
     const bool was = isFolded(blockNum);
+    const QSet<int>& internal = internalBlocks();
     for (QTextBlock b = header.next(); b.isValid() && b.blockNumber() <= end; b = b.next())
     {
+        if (!folded && internal.contains(b.blockNumber())) continue;          // (what the program keeps for itself stays hidden)
         b.setVisible(!folded);
     }
     document()->markContentsDirty(header.position(),
@@ -956,7 +958,7 @@ void Script::unfoldAll()
     }
     for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
     {
-        if (!b.isVisible())
+        if (!b.isVisible() && !internalBlocks().contains(b.blockNumber()))
         {
             b.setVisible(true);
             changed = true;
@@ -971,6 +973,67 @@ void Script::unfoldAll()
     for (const int line : opened) emit(foldToggled(line, false));
 }
 
+// What the program keeps for itself in the script -- the list of faces of a morph shape, between `# fieldes-internal: begin` and `# fieldes-internal: end` -- is not shown (the user, 2026-11-02,
+// task H67: "I SAID INTERNAL ... YOU DO NOT FUCKING EXPOSE THIS TO THE FUCKING USER").  It is in the text, which is the document, and out of sight: the lines are hidden as a fold hides its body,
+// and nothing that opens folds opens them.  A region that is not closed hides nothing
+const QSet<int>& Script::internalBlocks() const
+{
+    if (m_internalValid) return m_internal;
+    static const QRegularExpression begin(R"(^\s*#\s*fieldes-internal:\s*begin\b)");
+    static const QRegularExpression end(R"(^\s*#\s*fieldes-internal:\s*end\b)");
+    m_internal.clear();
+    QSet<int> run;
+    bool inside = false;
+    for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
+    {
+        const QString t = b.text();
+        if (!inside && begin.match(t).hasMatch()) inside = true;
+        if (inside) run << b.blockNumber();
+        if (inside && end.match(t).hasMatch())
+        {
+            m_internal.unite(run);
+            run.clear();
+            inside = false;
+        }
+    }
+    m_internalValid = true;
+    return m_internal;
+}
+
+void Script::hideInternalRegion()
+{
+    const QSet<int>& hidden = internalBlocks();
+    if (hidden.isEmpty()) return;
+    bool changed = false;
+    int first = -1;
+    for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
+    {
+        if (!hidden.contains(b.blockNumber())) continue;
+        if (first < 0) first = b.blockNumber();
+        if (b.isVisible())
+        {
+            b.setVisible(false);
+            changed = true;
+        }
+    }
+    if (!changed) return;
+    // (the text cursor is not left inside what is hidden)
+    if (hidden.contains(textCursor().block().blockNumber()))
+    {
+        QTextBlock out = document()->findBlockByNumber(qMax(0, first - 1));
+        while (out.isValid() && hidden.contains(out.blockNumber())) out = out.next();
+        if (out.isValid())
+        {
+            QTextCursor c(out);
+            c.movePosition(QTextCursor::EndOfBlock);
+            setTextCursor(c);
+        }
+    }
+    document()->markContentsDirty(0, document()->characterCount());
+    viewport()->update();
+    m_gutter->update();
+}
+
 void Script::validateFolds()
 {
     // Any hidden run must be exactly the body of the visible fold header
@@ -978,18 +1041,20 @@ void Script::validateFolds()
     // inserted lines into a folded region) is unhidden.  (The model tree is not told: an edit is no choice of the user's about the row -- a model
     // made from a menu gets its `handles(...)` line written under its call, into the lines that were just folded -- and the next tree sets the
     // folds to its rows again, the new line folded with the others)
+    hideInternalRegion();
+    const QSet<int>& internal = internalBlocks();
     bool changed = false;
     QTextBlock b = document()->begin();
     while (b.isValid())
     {
-        if (b.isVisible())
+        if (b.isVisible() || internal.contains(b.blockNumber()))
         {
             b = b.next();
             continue;
         }
         QTextBlock first = b;
         QTextBlock last = b;
-        while (b.isValid() && !b.isVisible())
+        while (b.isValid() && !b.isVisible() && !internal.contains(b.blockNumber()))
         {
             last = b;
             b = b.next();
@@ -1017,6 +1082,7 @@ void Script::validateFolds()
 
 void Script::ensureBlockVisible(const QTextBlock& target)
 {
+    if (target.isValid() && internalBlocks().contains(target.blockNumber())) return;       // (never opened: it is not for the user)
     for (int guard=0; guard < 64 && target.isValid() && !target.isVisible(); ++guard)
     {
         QTextBlock h = target;
@@ -1035,6 +1101,7 @@ void Script::ensureBlockVisible(const QTextBlock& target)
 void Script::onContentsChange(int, int, int)
 {
     m_linkCache.clear();
+    m_internalValid = false;
     // Deferred: the layout must settle before re-checking fold shapes
     QTimer::singleShot(0, this, &Script::validateFolds);
 }

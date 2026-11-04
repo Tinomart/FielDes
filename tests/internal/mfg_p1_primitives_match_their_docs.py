@@ -20,11 +20,11 @@ t = Table('p1_primitives_match_their_docs: the primitives the manufacturing test
 
 # THE ANSWERS BY HAND, from the documentation of each primitive and the formula of its volume
 shapes = [
-    ('box 8 x 6 x 4', box((0, 0, 0), (8, 6, 4)), (0, 0, 0), (8, 6, 4), 8 * 6 * 4),
-    ('sphere radius 5', sphere(5.0, (20, 5, 5)), (15, 0, 0), (25, 10, 10), 4.0 / 3.0 * math.pi * 125.0),
-    ('cylinder radius 4, height 12', cylinder(4.0, 12.0, (35, 5, 0)), (31, 1, 0), (39, 9, 12), math.pi * 16.0 * 12.0),
-    ('cone base radius 6, height 12', cone(6.0, 12.0, (50, 5, 0)), (43, -2, 0), (57, 12, 30), math.pi * 36.0 * 12.0 / 3.0),
-    ('torus 8 and 2 (the ring of radius 8, the tube of radius 2)', torus(8.0, 2.0, (72, 5, 5)), (62, -5, 2), (82, 15, 8), 2.0 * math.pi ** 2 * 8.0 * 4.0),
+    ('box 8 x 6 x 4', box((8, 6, 4), position=(4, 3, 2)), (0, 0, 0), (8, 6, 4), 8 * 6 * 4),
+    ('sphere radius 5', sphere(5.0, position=(20, 5, 5)), (15, 0, 0), (25, 10, 10), 4.0 / 3.0 * math.pi * 125.0),
+    ('cylinder radius 4, height 12', cylinder(4.0, 12.0, position=(35, 5, 0)), (31, 1, 0), (39, 9, 12), math.pi * 16.0 * 12.0),
+    ('cone base radius 6, height 12', cone(6.0, 12.0, position=(50, 5, 0)), (43, -2, 0), (57, 12, 30), math.pi * 36.0 * 12.0 / 3.0),
+    ('torus 8 and 2 (the ring of radius 8, the tube of radius 2)', torus(8.0, 2.0, position=(72, 5, 5)), (62, -5, 2), (82, 15, 8), 2.0 * math.pi ** 2 * 8.0 * 4.0),
 ]
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 part = None
@@ -41,7 +41,7 @@ for name, shape, lo_, hi_, volume in shapes:
     got = box_volume * inside / 120000.0
     t.near('%s: the volume counted on points, against its formula (%.1f mm3)' % (name, volume), got, volume, 0.04 * volume + 1.0, ' mm3')
 # the cone's own points: the tip is where the documentation puts it, and the base is as wide as asked
-c = cone(6.0, 12.0, (50, 5, 0))
+c = cone(6.0, 12.0, position=(50, 5, 0))
 tip_in, tip_out = evaluate(c, [(50.0, 5.0, 11.8), (50.0, 5.0, 12.4)])
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them
 t.check('the tip of the cone is at the height asked (inside at 11.8, outside at 12.4: %.2f / %.2f)' % (tip_in, tip_out), tip_in < 0 < tip_out, '', '')

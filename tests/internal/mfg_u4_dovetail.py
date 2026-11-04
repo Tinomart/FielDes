@@ -20,10 +20,10 @@ t = Table('u4_dovetail: a dovetail groove (4 mm at the mouth, 8 mm at the bottom
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 third = 1.0 / 3.0
-h_r = half_space((1.0, 0.0, third), (15.0 + 2.0 + 20.0 * third, 0.0, 0.0))        # (inside: x - 15 + z / 3 <= 2 + 20 / 3)
-h_l = half_space((-1.0, 0.0, third), (15.0 - 2.0 - 20.0 * third, 0.0, 0.0))        # (inside: -(x - 15) + z / 3 <= 2 + 20 / 3)
-cutter = intersection(intersection(h_r, h_l), box((0, -1, 14), (30, 11, 21)))
-part = difference(box((0, 0, 0), (30, 10, 20)), cutter)
+h_r = half_space((1.0, 0.0, third), position=(15.0 + 2.0 + 20.0 * third, 0.0, 0.0))        # (inside: x - 15 + z / 3 <= 2 + 20 / 3)
+h_l = half_space((-1.0, 0.0, third), position=(15.0 - 2.0 - 20.0 * third, 0.0, 0.0))        # (inside: -(x - 15) + z / 3 <= 2 + 20 / 3)
+cutter = intersection(intersection(h_r, h_l), box((30, 12, 7), position=(15, 5, 17.5)))
+part = difference(box((30, 10, 20), position=(15, 5, 10)), cutter)
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them
 t.check('the groove is where the case builds it: air at the middle of its bottom (z = 14.5), material beside its mouth', evaluate(part, [(15.0, 5.0, 14.5)])[0] > 0 and evaluate(part, [(12.0, 5.0, 19.5)])[0] <= 0, '', '')
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)

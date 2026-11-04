@@ -24,8 +24,8 @@ view.set_bounds([-5, -55, -5], [45, 45, 45], auto_scale=True)
 view.set_resolution(3)
 view.set_quality(8)
 
-ledge = union(box((0, 0, 0), (10, 40, 40)), box((10, 0, 20), (30, 40, 25)))
-strip = box((25, -1, -1), (31, 41, 41))
+ledge = union(box((10, 40, 40), position=(5, 20, 20)), box((20, 40, 5), position=(20, 20, 22.5)))
+strip = box((6, 42, 42), position=(28, 20, 20))
 printer = manufacturing_constraint(overhang=45, support='block', support_gap=0.3, no_support=[strip])
 result = manufacturing_optimization(ledge, constraints=[printer], max_support_height=25, max_change=0.05)
 

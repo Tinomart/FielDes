@@ -50,7 +50,7 @@ MODES = ('click', 'never', 'always')
 # features and name (roi_resolution, the model tree).  (Its own resolution is
 # not copied: roi_resolution sets it later, on the part, and FielDes reads it
 # from the part a placed shape was placed from.)
-_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_radius', '_influence', '_spline_point', '_linked', '_instance_of', '_no_handles', '_symmetry_def', '_drawn_key',
+_CARRIED = ('_unsigned', '_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_radius', '_influence', '_spline_point', '_point_kind', '_linked', '_instance_of', '_no_handles', '_symmetry_def', '_drawn_key',
             '_on',              # (`_on`: the body a point or an edge was made on -- corner_at(body, ...) -- which a snap sorts the features by: the copy a gizmo makes of the point is on it as well)
             '_pull_axis')       # (`_pull_axis`: the direction of the axis the sides of a shape are pulled away from, as the shape is made: `_place` turns it with the shape)
 
@@ -209,7 +209,7 @@ def _placed_frame(frame, about, move, rotate, scale):
     return tuple(tuple(Shape.wrap(c) for c in axis) for axis in (origin, turned(u), turned(v)))
 
 
-def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
+def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None, gizmo=None):
     ''' Scales, rotates and moves a shape, with the gizmo FielDes shows on it: what the placement arguments of a call do (see fieldes.stdlib.placement).
 
         scale: (x, y, z) factors about the shape's centre, `rotate`: (x, y, z)
@@ -217,6 +217,8 @@ def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None,
         `move`: (x, y, z) translation.  The numbers are written as var(...) to drag
         them: FielDes's model tree does that for you.
         about: the centre (default: the middle of the shape's box)
+        gizmo: (about, move) the gizmo is drawn and dragged by, where those are not the ones the shape is placed by.  A GLOBAL position (see placement._apply) places the shape by
+        "the position less its pivot", an expression; the gizmo is dragged by the numbers of the position itself (var()s), and stands where they say
         mode: when FielDes shows the gizmo: 'click' (the default) while the shape is selected, 'never', or
         'always'.  The shape's own surfaces (see handles()) can be dragged whatever the mode, and the gizmo has
         priority where it is shown.
@@ -229,6 +231,12 @@ def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None,
         raise ValueError("the gizmo's mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
     if len(move) != 3 or len(rotate) != 3 or len(scale) != 3:
         raise ValueError('position=, rotation= and scale= take three numbers each')
+    if getattr(shape, '_sweep_linked_points', False):
+        # A sweep (path_extrude) whose profile and path are made of points that have gizmos has no placement of its own: it is where those points are -- moved, turned and scaled by their shared gizmo, see
+        # View::groupGizmo -- so the part and its spline are ONE thing and cannot be in two places (the user, 2026-10-29: "THE PATH EXTRUDE AND THE PATH MOVE TOGETHER", "they are always in the same position
+        # anyway").  What an older script says in position=, rotation= and scale= (the horn's scale=0.909) put the part somewhere else than its spline: it is not applied
+        shape._no_gizmo = True
+        return shape
     if getattr(shape, '_outline_gizmo', False) and about is None and all(_is_number(v) for v in tuple(move) + tuple(rotate) + tuple(scale)) \
             and all(v == 0 for v in tuple(move) + tuple(rotate)) and all(v == 1 for v in scale):
         return _outlined(shape, mode)
@@ -310,10 +318,18 @@ def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None,
     # (a prism stays one while the gizmo places it nowhere: its numbers are what they are made with)
     if getattr(shape, '_prism_pos', None) is not None:
         guard, still = [], True
-        for values, rest in ((move, 0.0), (rotate, 0.0), (scale, 1.0)):
-            for v in values:
+        # (with the one global position the move is "the position less the pivot", an expression of the position's var: it is at rest when that var is the number of the pivot, not when the var is 0 --
+        # the guard said the var must be 0, so no extrusion that had a position was ever a prism: its end faces and walls could not be pulled, the user, E1.  The guard names the var and the number it must be)
+        try:
+            where, centre = gizmo[1], tuple(float(x) for x in c)
+        except Exception:
+            where = centre = None
+        for k, (values, rest) in enumerate(((move, 0.0), (rotate, 0.0), (scale, 1.0))):
+            for a, v in enumerate(values):
                 if _is_number(v):
                     still = still and abs(float(v) - rest) < 1e-12
+                elif k == 0 and where is not None and centre is not None and isinstance(where[a], Shape):
+                    guard.append((where[a], centre[a]))
                 else:
                     guard.append((v, rest))
         _carry_prism(out, shape, guard, still)
@@ -339,10 +355,18 @@ def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None,
             out._bounds = placed
             if loose:
                 out._bounds_loose = True
+            # (the longest side of the box the shape had before it was placed, in world units: a part that is turned is normed by it, not by the box it fills turned -- H146)
+            try:
+                sc = _var_numbers(list(scale))          # (the numbers, or the numbers the var()s have in the script being run)
+                if sc is not None:
+                    out._own_len = float(max(abs(float(b[1][i]) - float(b[0][i])) * abs(sc[i]) for i in range(3)))
+            except Exception:
+                pass
     # (the exact distance of an imported part follows the transforms above: see transforms._exact_follows)
     # what FielDes draws the gizmo from
-    out._gizmo = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
-    _note_gizmo_vars(shape, move, rotate, scale)
+    g_about, g_move = (c, move) if gizmo is None else gizmo
+    out._gizmo = (mode, tuple(float(v) for v in g_about), tuple(g_move), tuple(rotate), tuple(scale))
+    _note_gizmo_vars(shape, g_move, rotate, scale)
     # (the axis the sides of the shape are pulled away from is turned and scaled with it)
     if getattr(shape, '_pull_axis', None) is not None:
         out._pull_axis = _turned_axis(shape._pull_axis, rotate, scale)
@@ -473,25 +497,48 @@ def lock(shape):
     return out
 
 
+_VAR_INDEX = {'entries': None, 'first': None, 'n': 0, 'at': {}}
+
+
+def _var_entries():
+    ''' The script's var() numbers: the list `__vars` of the script being run, and an index from the identity of each var() shape to its place in it.  The index is extended as the script makes more
+        numbers (the list only grows while a run goes on) and made again for another run: it used to be built again for every shape -- all the numbers of the script walked for each of the 747 points of an
+        imported mesh, 0.8 s of a run of 3 s (H90) '''
+    try:
+        import _fieldes_host as host
+    except ImportError:
+        return [], {}
+    entries = getattr(host, '__vars', None) or []
+    index = _VAR_INDEX
+    try:
+        first = entries[0][0] if entries else None
+    except (TypeError, IndexError):
+        first = None
+    if index['entries'] is not entries or index['first'] is not first or index['n'] > len(entries):
+        index['entries'], index['first'], index['n'], index['at'] = entries, first, 0, {}
+    at = index['at']
+    for i in range(index['n'], len(entries)):
+        try:
+            at[id(entries[i][0])] = i
+        except (TypeError, IndexError):
+            pass
+    index['n'] = len(entries)
+    return entries, at
+
+
 def _var_numbers(values):
     ''' The numbers of these values: plain numbers, or the current numbers of var() shapes (the script being run
         keeps them), or None if one of them is neither '''
-    by_id = {}
-    try:
-        import _fieldes_host as host
-        for e in (getattr(host, '__vars', None) or []):
-            try:
-                by_id[id(e[0])] = float(e[1])
-            except (TypeError, ValueError, IndexError):
-                pass
-    except ImportError:
-        pass
+    entries, at = _var_entries()
     out = []
     for v in values:
         if _is_number(v):
             out.append(float(v))
-        elif id(v) in by_id:
-            out.append(by_id[id(v)])
+        elif id(v) in at:
+            try:
+                out.append(float(entries[at[id(v)]][1]))
+            except (TypeError, ValueError, IndexError):
+                return None
         else:
             return None
     return out
@@ -657,7 +704,7 @@ def handles(shape, values=None, **removed):
         out._distance_of = _lazy_once(lambda: _handle_distance(shape, out, values, get))
     # (what the importer, roi() and the viewport read off a part: its box, its colouring, its exact regions)
     from fieldes.stdlib import cad_import
-    for name in ('_bounds', '_render_hint', '_resolution_override', '_custom_resolution') + tuple(cad_import._CARRIED):
+    for name in ('_bounds', '_own_len', '_render_hint', '_resolution_override', '_custom_resolution') + tuple(cad_import._CARRIED):
         if hasattr(shape, name):
             try:
                 setattr(out, name, getattr(shape, name))

@@ -18,8 +18,8 @@ from mfgkit import *
 t = Table('w4_t_junction: a T: a wall of 0.5 mm on a wall of 2 mm, small enough for 14 cells to the millimetre; only the thin one may grow')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-thin = box((0, 0, 0), (0.5, 8, 6))
-thick = box((0, 0, 0), (8, 2, 6))
+thin = box((0.5, 8, 6), position=(0.25, 4, 3))
+thick = box((8, 2, 6), position=(4, 1, 3))
 part = union(thin, thick)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)

@@ -18,9 +18,9 @@ from mfgkit import *
 t = Table('h3_region_scope: two fins of 0.6 mm, the constraint holds only in a region round the first: the second stays as it is')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((0, 0, 0), (0.6, 16, 24)), box((10, 0, 0), (10.6, 16, 24)))
+part = union(box((0.6, 16, 24), position=(0.3, 8, 12)), box((0.6, 16, 24), position=(10.3, 8, 12)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
-rule = manufacturing_constraint(min_wall=0.8, region=box((-2, -2, -2), (4, 18, 26)))
+rule = manufacturing_constraint(min_wall=0.8, region=box((6, 20, 28), position=(1, 8, 12)))
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
 res = manufacturing_optimization(part, constraints=[rule], max_change=3.0)
 lo, hi = (-3, -3, -3), (14, 19, 27)

@@ -42,13 +42,13 @@ def manage(**request):
 
 SOURCE = '''from fieldes import *
 size = 10
-base = box((0, 0, 0), (size, size, 2))
-post = box((0, 0, 0), (2, 2, size))
-bracket_src = union(base, post, position=(var(0), var(0), var(0)), rotation=(var(0), var(0), var(0)), scale=(var(1), var(1), var(1)))
+base = box((size, size, 2), position=(size / 2, size / 2, 1))
+post = box((2, 2, size), position=(1, 1, size / 2))
+bracket_src = union(base, post)
 bracket_src
 '''
 PLACED = '''from fieldes import *
-cube = box((0, 0, 0), (1, 1, 1), position=(5, 0, 0))
+cube = box((1, 1, 1), position=(5, 0, 0))
 cube
 '''
 
@@ -65,7 +65,7 @@ try:
     check('and a file of its own, bracket_x.py, is in the folder of primitives', os.path.isfile(os.path.join(DATA, 'primitives', 'bracket_x.py')))
     text = text_of('bracket_x')
     check('it holds the function, with the statements the model is made of', 'def bracket_x():' in text and 'size = 10' in text and 'base = box(' in text and 'post = box(' in text, text.replace('\n', ' | '))
-    check('its numbers are plain numbers (no var), and the placement arguments at their defaults are gone', 'var(' not in text and 'position=' not in text and 'scale=' not in text and text.rstrip().endswith('return union(base, post)'),
+    check('its numbers are plain numbers (no var), and the placement arguments at their defaults are gone', 'var(' not in text and 'position=(0, 0, 0)' not in text and 'rotation=' not in text and 'scale=' not in text and text.rstrip().endswith('return union(base, post)'),
           text.replace('\n', ' | '))
     check('what a script was not given: the kind of its model is the first line', text.startswith('#@ primitive: solid\n'))
 
@@ -73,7 +73,7 @@ try:
     blocks.refresh()
     check('the script namespace has bracket_x', 'bracket_x' in blocks.namespace(), str(blocks.errors()))
     part = blocks.namespace()['bracket_x']()
-    check('and it makes the model: the base, the post, and nothing else', inside(part, (5, 5, 1)) and inside(part, (1, 1, 8)) and not inside(part, (5, 5, 5)) and not inside(part, (5, 5, 3)))
+    check('and it makes the model: the base, the post, and nothing else', inside(part, (5, 5, 1)) and inside(part, (1, 1, 8)) and not inside(part, (5, 5, 5)) and not inside(part, (5, 5, 3)), text.replace(chr(10), ' | '))
     mine = [b for b in blocks.info() if b['name'] == 'bracket_x']
     check('it is a block of the user (not of the blocks folder)', len(mine) == 1 and mine[0]['user'] is True)
     check('and the menu of custom blocks does not list it twice', not any(b['name'] == 'bracket_x' for b in menu_catalog._blocks()))
@@ -90,7 +90,7 @@ try:
     check('position=(5, 0, 0) is kept: it is where the model was put', done.get('ok') is True and 'position=(5, 0, 0)' in text, str(done.get('error')) + ' ' + text.replace('\n', ' | '))
     blocks.refresh()
     cube = blocks.namespace()['cube_at_5']()
-    check('and the model is there', inside(cube, (5.5, 0.5, 0.5)) and not inside(cube, (0.5, 0.5, 0.5)))
+    check('and the model is there', inside(cube, (5, 0, 0)) and not inside(cube, (0, 0, 0)))
 
     print('--- names that are taken')
     taken = manage(op='add', source=SOURCE, line=5, end_line=5, name='box', type='solid')

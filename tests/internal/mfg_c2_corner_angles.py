@@ -24,12 +24,12 @@ angles = [60.0, 90.0, 120.0]
 part = None
 for k, theta in enumerate(angles):
     th = math.radians(theta)
-    h_a = half_space((0.0, -1.0, 0.0), (0.0, 0.0, 0.0))                              # (inside = y >= 0)
-    h_b = half_space((-math.sin(th), math.cos(th), 0.0), (0.0, 0.0, 0.0))            # (inside = the side of the ray at the angle theta that holds the angles under it)
-    air = intersection(intersection(h_a, h_b), box((-30, -30, -1), (30, 30, 11)))
+    h_a = half_space((0.0, -1.0, 0.0))                              # (inside = y >= 0)
+    h_b = half_space((-math.sin(th), math.cos(th), 0.0))            # (inside = the side of the ray at the angle theta that holds the angles under it)
+    air = intersection(intersection(h_a, h_b), box((60, 60, 12), position=(0, 0, 5)))
     t.check('%d degrees: the two planes face the way the case assumes (a point of the wedge is inside both)' % theta,
             evaluate(h_a, [(3 * math.cos(th / 2), 3 * math.sin(th / 2), 5)])[0] < 0 and evaluate(h_b, [(3 * math.cos(th / 2), 3 * math.sin(th / 2), 5)])[0] < 0, '', '')
-    block = move(difference(box((-15, -15, 0), (15, 15, 10)), air), (40.0 * k, 0, 0))
+    block = move(difference(box((30, 30, 10), position=(0, 0, 5)), air), (40.0 * k, 0, 0))
     part = block if part is None else union(part, block)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_radius=r)

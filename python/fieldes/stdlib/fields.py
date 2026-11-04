@@ -70,7 +70,7 @@ __all__ = [
     'repeat', 'repeat_polar', 'mirror_x', 'mirror_y', 'mirror_z',
     'twist_z', 'bend_z',
     'evaluate', 'sample_grid', 'field_range', 'volume_of', 'mass_properties',
-    'exact_distance', 'offset_exact', 'shell_exact', 'round_edges', 'fillet', 'smooth',
+    'exact_distance', 'offset_exact', 'shell_exact', 'round_edges', 'fillet', 'chamfer', 'smooth',
     'gradient_field', 'gradient_magnitude', 'normal_field', 'overhang_angle',
     'overhang_mask', 'wall_thickness', 'curvature_field',
     'field_from_points', 'field_from_csv', 'noise_field', 'texture',
@@ -133,7 +133,7 @@ def render_mesh(shape, region, res):
 
 def _coords(p, n=3):
     ''' A point whose coordinates are numbers or fields (a field is kept: the point is then wherever the field says);
-        a Point (point(x, y, z)) is its coordinates '''
+        a Point (point(position=(x, y, z))) is its coordinates '''
     if hasattr(p, 'xyz'):
         p = p.xyz
     p = tuple(c if isinstance(c, Shape) else float(c) for c in p)
@@ -189,7 +189,7 @@ def z_field():
 
 
 def _point_radius(center, radius):
-    ''' The radius a field round a point is measured from: `radius` when it is given, else the influence the point itself says (`point(x, y, z, influence=r)`), else none --
+    ''' The radius a field round a point is measured from: `radius` when it is given, else the influence the point itself says (`point(position=(x, y, z), influence=r)`), else none --
         the plain distance from the point '''
     return getattr(center, '_influence', None) if radius is None else radius
 
@@ -204,11 +204,11 @@ def _radial_distance(center, axis):
 
 def radial_field(center, axis='z'):
     ''' Distance from the axis through the point `center` (cylindrical radius, mm): a field made of a POINT, as `distance_to_point` is -- right-click a point, and radial_field is in its menu.  `center` is
-        a `point(x, y, z)` (its coordinates may be fields), the Point class: a vector -- (x, y, z) -- is not a point, and is refused.  The field has no radius of its own:
-        the INFLUENCE of the point, `point(x, y, z, influence=r)`, is the radius, as it is for `distance_to_point` -- the field is then the distance from the TUBE of
+        a `point(position=(x, y, z))` (its coordinates may be fields), the Point class: a vector -- (x, y, z) -- is not a point, and is refused.  The field has no radius of its own:
+        the INFLUENCE of the point, `point(position=(x, y, z), influence=r)`, is the radius, as it is for `distance_to_point` -- the field is then the distance from the TUBE of
         that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside.  A point that says no influence gives the plain distance from the axis '''
     if not hasattr(center, 'xyz'):
-        raise TypeError("radial_field takes a point -- `point(x, y, z)`, a model of its own, whose influence is the radius -- and not the vector %r: make the point (Primitives > Points, "
+        raise TypeError("radial_field takes a point -- `point(position=(x, y, z))`, a model of its own, whose influence is the radius -- and not the vector %r: make the point (Primitives > Points, "
                         "or right-click the place) and give it, `radial_field(point_1, 'z')`" % (center,))
     out = _radial_distance(center, axis)
     radius = getattr(center, '_influence', None)
@@ -237,7 +237,7 @@ def polar_field(center=(0, 0, 0), axis='z'):
 
 def distance_to_point(p, radius=None):
     ''' Euclidean distance to a point (its coordinates may be fields: a point that is where a field says).  With a `radius` -- or the influence of the point that is given,
-        `point(x, y, z, influence=r)`, which is the radius in mm -- it is the distance from the SPHERE of that radius round the point: negative inside it (-r at the point),
+        `point(position=(x, y, z), influence=r)`, which is the radius in mm -- it is the distance from the SPHERE of that radius round the point: negative inside it (-r at the point),
         0 on it, positive outside: a sphere's value, as a field.  A point that says no influence, and no radius, is the plain distance from it '''
     radius = _point_radius(p, radius)
     p = _coords(p)
@@ -400,10 +400,20 @@ def attractor(points, radius, falloff='smooth', strength=1.0):
     return strength * f
 
 
-def wave(axis='x', period=10.0, amplitude=1.0, phase=0.0):
-    ''' A sine wave along an axis (or a field): amplitude * sin(2 pi s / period + phase) '''
+def _sine(axis='x', period=10.0, amplitude=1.0, phase=0.0):
+    ''' A sine along an axis (or a field): amplitude * sin(2 pi s / period + phase) '''
     s = {'x': X(), 'y': Y(), 'z': Z()}[axis] if isinstance(axis, str) else _s(axis)
     return amplitude * (s * (2 * math.pi / period) + phase).sin()
+
+
+def wave(axis='x', period=10.0, amplitude=1.0, phase=0.0):
+    ''' A 3D wave: the height above a wavy sheet, z - amplitude * sin(2 pi s / period + phase), s the coordinate along
+    the axis.  It is zero on the sheet and grows with z, so the section viewer shows the sheet cut by its disc and the
+    colours change as the disc is dragged up and down.  (Given a field instead of an axis name, it is the plain sine
+    of that field, amplitude * sin(2 pi field / period + phase).) '''
+    if not isinstance(axis, str):
+        return _sine(axis, period, amplitude, phase)
+    return Z() - _sine(axis, period, amplitude, phase)
 
 
 def sum_fields(*fields):
@@ -1030,7 +1040,7 @@ def round_edges(shape, radius, bounds=None):
     return out
 
 
-def fillet(shape, radius, bounds=None):
+def _fill_all(shape, radius, bounds=None):
     ''' Fills every concave (inside) edge and corner of a shape with a
         fillet of the given radius (a number or a field), and fills what is narrower than the ball: a ball of that radius rolls in the air, and the
         shape is everything it cannot reach.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
@@ -1045,6 +1055,353 @@ def fillet(shape, radius, bounds=None):
         raise ValueError('fillet: the radius must be above 0 (mm)')
     out = _distance_field.closing(f, r, size, rmax)
     out._bounds = (tuple(lo), tuple(hi))
+    return out
+
+
+def _edge_vertices(edge, what, most):
+    ''' The numbers of an edge that was selected -- `edge_at(body, (x, y, z))`: a line for a straight edge, a closed curve for a circular one --: its vertices (thinned to `most` at the most) and whether it is closed '''
+    from fieldes.stdlib.curves import Curve
+    if not isinstance(edge, Curve):
+        raise TypeError('%s(body, edge, ...): the edge is a curve -- the one `edge_at(body, (x, y, z))` makes of an edge of the body (select the edge, and the body, and use the menu) -- not %r' % (what, edge))
+    vertices = [tuple(float(c) for c in v) for v in edge.vertices]
+    closed = bool(edge.closed)
+    if len(vertices) < 2:
+        raise ValueError('%s: the edge has no length' % what)
+    if closed and vertices[0] == vertices[-1]:
+        vertices = vertices[:-1]
+    if len(vertices) > most:
+        every = -(-len(vertices) // most)
+        vertices = vertices[::every]
+    return vertices, closed
+
+
+def _edge_call(what, given):
+    ''' The arguments of `fillet(edge, radius)` and `chamfer(edge, size)` -- and of the older `fillet(body, edge, radius)` -- in whatever order they stand: (body, the edges, the radius or size).  Any number of
+        edges may be given (`fillet(edge_1, edge_2, edge_3, 2)`: the user, 2026-10-29, "if they can only take one, I want them to be able to use multiple").  The body is left out when the edges are all there is:
+        an edge you selected knows the body it was made on (`edge_at(body, ...)`: `_on`), so the edges alone are enough for the menu (the user, 2026-10-28: "you just take the edge and that's that") '''
+    from fieldes.stdlib.curves import Curve
+    from fieldes.kinds import kind_of, BODIES
+    amount_name = 'radius' if what == 'fillet' else 'size'
+    edges = [x for x in given if isinstance(x, Curve)]
+    if not edges:
+        raise TypeError('%s(edge, %s): the edge is a curve -- the one `edge_at(body, (x, y, z))` makes of an edge of the body (select the edge and use the menu) -- not %r' % (what, amount_name, given[0]))
+    body, amounts = None, []
+    for x in given:
+        if isinstance(x, Curve):
+            continue
+        if isinstance(x, Shape) and kind_of(x) in BODIES and body is None:
+            body = x
+        else:
+            amounts.append(x)
+    if len(amounts) > 1:
+        raise TypeError('%s(edge, %s): more than one %s was given' % (what, amount_name, amount_name))
+    if not amounts:
+        raise ValueError('%s: a %s is needed: %s(edge, %s)' % (what, amount_name, what, amount_name))
+    if body is None:
+        body = next((getattr(e, '_on', None) for e in edges if getattr(e, '_on', None) is not None), None)
+    if body is None:
+        raise ValueError('%s: the edge does not say which body it is on: %s(body, edge, %s)' % (what, what, amount_name))
+    return body, edges, amounts[0]
+
+
+def _along_edge(vertices, closed, reach):
+    ''' (the pieces of the line through `vertices`, as (a, b, direction, length, the room the piece has before it, and after it)) -- a piece goes a little way into the next one, so that nothing between two pieces is
+        left out, and an end of an open line does not go past its end '''
+    n = len(vertices)
+    out = []
+    pieces = n if closed else n - 1
+    for i in range(pieces):
+        a, b = vertices[i], vertices[(i + 1) % n]
+        d = tuple(b[k] - a[k] for k in range(3))
+        length = math.sqrt(sum(c * c for c in d))
+        if length < 1e-12:
+            continue
+        before = 0.25 * reach if (closed or i > 0) else 0.0
+        after = 0.25 * reach if (closed or i < pieces - 1) else 0.0
+        out.append((a, b, tuple(c / length for c in d), length, before, after))
+    return out
+
+
+def _edge_zone(pieces, rhos, trim=0.0):
+    ''' A solid, negative inside: the tube round the edge -- of radius `rhos[i]` round piece i, the room that edge's own rounding needs and no more --, cut off square at the ends of an open edge, a little
+        inside them (`trim`): the next edge that leaves the corner at its end lies IN the end plane, and is not this edge's to round.  Where a rounding or a chamfer of that edge is, and nowhere else.
+        A piece with no radius (None) is left out '''
+    zone = None
+    for (a, b, t, length, before, after), rho in zip(pieces, rhos):
+        if rho is None:
+            continue
+        dx, dy, dz = X() - a[0], Y() - a[1], Z() - a[2]
+        s = dx * t[0] + dy * t[1] + dz * t[2]
+        dist = (dx * dx + dy * dy + dz * dz - s * s).max(0.0).sqrt()
+        tube = (dist - rho).max(-s - before + (trim if before == 0.0 else 0.0)).max(s - length - after + (trim if after == 0.0 else 0.0))
+        zone = tube if zone is None else zone.min(tube)
+    return zone
+
+
+def _piece_frames(pieces, h, rays):
+    ''' For each piece of an edge: (its middle, two directions square to the piece and to each other), and -- for all the pieces in a list -- the places on a ring of radius `h` round each middle, `rays` of them, in
+        the plane square to the piece: the rings are read to see the two faces that meet at the edge '''
+    frames, places = [], []
+    for a, b, t, length, before, after in pieces:
+        middle = tuple(0.5 * (a[k] + b[k]) for k in range(3))
+        ref = (1.0, 0.0, 0.0) if abs(t[0]) < 0.9 else (0.0, 1.0, 0.0)
+        u = (t[1] * ref[2] - t[2] * ref[1], t[2] * ref[0] - t[0] * ref[2], t[0] * ref[1] - t[1] * ref[0])
+        un = math.sqrt(sum(x * x for x in u))
+        u = tuple(x / un for x in u)
+        w = (t[1] * u[2] - t[2] * u[1], t[2] * u[0] - t[0] * u[2], t[0] * u[1] - t[1] * u[0])
+        frames.append((middle, u, w))
+        for k in range(rays):
+            ph = 2.0 * math.pi * k / rays
+            places.append(tuple(middle[j] + h * (math.cos(ph) * u[j] + math.sin(ph) * w[j]) for j in range(3)))
+    return frames, places
+
+
+def _face_traces(f, stations, h, rays=24, steps=16):
+    ''' For each station -- (a place on a straight edge, two directions square to the edge and to each other) -- the two angles, in the plane square to the edge, at which the faces that meet there cross a ring
+        of radius `h` round the place: where the body begins as the angle grows, and where it ends.  The ring is read at `rays` places and each crossing is found to a few millionths of a turn by halving,
+        for all the stations at once.  None where a ring does not cross the surface of the body exactly twice '''
+    def at(station, phi):
+        m, u, w = station
+        return tuple(m[j] + h * (math.cos(phi) * u[j] + math.sin(phi) * w[j]) for j in range(3))
+    step = 2.0 * math.pi / rays
+    values = evaluate(f, [at(s, step * k) for s in stations for k in range(rays)])
+    lows, highs, low_inside = [], [], []
+    for n in range(len(stations)):
+        v = values[n * rays:(n + 1) * rays]
+        enter = [k for k in range(rays) if v[k] >= 0 > v[(k + 1) % rays]]
+        leave = [k for k in range(rays) if v[k] < 0 <= v[(k + 1) % rays]]
+        if len(enter) != 1 or len(leave) != 1:
+            return None
+        for k, inside in ((enter[0], False), (leave[0], True)):
+            lows.append(step * k)
+            highs.append(step * (k + 1))
+            low_inside.append(inside)
+    places = [(s, c) for s in range(len(stations)) for c in range(2)]
+    for _ in range(steps):
+        mids = [0.5 * (lows[i] + highs[i]) for i in range(len(lows))]
+        got = evaluate(f, [at(stations[places[i][0]], mids[i]) for i in range(len(mids))])
+        for i in range(len(mids)):
+            if (got[i] < 0) == low_inside[i]:
+                lows[i] = mids[i]
+            else:
+                highs[i] = mids[i]
+    return [(0.5 * (lows[2 * n] + highs[2 * n]), 0.5 * (lows[2 * n + 1] + highs[2 * n + 1])) for n in range(len(stations))]
+
+
+def _straight_cutter(f, piece, frame, r, rmax, rays=24):
+    ''' What a fillet takes off a STRAIGHT convex edge between two flat faces, made exactly: a field that is above 0 where material goes -- the room between the two faces' tangent lines and the ball of radius r
+        that rolls along the edge, along the whole edge and a hair past its two ends, where there is air.  The body is cut with it (`body.max(cutter)`), so the rounding ends flush in the end faces and touches
+        nothing else: the edges that leave the corner at its ends are not its to round (the user's picture, 2026-11-02, a fillet along the top edge of a box with a dome and a stub at each end: task C18, "a fillet does
+        not spill over neighbouring edges").  The faces are read at three places along the edge, as the angles at which they cross a ring round it; the cutter is made only when they are the same at all three --
+        two flat faces --, else None (a curved face has the rolling ball of the body's field instead).  The radius r is what it was given: a number, a var() or a field, and the cutter follows it '''
+    a, b, t, length, before, after = piece
+    middle, u, w = frame
+    stations = [(tuple(a[k] + t[k] * length * frac for k in range(3)), u, w) for frac in (0.2, 0.5, 0.8)]
+    traces = _face_traces(f, stations, 0.2 * rmax, rays)
+    if traces is None:
+        return None
+    turn = 2.0 * math.pi
+    first, last = traces[1]
+    wedge = (last - first) % turn
+    for p, q in traces:
+        if abs((p - first + math.pi) % turn - math.pi) > 0.004 or abs((q - last + math.pi) % turn - math.pi) > 0.004:
+            return None
+    if not 0.2 < wedge < math.pi - 0.02:
+        return None
+    half = 0.5 * wedge
+    d1, d2 = (math.cos(first), math.sin(first)), (math.cos(last), math.sin(last))
+    bis = (math.cos(first + half), math.sin(first + half))
+
+    def toward(d):
+        # (from the middle of the ball to where it touches the face on that side: the face's normal, out of the body)
+        x, y = d[0] / math.tan(half) - bis[0] / math.sin(half), d[1] / math.tan(half) - bis[1] / math.sin(half)
+        n = math.hypot(x, y)
+        return x / n, y / n
+    n1, n2 = toward(d1), toward(d2)
+    c = n1[0] * n2[0] + n1[1] * n2[1]
+    dx, dy, dz = X() - middle[0], Y() - middle[1], Z() - middle[2]
+    pu = dx * u[0] + dy * u[1] + dz * u[2]
+    pw = dx * w[0] + dy * w[1] + dz * w[2]
+    along = dx * t[0] + dy * t[1] + dz * t[2]
+    k = r / math.sin(half)                       # (how far the middle of the ball is from the edge)
+    qu, qw = pu - k * bis[0], pw - k * bis[1]
+    s1 = qu * n1[0] + qw * n1[1]
+    s2 = qu * n2[0] + qw * n2[1]
+    left = (s1 - s2 * c) * (1.0 / (1.0 - c * c))
+    right = (s2 - s1 * c) * (1.0 / (1.0 - c * c))
+    outside_ball = (qu * qu + qw * qw).sqrt() - r
+    over = 0.02 * rmax
+    along_edge = (0.5 * length + over) - along.abs()
+    return left.min(right).min(outside_ball).min(along_edge)
+
+
+def fillet(edge, *more, radius=None, bounds=None):
+    ''' Rounds edges of a body: `fillet(edge, radius)` -- the edge you selected (`edge_at(body, (x, y, z))`: a line for a straight edge, a closed curve for a circular one, a cylinder's rim; it knows its body), with a
+        fillet of the given radius (a number, a `var()` its handle drags, or a field), exactly that edge and no other: `fillet(edge_1, edge_2, edge_3, radius)` rounds all of them.  A convex edge is rounded off and a
+        concave one is filled, as the ball of that radius rolls along it (see round_edges and distance_field.py: exact for two flat faces at any angle): made from the body's own field and limited to the room that
+        edge's own rounding needs -- a tube round it as wide as the ball touches the two faces from it, which is the radius for a right angle, more for a sharper edge, less for a blunter one --, so it follows the
+        body when a handle of the body is dragged and leaves the other edges near it as they are (the tube was four radii wide, and rounded every edge in it).
+        The body may be named as well, in any place: `fillet(body, edge, radius)`.
+        `fillet(body, radius)` -- with no edge -- fills every concave edge of the body '''
+    from fieldes.stdlib.curves import Curve
+    # (the edges stand in a row, any number of them, and the radius is a keyword: it does not stand in a place that an edge could take.  A number written among the edges is told by what it is -- see _edge_call)
+    given = (edge,) + more + (() if radius is None else (radius,))
+    if not any(isinstance(x, Curve) for x in given):
+        if len(given) != 2:
+            raise ValueError('fillet: %s: fillet(body, radius)' % ('a radius is needed' if len(given) < 2 else 'a body takes one radius'))
+        return _fill_all(edge, given[1], bounds)
+    shape, edges, radius = _edge_call('fillet', given)
+    r = number_or_field(radius, 'the radius')
+    f = _s(shape)
+    lo, hi = _shape_bounds(f, bounds)
+    size = max(hi[i] - lo[i] for i in range(3)) or 1.0
+    rmax = _reach(r, lo, hi)[1]
+    if not rmax > 0:
+        raise ValueError('fillet: the radius must be above 0 (mm)')
+    rays = 24
+    zone_round, zone_fill = None, None
+    cutters = []
+    for e in edges:
+        vertices, closed = _edge_vertices(e, 'fillet', 96)
+        pieces = _along_edge(vertices, closed, 4.0 * rmax)
+        if not pieces:
+            raise ValueError('fillet: the edge has no length')
+        # (a ring round the middle of each piece, a fifth of the radius from it: ON an edge or a corner the field has no direction.  The body takes up part of the ring: a convex edge, less than half of it, which a
+        # ball rolls over; a concave edge, more than half, which the ball cannot reach into.  Where it is neither -- a flat place, a corner, no edge -- the piece is left alone)
+        frames, places = _piece_frames(pieces, 0.2 * rmax, rays)
+        values = evaluate(f, places)
+        rho_round, rho_fill = [], []
+        for index in range(len(pieces)):
+            v = values[index * rays:(index + 1) * rays]
+            inside = sum(1 for x in v if x < 0)
+            changes = sum(1 for k in range(rays) if (v[k] < 0) != (v[(k + 1) % rays] < 0))
+            if inside == 0 or inside == rays or changes != 2:
+                rho_round.append(None)
+                rho_fill.append(None)
+                continue
+            wedge = inside * 2.0 * math.pi / rays
+            convex = wedge < math.pi
+            if convex and not closed and len(pieces) == 1:
+                # (a straight edge between two flat faces: cut off exactly, to its ends and no farther -- see _straight_cutter)
+                cutter = _straight_cutter(f, pieces[0], frames[0], r, rmax, rays)
+                if cutter is not None:
+                    cutters.append(cutter)
+                    rho_round.append(None)
+                    rho_fill.append(None)
+                    continue
+            sharper = wedge if convex else 2.0 * math.pi - wedge          # (the angle of the wedge the ball is in: the body's for a convex edge, the air's for a concave one)
+            sharper = max(sharper - 2.0 * math.pi / rays, 0.2)             # (the rays are a spacing apart: the wedge is that much less than they say, at the most)
+            # The ball touches each face a distance `radius / tan(wedge / 2)` from the edge -- the radius itself for a right angle --: nothing the rounding changes is farther from the edge
+            rho = min(1.1 * rmax / math.tan(0.5 * sharper) + 0.1 * rmax, 8.0 * rmax)
+            (rho_round if convex else rho_fill).append(rho)
+            (rho_fill if convex else rho_round).append(None)
+        trim = 0.02 * rmax
+        z = _edge_zone(pieces, rho_round, trim)
+        if z is not None:
+            zone_round = z if zone_round is None else zone_round.min(z)
+        z = _edge_zone(pieces, rho_fill, trim)
+        if z is not None:
+            zone_fill = z if zone_fill is None else zone_fill.min(z)
+    if zone_round is None and zone_fill is None and not cutters:
+        print('fillet: the edge is not an edge that a ball of radius %.4g rounds (a flat place, or no sharp edge there): the body is left as it is' % rmax)
+        return f * 1.0
+    out = f
+    for cutter in cutters:
+        out = out.max(cutter)
+    if zone_round is not None:
+        # (on the edge itself the body is rounded off where it is convex: the ball rolls in the material -- the opened body --)
+        opened = _distance_field.opening(f, r, size, rmax)
+        out = out.max(-zone_round).min(opened.max(zone_round))
+    if zone_fill is not None:
+        # (and filled where it is concave: the ball rolls in the air -- the closed body --)
+        filled = _distance_field.closing(f, r, size, rmax)
+        out = out.max(-zone_fill).min(filled.max(zone_fill))
+    out._bounds = (tuple(lo), tuple(hi))
+    return out
+
+
+def chamfer(edge, *more, size=None, bounds=None):
+    ''' Chamfers edges of a body: `chamfer(edge, size)` -- the edge you selected (`edge_at(body, (x, y, z))`: a line, or a closed curve for a circular edge; it knows its body), with a flat cut that goes `size`
+        along each of the two faces from the edge (a convex edge is cut off, a concave one is filled), exactly that edge and no other: `chamfer(edge_1, edge_2, edge_3, size)` cuts all of them.  The body may be named
+        as well, in any place: `chamfer(body, edge, size)`.
+        Each piece of the edge has the cut through the two faces as they are there, so the cut of a circular edge is a cone.  The cut is made from the numbers of the edge as it was when the script last ran: a handle
+        of the body that is dragged moves the cut with it when the script runs again, at the end of the drag '''
+    from fieldes.stdlib.curves import value_of
+    shape, edges, size = _edge_call('chamfer', (edge,) + more + (() if size is None else (size,)))
+    c = float(value_of(size) if isinstance(size, Shape) else size)
+    if not c > 0:
+        raise ValueError('chamfer: the size must be above 0 (mm)')
+    f = _s(shape)
+    pieces = []
+    for e in edges:
+        vertices, closed = _edge_vertices(e, 'chamfer', 48)
+        found = _along_edge(vertices, closed, 2.0 * c)
+        if not found:
+            raise ValueError('chamfer: the edge has no length')
+        pieces += found
+    rays = 24
+    h = 0.25 * c
+    places = []
+    frames = []
+    for a, b, t, length, before, after in pieces:
+        middle = tuple(0.5 * (a[k] + b[k]) for k in range(3))
+        ref = (1.0, 0.0, 0.0) if abs(t[0]) < 0.9 else (0.0, 1.0, 0.0)
+        u = (t[1] * ref[2] - t[2] * ref[1], t[2] * ref[0] - t[0] * ref[2], t[0] * ref[1] - t[1] * ref[0])
+        un = math.sqrt(sum(x * x for x in u))
+        u = tuple(x / un for x in u)
+        w = (t[1] * u[2] - t[2] * u[1], t[2] * u[0] - t[0] * u[2], t[0] * u[1] - t[1] * u[0])
+        frames.append((middle, u, w))
+        for k in range(rays):
+            ph = 2.0 * math.pi * k / rays
+            places.append(tuple(middle[j] + h * (math.cos(ph) * u[j] + math.sin(ph) * w[j]) for j in range(3)))
+    values = evaluate(f, places)
+    cuts, fills = None, None
+    for index, (a, b, t, length, before, after) in enumerate(pieces):
+        middle, u, w = frames[index]
+        v = values[index * rays:(index + 1) * rays]
+        inside = sum(1 for x in v if x < 0)
+        if inside == 0 or inside == rays:
+            continue
+        # (the two faces seen along the edge: where the field changes its sign on the ring round it, a ray from the edge each; the way through the inside says whether the edge is convex)
+        angles = []
+        for k in range(rays):
+            k2 = (k + 1) % rays
+            if (v[k] < 0) != (v[k2] < 0):
+                angles.append(2.0 * math.pi * (k + v[k] / (v[k] - v[k2])) / rays)
+        if len(angles) != 2:
+            continue
+        d1 = tuple(math.cos(angles[0]) * u[j] + math.sin(angles[0]) * w[j] for j in range(3))
+        d2 = tuple(math.cos(angles[1]) * u[j] + math.sin(angles[1]) * w[j] for j in range(3))
+        p1 = tuple(middle[j] + c * d1[j] for j in range(3))
+        p2 = tuple(middle[j] + c * d2[j] for j in range(3))
+        chord = tuple(p2[j] - p1[j] for j in range(3))
+        m = (t[1] * chord[2] - t[2] * chord[1], t[2] * chord[0] - t[0] * chord[2], t[0] * chord[1] - t[1] * chord[0])
+        mn = math.sqrt(sum(x * x for x in m))
+        if mn < 1e-12:
+            continue
+        m = tuple(x / mn for x in m)
+        if sum(m[j] * (middle[j] - p1[j]) for j in range(3)) < 0:
+            m = tuple(-x for x in m)                    # (the normal points to the side the edge is on)
+        g = (X() - p1[0]) * m[0] + (Y() - p1[1]) * m[1] + (Z() - p1[2]) * m[2]
+        dx, dy, dz = X() - a[0], Y() - a[1], Z() - a[2]
+        s = dx * t[0] + dy * t[1] + dz * t[2]
+        dist = (dx * dx + dy * dy + dz * dz - s * s).max(0.0).sqrt()
+        piece = (-g).max((dist - 2.0 * c)).max(-s - before).max(s - length - after)
+        if inside * 2.0 * math.pi / rays < math.pi:
+            cuts = piece if cuts is None else cuts.min(piece)                 # (a convex edge: the corner of the body is cut off)
+        else:
+            fills = piece if fills is None else fills.min(piece)              # (a concave one: the corner of the air is filled)
+    if cuts is None and fills is None:
+        print('chamfer: no edge of the body at the line it was given: the body is left as it is')
+        return f * 1.0
+    out = f
+    if cuts is not None:
+        out = out.max(-cuts)
+    if fills is not None:
+        out = out.min(fills)
+    box = getattr(f, '_bounds', None)
+    if box:
+        out._bounds = box
     return out
 
 
@@ -1413,9 +1770,31 @@ for _name in ('thicken', 'shell_centered'):
 
 # What these take, for the menus and the model tree (see fieldes.kinds.takes): the inside of a body and its edges, and a field selected with it is the number.  (Set here, after the
 # wrappers above: they are the functions the script calls.)
-from fieldes.kinds import takes as _declare, BODIES as _BODIES
-for _name in ('smooth', 'round_edges', 'fillet', 'shell_inside', 'shell_outside', 'shell_exact'):
+from fieldes.kinds import takes as _declare, slot as _slot, BODIES as _BODIES, SHAPES as _SHAPES
+for _name in ('smooth', 'round_edges', 'shell_inside', 'shell_outside', 'shell_exact'):
     globals()[_name]._takes = _declare(_BODIES | {'field'}, [_BODIES])
+# (one edge of a body: the body and the edge -- a curve made by edge_at -- selected together; a field selected with them is the radius of a fillet)
+# (an edge alone is enough -- it knows its body --, and a field selected with it is the radius; a body alone is the fillet of every concave edge)
+globals()['fillet']._takes = _declare(_BODIES | {'curve', 'field'}, [{'curve'}]) + _declare(_BODIES | {'field'}, [_BODIES])
+globals()['chamfer']._takes = _declare(_BODIES | {'curve'}, [{'curve'}])
+globals()['fillet']._short_call = True
+globals()['chamfer']._short_call = True
+# (what the call cannot do without though it has a default: the completion writes it as a placeholder -- `radius=...` -- after however many edges stand before it; the edges are told by what they are, not by their place)
+globals()['fillet']._required = ('radius',)
+globals()['chamfer']._required = ('size',)
+# (and no argument that stands in a place takes it: the edges before it, any number of them, are not the radius -- `_positional` lists what the arguments that are given by their place stand for)
+globals()['fillet']._positional = ()
+globals()['chamfer']._positional = ()
+# (what goes into each input, for the menus that write the call from the models selected -- see fieldes.kinds.slot: the edges that were selected, any number of them, in a row, else the body; a field is the radius)
+globals()['fillet']._slots = [_slot('edge', 'curve', _BODIES, many='curve', needed=True), _slot('radius', 'field')]
+globals()['chamfer']._slots = [_slot('edge', 'curve', many='curve', needed=True)]
+# (the body is the first model selected, whatever it is, and a field selected with it is the number -- the thickness, the radius, the distance)
+import inspect as _inspect
+for _name in ('offset_exact', 'round_edges', 'shell_centered', 'shell_exact', 'shell_inside', 'shell_outside', 'smooth', 'thicken'):
+    _names = list(_inspect.signature(globals()[_name]).parameters)
+    globals()[_name]._slots = [_slot(_names[0], _SHAPES, needed=True), _slot(_names[1], 'field')]
+# (a surface, a field or a body that is selected with the body is where the texture goes)
+globals()['texture']._slots = [_slot('body', _BODIES, needed=True), _slot('region', ('surface', 'field', 'solid', 'profile', 'lattice'), keyword=True)]
 globals()['field_from_body']._takes = _declare(_BODIES)
 globals()['evaluate']._takes = _declare(_BODIES | {'field'}, [{'point'}])               # (a field or a body, and the point its value is read at, selected with it: the entry of Operations > Field math)
 globals()['distance_to_point']._takes = _declare({'point'})            # (the distance from a point: a point is what it is made of)

@@ -25,9 +25,9 @@ size = 10
 
 
 def post(r, h):
-    return cylinder(r, h, (size * 2, 10, 2))
+    return cylinder(r, h, position=(size * 2, 10, 2))
 
 
-plate = box((0, 0, 0), (size * 4, 20, 2))
+plate = box((size * 4, 20, 2), position=((size * 4) / 2, 10, 1))
 bracket_1 = union(plate, post(4, size))
 bracket_1

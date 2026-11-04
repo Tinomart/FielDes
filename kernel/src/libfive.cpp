@@ -14,6 +14,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <cmath>
 #include <queue>
 #include <limits>
+#include <list>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -702,6 +704,106 @@ float libfive_tree_eval_f(libfive_tree t, libfive_vec3 p)
     return e.value({p.x, p.y, p.z});
 }
 
+void libfive_tree_eval_many(const libfive_tree* trees, int n, float* out)
+{
+    // The numbers of many trees that are made of one another (the control points of a body of points: a thousand expressions that share most of their nodes), every distinct node worked
+    // out once, leaves to root -- the way the application reads them at each step of a drag (see MorphPlan in shape.cpp).  An evaluator made of each tree (libfive_tree_eval_f) walks
+    // everything the tree is made of again, so that a thousand of them cost ten seconds (H68c, the user, 2026-11-02: dragging a point out of a face lags the program).
+    namespace Op = libfive::Opcode;
+    struct Node { int op; int a; int b; };
+    std::vector<Node> nodes;
+    std::vector<double> value;
+    std::unordered_map<const void*, int> slot;
+    std::vector<int> result(n > 0 ? size_t(n) : size_t(0), -1);
+    std::vector<const Tree::Data*> stack;
+    bool direct = true;
+    for (int i = 0; i < n && direct; ++i)
+    {
+        const Tree root(trees[i]);
+        const Tree::Data* top = root.get();
+        if (!top) { direct = false; break; }
+        stack.clear();
+        stack.push_back(top);
+        while (!stack.empty() && direct)
+        {
+            const Tree::Data* d = stack.back();
+            if (slot.count(d)) { stack.pop_back(); continue; }
+            const int op = int(d->op());
+            int arity = 0;
+            switch (op)
+            {
+                case Op::CONSTANT: case Op::VAR_FREE: break;
+                case Op::CONST_VAR: case Op::OP_SQUARE: case Op::OP_SQRT: case Op::OP_NEG: case Op::OP_SIN: case Op::OP_COS: case Op::OP_ABS: case Op::OP_RECIP:
+                    arity = 1;
+                    break;
+                case Op::OP_ADD: case Op::OP_SUB: case Op::OP_MUL: case Op::OP_DIV: case Op::OP_MIN: case Op::OP_MAX:
+                    arity = 2;
+                    break;
+                default:                                          // (an operation that is not read here: every tree is read by libfive_tree_eval_f)
+                    direct = false;
+                    continue;
+            }
+            const Tree::Data* kid[2] = {nullptr, nullptr};
+            if (arity > 0) kid[0] = d->lhs().get();
+            if (arity > 1) kid[1] = d->rhs().get();
+            bool waiting = false;
+            for (int k = 0; k < arity; ++k)
+            {
+                if (!slot.count(kid[k])) { stack.push_back(kid[k]); waiting = true; }
+            }
+            if (waiting) continue;
+            double v = 0.0;
+            if (op == Op::CONSTANT) v = double(d->value());
+            else if (op == Op::VAR_FREE)
+            {
+                float known = 0.0f;
+                if (!DefaultVars::find(d, known)) { direct = false; continue; }          // (a variable that has no number: libfive_tree_eval_f says so)
+                v = double(known);
+            }
+            Node made;
+            made.op = op;
+            made.a = arity > 0 ? slot.at(kid[0]) : -1;
+            made.b = arity > 1 ? slot.at(kid[1]) : -1;
+            slot[d] = int(nodes.size());
+            nodes.push_back(made);
+            value.push_back(v);
+            stack.pop_back();
+        }
+        if (direct) result[size_t(i)] = slot.at(top);
+    }
+    if (direct)
+    {
+        double* val = value.data();
+        for (size_t i = 0; i < nodes.size(); ++i)
+        {
+            const Node& nd = nodes[i];
+            switch (nd.op)
+            {
+                case Op::CONST_VAR: val[i] = val[nd.a]; break;
+                case Op::OP_SQUARE: val[i] = val[nd.a] * val[nd.a]; break;
+                case Op::OP_SQRT: val[i] = std::sqrt(val[nd.a]); break;
+                case Op::OP_NEG: val[i] = -val[nd.a]; break;
+                case Op::OP_SIN: val[i] = std::sin(val[nd.a]); break;
+                case Op::OP_COS: val[i] = std::cos(val[nd.a]); break;
+                case Op::OP_ABS: val[i] = std::fabs(val[nd.a]); break;
+                case Op::OP_RECIP: val[i] = 1.0 / val[nd.a]; break;
+                case Op::OP_ADD: val[i] = val[nd.a] + val[nd.b]; break;
+                case Op::OP_SUB: val[i] = val[nd.a] - val[nd.b]; break;
+                case Op::OP_MUL: val[i] = val[nd.a] * val[nd.b]; break;
+                case Op::OP_DIV: val[i] = val[nd.a] / val[nd.b]; break;
+                case Op::OP_MIN: val[i] = val[nd.a] < val[nd.b] ? val[nd.a] : val[nd.b]; break;
+                case Op::OP_MAX: val[i] = val[nd.a] > val[nd.b] ? val[nd.a] : val[nd.b]; break;
+                default: break;                                   // (a constant or a variable: its number is in place)
+            }
+        }
+        for (int i = 0; i < n; ++i) out[i] = float(val[result[size_t(i)]]);
+        return;
+    }
+    libfive_vec3 zero;
+    zero.x = zero.y = zero.z = 0.0f;
+    for (int i = 0; i < n; ++i) out[i] = libfive_tree_eval_f(trees[i], zero);
+}
+
 namespace {
 // Runs fn(first, last) over [0, n) in parallel chunks
 template <typename F>
@@ -1382,6 +1484,28 @@ libfive_tetfea* libfive_tetfea_new(libfive_tree shape, libfive_region3 r, float 
     return f;
 }
 
+// A mesh made elsewhere, as the solvers take it (see fea::meshFromArrays)
+static bool tetMeshFromArrays(int64_t nodes, const double* positions, int64_t tets, const int32_t* connectivity,
+                              std::shared_ptr<fea::TetMesh>& out, std::string& message)
+{
+    out = std::make_shared<fea::TetMesh>();
+    if (nodes <= 0 || tets <= 0)
+    {
+        message = "the mesh has no tetrahedra";
+        return false;
+    }
+    return fea::meshFromArrays(size_t(nodes), positions, size_t(tets), connectivity, *out, message);
+}
+
+int libfive_tetfea_set_mesh(libfive_tetfea* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets)
+{
+    std::shared_ptr<fea::TetMesh> mesh;
+    if (!tetMeshFromArrays(node_count, positions, tet_count, tets, mesh, f->message)) return 0;
+    f->problem->setMesh(mesh);
+    f->prepared = f->solved = false;
+    return 1;
+}
+
 void libfive_tetfea_add_support(libfive_tetfea* f, libfive_tree region, int x, int y, int z, double dx, double dy, double dz)
 {
     f->problem->addSupport(Tree(region), x != 0, y != 0, z != 0, -1, Eigen::Vector3d(dx, dy, dz));
@@ -2009,6 +2133,15 @@ libfive_tetthermal* libfive_tetthermal_new(libfive_tree shape, libfive_region3 r
     return f;
 }
 
+int libfive_tetthermal_set_mesh(libfive_tetthermal* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets)
+{
+    std::shared_ptr<fea::TetMesh> mesh;
+    if (!tetMeshFromArrays(node_count, positions, tet_count, tets, mesh, f->message)) return 0;
+    f->problem->setMesh(mesh);
+    f->prepared = f->solved = false;
+    return 1;
+}
+
 void libfive_tetthermal_add_temperature(libfive_tetthermal* f, libfive_tree region, float value)
 {
     f->problem->addTemperature(Tree(region), value);
@@ -2350,6 +2483,15 @@ libfive_tetflow* libfive_tetflow_new(libfive_tree domain, libfive_region3 r, flo
         Tree(domain), Eigen::Vector3d(r.X.lower, r.Y.lower, r.Z.lower),
         Eigen::Vector3d(r.X.upper, r.Y.upper, r.Z.upper), h, density, viscosity));
     return f;
+}
+
+int libfive_tetflow_set_mesh(libfive_tetflow* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets)
+{
+    std::shared_ptr<fea::TetMesh> mesh;
+    if (!tetMeshFromArrays(node_count, positions, tet_count, tets, mesh, f->message)) return 0;
+    f->problem->setMesh(mesh);
+    f->prepared = f->solved = false;
+    return 1;
 }
 
 void libfive_tetflow_add_inlet(libfive_tetflow* f, libfive_tree region, float dx, float dy, float dz, float speed,
@@ -2944,6 +3086,57 @@ void libfive_thermal_delete(libfive_thermal* t)
     delete t;
 }
 
+namespace {
+// The tapes of the trees that were read at points last.  A script that looks for an edge or a corner reads the field of ONE tree a hundred times in small batches (a few dozen to a few thousand
+// points), and every read made the tape of the whole tree again -- with the numbers of the script as variables, which cannot be folded into constants, some twenty milliseconds for the tree of a
+// threaded hole: an edge cost seconds, orders of magnitude more than the field itself (the user, 2026-10-28: "unusably slow ... taking up almost all render time on the thread ... when just selecting
+// a simple edge").  The tape is kept: a read makes an evaluator of it, which is cheap, and sets the numbers.  A tape is not for two threads at once (the oracles of a tape hold what a point sets), so
+// a read of a tree locks it.  Batches of more than one chunk are read by several threads, each with a tape of its own, as before
+struct CompiledTree
+{
+    CompiledTree(const Tree& t) : tree(t), deck(std::make_shared<Deck>(t)) {}
+    Tree tree;                              // (kept, so that the tree the tape was made of is not freed and its address is not another tree's)
+    std::shared_ptr<Deck> deck;
+    std::mutex use;
+};
+std::mutex compiledLock;
+std::list<std::shared_ptr<CompiledTree>> compiledTrees;
+
+std::shared_ptr<CompiledTree> compiledTreeOf(const Tree& tree)
+{
+    std::lock_guard<std::mutex> g(compiledLock);
+    for (auto it = compiledTrees.begin(); it != compiledTrees.end(); ++it)
+    {
+        if ((*it)->tree.id() == tree.id())
+        {
+            auto found = *it;
+            compiledTrees.splice(compiledTrees.begin(), compiledTrees, it);
+            return found;
+        }
+    }
+    auto made = std::make_shared<CompiledTree>(tree);
+    compiledTrees.push_front(made);
+    if (compiledTrees.size() > 4) compiledTrees.pop_back();
+    return made;
+}
+
+void readPoints(ArrayEvaluator& e, const float* xyz, float* out, size_t first, size_t last)
+{
+    const size_t N = ArrayEvaluator::N;
+    for (size_t start = first; start < last; start += N)
+    {
+        const size_t count_ = std::min(N, last - start);
+        for (size_t k = 0; k < count_; ++k)
+        {
+            const float* p = xyz + 3 * (start + k);
+            e.set(Eigen::Vector3f(p[0], p[1], p[2]), k);
+        }
+        const auto vs = e.values(count_);
+        for (size_t k = 0; k < count_; ++k) out[start + k] = vs(k);
+    }
+}
+}
+
 void libfive_tree_eval_points_vars(libfive_tree t, const float* xyz, int n, float* out,
                                    const libfive_tree* vars, const float* values, int count)
 {
@@ -2951,6 +3144,14 @@ void libfive_tree_eval_points_vars(libfive_tree t, const float* xyz, int n, floa
     const Tree tree(t);
     std::map<Tree::Id, float> m;
     for (int i = 0; i < count; ++i) m[static_cast<Tree::Id>(vars[i])] = values[i];
+    if (n <= 4096)
+    {
+        const auto compiled = compiledTreeOf(tree);
+        std::lock_guard<std::mutex> use(compiled->use);
+        ArrayEvaluator e(compiled->deck, m);
+        readPoints(e, xyz, out, 0, size_t(n));
+        return;
+    }
     parallelChunks(size_t(n), 4096, [&](size_t first, size_t last) {
         ArrayEvaluator e(tree, m);
         const size_t N = ArrayEvaluator::N;
@@ -2972,6 +3173,14 @@ void libfive_tree_eval_points(libfive_tree t, const float* xyz, int n, float* ou
 {
     if (!t || n <= 0) return;
     const Tree tree(t);
+    if (n <= 4096)
+    {
+        const auto compiled = compiledTreeOf(tree);
+        std::lock_guard<std::mutex> use(compiled->use);
+        ArrayEvaluator e(compiled->deck);                // (the numbers the kernel knows the variables by: DefaultVars)
+        readPoints(e, xyz, out, 0, size_t(n));
+        return;
+    }
     parallelChunks(size_t(n), 4096, [&](size_t first, size_t last) {
         ArrayEvaluator e(tree);
         const size_t N = ArrayEvaluator::N;

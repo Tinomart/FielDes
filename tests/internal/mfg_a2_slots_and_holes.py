@@ -20,10 +20,10 @@ t = Table('a2_slots_and_holes: slots 0.2, 0.3, 0.35, 0.39, 0.45 and 1.0 mm, for 
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 widths = [0.2, 0.3, 0.35, 0.39, 0.45, 1.0]
-block = box((0, 0, 0), (28, 8, 5))
+block = box((28, 8, 5), position=(14, 4, 2.5))
 for k, w in enumerate(widths):
     x = 2 + 4 * k
-    block = difference(block, box((x, -1, 1), (x + w, 9, 6)))             # a slot: from the top down to a floor 1 mm thick, through the whole depth
+    block = difference(block, box(((x + w) - x, 10, 5), position=((x + (x + w)) / 2, 4, 3.5)))             # a slot: from the top down to a floor 1 mm thick, through the whole depth
 part = block
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_gap=0.4)

@@ -24,7 +24,7 @@ lo, hi = (-3, -3, -3), (33, 43, 43)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=2)
 for angle in (30.0, 60.0):
-    part = union(box((0, 0, 0), (10, 40, 40)), box((10, 0, 20), (30, 40, 25)))
+    part = union(box((10, 40, 40), position=(5, 20, 20)), box((20, 40, 5), position=(20, 20, 22.5)))
     rule = manufacturing_constraint(overhang=angle, overhang_fix='fill')
     res = manufacturing_optimization(part, constraints=[rule], max_support_height=25, max_change=1.5)
     results.append(res)

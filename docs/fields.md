@@ -38,7 +38,7 @@ where it needs it. `offset(part, 1.0)` grows a part by a millimetre everywhere;
 written alike; the second is not sampled onto a grid, not meshed first, and not slower to write.
 
 ```python
-anchor = point(52, 8, 6)                         # a point: a model, and a value wherever a coordinate goes
+anchor = point(position=(52, 8, 6))                         # a point: a model, and a value wherever a coordinate goes
 swell  = ramp(distance_to_point(anchor), (0, 60), (4.0, 0.3))
 grown  = offset(plate, swell)                    # 4 mm near the anchor, 0.3 mm far from it
 joined = smooth_union(post, block, ramp(x_field(), (80, 140), (0.5, 8.0)))   # a blend that is sharp here and round there
@@ -69,15 +69,15 @@ with its arrows and dot to see the field in 3D. The eye of the field in the tree
 
 ## Points and surfaces
 
-A **point** is a model: `anchor = point(52, 8, 6)` is drawn as a dot (the middle point of a gizmo: click it and its full gizmo shows), and goes wherever a coordinate
+A **point** is a model: `anchor = point(position=(52, 8, 6))` is drawn as a dot (the middle point of a gizmo: click it and its full gizmo shows), and goes wherever a coordinate
 goes — `distance_to_point(anchor)`, `attractor(anchor, 30)`, `radial_field(anchor, 'z')` — so a design can be driven from
 a point you drag. `anchor.xyz` is its coordinates (they follow the gizmo). A point reads as its three coordinates **wherever a
-position goes** -- `sphere(5, anchor)`, `move(part, anchor)`, `distance_to_line(anchor, (0, 0, 1))` -- and in the model tree you
+position goes** -- `sphere(5, position=anchor)`, `move(part, anchor)`, `distance_to_line(anchor, (0, 0, 1))` -- and in the model tree you
 can **drag a point onto an operation** to put it in the place of a position written in the call
 (`distance_to_point((5, 5, 5))` → `distance_to_point(anchor)`).
 
-A **surface** is the zero set of a field with no body behind it: `plane(point, normal)`, `sphere_surface(radius, center)`,
-`cylinder_surface(radius, axis, center)`, `wave_surface(amplitude, period, axis, height)`. It is drawn as the sheet itself (one layer of triangles, no thickness),
+A **surface** is the zero set of a field with no body behind it: `plane(normal, position=point)`, `sphere_surface(radius, position=center)`,
+`cylinder_surface(radius, axis, position=center)`, `wave_surface(amplitude, period, axis, position=(0, 0, height))`. It is drawn as the sheet itself (one layer of triangles, no thickness),
 and the right-click menu makes them (*Primitives → New surface*). A surface is a field like any other: `distance_to_surface(sheet)`,
 or `lattice_surface_conform(sheet, ...)` for a lattice that follows it.
 
@@ -98,7 +98,7 @@ Both are in the right-click menu of the viewport: *Primitives → New point* and
 
 | | |
 |---|---|
-| `distance_to_point(p, radius=None)`, `distance_to_points(points)` | Euclidean distance to a point / the nearest of several; with a radius -- or the influence of the point, `point(x, y, z, influence=r)`, which is the radius in mm -- the distance from the **sphere** of that radius round the point: negative inside it (-r at the point), 0 on it, positive outside, a sphere's value as a field |
+| `distance_to_point(p, radius=None)`, `distance_to_points(points)` | Euclidean distance to a point / the nearest of several; with a radius -- or the influence of the point, `point(position=(x, y, z), influence=r)`, which is the radius in mm -- the distance from the **sphere** of that radius round the point: negative inside it (-r at the point), 0 on it, positive outside, a sphere's value as a field |
 | `distance_to_line(point, direction)`, `distance_to_segment(a, b)`, `distance_to_polyline(points, closed)` | to lines and curves |
 | `distance_to_plane(point, normal)` | signed distance to a plane |
 | `distance_to_surface(shape)` | unsigned distance to a shape's surface |
@@ -120,7 +120,7 @@ into a true one (see [below](#exact-distances)). Imported STEP parts are accurat
 | `normalize(field, lo, hi)` | [lo, hi] → [0, 1] |
 | `lerp(a, b, t)` (`mix`) | interpolate; `t` may be a field |
 | `smoothstep(field, e0, e1)`, `step_field(field, edge)` | smooth and sharp steps |
-| `wave(axis, period, amplitude, phase)` | a sine along an axis |
+| `wave(axis, period, amplitude, phase)` | a 3D wave: the height above a wavy sheet, `z - amplitude * sin(2 pi s / period + phase)` along `axis` -- zero on the sheet, so the viewer disc changes as it is dragged up and down |
 | `noise_field(scale, octaves, seed, gain, lacunarity, amplitude, kind, warp)` | noise, five kinds: `'perlin'` (soft hills, the default), `'billow'` (puffy humps), `'ridged'` (sharp ridges), `'cellular'` (Worley: bubbles and pits) and `'cracks'` (the web between the cells). `scale` can be three sizes, `(40, 4, 4)`, to stretch it into streaks, or a field; `warp` bends the pattern (marble, flowing shapes). `part - 0.3 * noise_field(4)` is an organic texture. Perlin with four octaves stays mostly inside ±0.3: `amplitude` sets how strong it is |
 | `sum_fields(*fields)` | sum |
 | `add_fields`, `subtract_fields`, `multiply_fields`, `divide_fields`, `power_field`, `min_fields`, `max_fields` | arithmetic on any number of fields (and numbers) at every point: `a + b`, `a - b`, `a * b`, `a / b`, `a ** b` as functions, in the model tree's **Operation → Field math** |
@@ -182,7 +182,7 @@ imported from a STEP file the locked field is the part's own exact surface, mesh
 field, instead of the import's fit; see [STEP import](step-import.md#putting-the-exact-surface-back-exclude).
 
 ```python
-part = exclude(part, sphere(12, (0, 0, 6)))       # inside the sphere the part is locked
+part = exclude(part, sphere(12, position=(0, 0, 6)))       # inside the sphere the part is locked
 light = shell(part, 2)                            # shelled everywhere else; the sphere's part is as it was
 final = union(light, bracket)                     # the bracket is not added inside the sphere either
 ```
@@ -223,7 +223,9 @@ box, walls that are not there, and a ball "too wide for the slot" between them i
 | `offset_exact(shape, distance)` | uniform offset along true normals, round at edges |
 | `shell_exact(shape, thickness, side='inside'\|'outside'\|'center')` | uniform hollow shell |
 | `round_edges(shape, radius)` | rounds every convex edge and corner |
-| `fillet(shape, radius)` | fills every concave edge and corner |
+| `fillet(edge_1, edge_2, ..., radius=2)` | rounds (a convex edge) or fills (a concave one) ONE edge, the one you selected -- `edge_at(body, (x, y, z))`: a line along a straight edge, a closed curve for a circular one or any other edge, followed along the surface -- exactly that edge, with the rolling ball of the radius (a number, a `var()` or a field); the edge knows its body (`fillet(body, edge, radius)` names it too, in any order); follows the body when a handle of the body is dragged |
+| `fillet(shape, radius)` | fills every concave edge and corner (no edge given) |
+| `chamfer(edge_1, edge_2, ..., size=2)` | a flat cut `size` along each of the two faces from ONE selected edge (a convex edge is cut off, a concave one filled): a plane along a straight edge, a cone round a circular one; made from the edge as the script last ran, so a handle of the body moves it when the script runs again at the end of the drag |
 | `smooth(shape, radius, steps=1)` | smooths the surface without thickening the body: features smaller than about `radius` go, flat faces stay; more `steps` smooth further. A field like any other (a weighted sum of the body's field moved by whole radii: 6 copies for one step, 19 for two, 44 for three, 85 for four), so nothing is measured or meshed in it |
 
 `round_edges` and `fillet` roll a ball of the radius in the material and in the air: the centres of the ball are where the field is

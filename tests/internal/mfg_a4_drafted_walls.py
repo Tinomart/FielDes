@@ -23,7 +23,7 @@ leans = [0.0, 0.5, -0.5, 0.96, -0.96, 1.2, 3.0, 10.0]
 part = None
 for k, a in enumerate(leans):
     cx = 14.0 * k
-    wall = rotate_y(box((cx - 3, 0, 0), (cx + 3, 10, 20)), math.radians(a), center=(cx, 5, 0))
+    wall = rotate_y(box(((cx + 3) - (cx - 3), 10, 20), position=(((cx - 3) + (cx + 3)) / 2, 5, 10)), math.radians(a), center=(cx, 5, 0))
     part = wall if part is None else union(part, wall)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(draft=1.0, pull_direction=(0, 0, 1))

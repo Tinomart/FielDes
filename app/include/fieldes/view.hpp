@@ -267,7 +267,7 @@ public slots:
     QString snapSelfCheck(int limit);
     bool surfacePointAt(QPoint pos, QVector3D& point) const;
     // The coarse mesh of what the entry of a menu under the mouse would make (x, y, z, ... and the corners of its triangles), drawn see-through where it would be made; empty takes it away
-    void setPreviewMesh(QVector<float> vertices, QVector<int> triangles);
+    void setPreviewMesh(QVector<float> vertices, QVector<int> triangles, bool flat);
     /*  The step of a turn in degrees: the card's, for the turns of the mode and for the Shift gizmo  */
     float angleStep() const { return qMax(0.1f, m_snap.angle); }
     /*  A click at `pos` on the work plane in the current mode: the next point of the line or the spline that is being drawn (the first point is where a click closes it
@@ -309,6 +309,8 @@ public slots:
         `createAt` makes one as the menu of empty space does (for scripted tests)  */
     void placementAt(QPoint pos, QVector3D& point, double& scale) const;
     void createAt(const QString& name, QPoint pos);
+    /** Where a shape made at `point` (as big as `scale`) goes when a symmetry is in use: beside its mirror planes, not on them, so that it does not lie on its own image  */
+    QVector3D offSymmetryPlanes(QVector3D point, double scale);
 
     /*  The field models of the script, after a run: every field has an icon in the scene (a card with its name over it, at the place of the
      *  object it was made from) while it is shown, and a viewer -- a disc of its field, of a radius, that can be taken anywhere -- while it is open  */
@@ -493,6 +495,8 @@ signals:
      *  the model, where the outline was pressed, where the point was let go).  While it was pulled it was drawn by the view, from numbers, without the script
      */
     void outlineInsertRequested(int line0, QVector3D press, QVector3D at);
+    /*  A press on the surface of a body made of points moved: a point is put where it was pressed (the triangle there is split), and goes on being dragged  */
+    void surfaceInsertRequested(int line0, QVector3D press);
     /*
      *  The arc of a round corner was pressed, and the radius of its point is a plain number (`radius=5`): it is to be made a number that can be dragged (`radius=var(5)`) -- the
      *  0-based line that displays the profile, and the number of the point in its list.  The press does nothing else: the arc is not an edge to pull a point out of
@@ -564,7 +568,7 @@ protected:
     void drawHints(QPainter& painter);
     /*  The editable outline (of a profile, a curve) that passes under a widget position (within a few pixels): its shape, the point of it that is
         there, and the number of the piece of the line (counted over all its polylines)  */
-    bool outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) const;
+    bool outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece, bool everyLine = false) const;      // (everyLine: the lines that are only drawn too -- a curve, the edge of a body, the outline of a 2D shape -- not only the outlines points are put on)
     /*  One line of an outline as it is drawn and as a press is looked for on it: its vertices, and between the ends of the arc of a round corner not the pieces the face is cut
         along but points of the arc itself, as many as the screen tells apart (so the arc is the circle to a twentieth of a pixel at any zoom).  `piece` is the number of the piece
         of the line that starts at the point (all of an arc has the number of its first piece); `pieceBase` is the number of the first piece of this line  */
@@ -595,6 +599,9 @@ protected:
         of it, so a drag is what pulls a point out), and a press on the face of a profile that drags all its points in its plane  */
     Shape* m_pullShape = nullptr;
     bool m_pullActive = false;
+    Shape* m_insertBody = nullptr;           // (a body made of points that was pressed: a press that moves puts a point on its surface; one that does not selects it)
+    QVector3D m_insertPress;
+    QPoint m_insertPressPos;
     int m_pullAfter = 0, m_pullPiece = 0;
     QVector3D m_pullHit, m_pullNormal, m_pullLast;
     QPoint m_pullPressPos;
@@ -602,6 +609,8 @@ protected:
     bool m_faceActive = false;
     QVector3D m_faceNormal, m_faceStart;
     QVector3D m_faceWallDir;                    // (a wall of a prism pulled by its two points: the direction in the plane that it moves along; null for the face of a profile, which moves every point as the mouse does)
+    bool m_faceEndPull = false;                 // (the end face of a prism, pulled along the normal of its plane: the point of that line that is nearest to the ray of the cursor, not a point in the plane)
+    bool m_endPressHeld = false;                  // (a press on the end of a selected extrusion that waits for the number of that end: see replayEndPress)
     QPoint m_facePressPos;
     /*  A press on the dot of a point that has its numbers (its gizmo) begins its drag at once, with no selection and no gizmo needed.  Until the mouse has moved a few pixels
         it is still a click, which selects the point  */
@@ -618,14 +627,14 @@ protected:
     /*  Auto scale while a model is dragged: when the picture of it (the mesh, moved by the numbers of the drag) reaches out of the render region, the region grows to hold it
      *  -- with the room and the whole numbers the script's region has -- and what is shown is meshed again in it at once; the region it has grown to is what is written into the
      *  script when the drag ends (regionGrown)  */
-    void growRegionForPreview();
+    void growRegionForPreview(const std::map<libfive::Tree::Id, float>* dragged = nullptr);
     /*  The same for a surface that is pulled (the picture of it is meshed again from its numbers at every move, over the region): the region holds the point it is pulled to  */
     void growRegionForSurfaceDrag(const QVector3D& at, const std::map<libfive::Tree::Id, float>& vs);
     /*  The region grown to hold a box of the models (with the room and the whole numbers of the script's region), and what is shown meshed again in it  */
     void growRegionToHold(const double nlo[3], const double nhi[3]);
     bool m_regionGrown = false;
     QVector3D m_grownMin, m_grownMax;
-    struct FaceVar { libfive::Tree::Id id; int axis; float value0; };
+    struct FaceVar { libfive::Tree::Id id; int axis; float value0; float scale = 1.0f; };       // (what a move along the axis changes the number by: 1, but the end face of a prism, which is pulled along its normal, has 1 / normal[axis])
     QList<FaceVar> m_faceVars;
     void beginPull(QPoint pos);
     /*  The point that is pulled out of an outline, drawn at once on every shape that stands for that outline (the outline, its placed copies, its images in a symmetry)  */
@@ -645,6 +654,7 @@ protected:
 
     void mouseMoveEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void replayEndPress(QPoint at, Qt::KeyboardModifiers modifiers, int tries);
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent* event) override;
@@ -732,8 +742,23 @@ protected:
     void clearPreview();
     /*  The lattice of the snapping mode as a picture of the viewport (transparent, in device pixels): false when its lines are too fine to draw from here.  The lattice is seen out to the
      *  viewing distance of the card -- measured from the viewer, in the units of the view, so that it is the same picture whatever the zoom and wherever the view is panned  */
-    bool renderSnapLattice(QImage& image, qreal ratio, int& stride) const;
-    QImage m_snapImage;                      // (the lattice as it was drawn last: the cursor moves over it all the time, the camera does not)
+    bool renderSnapLattice(int& stride) const;
+    /*  The lattice is drawn by the graphics card, as lines: `renderSnapLattice` chooses them -- two vertices to a line: where it is, how far (the band of the fog), which axis it runs along, whether it is an
+     *  axis of the world -- when the camera's matrix, the step, the viewing distance or the size of the viewport changes (`ensureSnapLattice`), and `drawSnapLattice` draws them in the 3D pass at every frame.
+     *  A model that is dragged, resized or edited costs the lattice nothing, and a camera that moves costs the choosing of its lines, not a picture of them  */
+    struct LatticeVertex { float x, y, z, band, axis, onAxis; };
+    mutable std::vector<LatticeVertex> m_latticeVerts;
+    QOpenGLBuffer m_latticeVbo;
+    QOpenGLVertexArrayObject m_latticeVao;
+    QOpenGLShaderProgram* m_latticeProgram = nullptr;
+    bool m_latticeFailed = false;            // (the program did not build in this context: it is not tried again at every frame)
+    QString m_latticeError;                  // (what the graphics driver said of it: written on the viewport, where it is seen)
+    mutable bool m_latticeFresh = false;     // (the vertices are new: sent to the graphics card at the next draw)
+    int m_latticeCount = 0;
+    bool m_snapRebuilt = false;              // (the lattice was chosen again since the overlay last looked: the node under the cursor is worked out again from it)
+    void ensureSnapLattice();
+    void drawSnapLattice(const QMatrix4x4& m);
+    void releaseSnapLattice();
     QMatrix4x4 m_snapImageM;                 // (the camera it was drawn for)
     float m_snapImageStep = 0;               // (and the step, the viewing distance, the size of the viewport and its pixel ratio)
     int m_snapImageDistance = 0;
@@ -757,6 +782,8 @@ protected:
     bool m_snapMarkHeld = false;                    // (a menu that puts something down at the mark is open: the mark stays)
     Shape* m_ghost = nullptr;                       // (the see-through preview of the entry of a menu that the mouse is over: a shape like any other, with the mesh of what the entry would make)
     bool m_ghostOn = false;
+    bool m_ghostFlat = false;                         // (the preview is a 2D shape: drawn as the 2D shape the click makes is drawn -- Shape::draw's colour for is2D(), as opaque, the boundary of its sheet in the blue of an outline: see setPreviewMesh)
+    std::vector<std::pair<QVector3D, QVector3D>> m_ghostOutline;       // (that boundary: one segment for each edge that only one triangle of the sheet has)
     QTimer m_previewTimer;                          // (the mouse has to stay on an entry for a moment: passing over it is not asking for it)
     bool m_previewTimerReady = false;
     QString m_previewKind, m_previewName;
@@ -1153,13 +1180,25 @@ protected:
     // (the place of a point of a group and the numbers that move it; and the numbers of its own scale and rotation: the group's rings change those, point by point)
     struct GroupPoint { QVector3D pos0; libfive::Tree::Id id[3]; float value0[3]; libfive::Tree::Id scaleId[3]; float scale0[3]; libfive::Tree::Id rotId[3]; float rot0[3]; };
     QVector<GroupPoint> gizmo_group;
+    /*  The symmetry planes that turn and move with a profile or a body of points that is turned or scaled as a whole (H62): the place of the plane and the numbers that move and turn it, as they were
+        when the drag began  */
+    struct PlaneTurn { QVector3D pos0; libfive::Tree::Id id[3]; float value0[3]; libfive::Tree::Id rotId[3]; float rot0[3]; };
+    QVector<PlaneTurn> gizmo_planes;
+    // The symmetry planes that only this body's points are made through and that split it (they move and turn with it); `shared` is set to such a plane that other bodies are made through too
+    QVector<PlaneTurn> ownPlanes(const QList<Shape*>& members, Shape** shared) const;
+    // A plane that this body shares with others is given to it as a copy of its own (written into the script: ScenePanel::splitSharedPlane); true when the script was changed
+    bool splitSharedPlane(Shape* plane, const QList<Shape*>& members);
     QVector3D free_hit0, free_normal;   // a free move: where the cursor's ray met the plane at the start, and the plane's normal
     GizmoGrip gizmo_hover;
     // The provisional gizmo (see setProvisionalGizmo), and a press on it that waits for the real one
     bool m_prov = false;
     QVector3D m_provPivot;
     QList<int> m_provLines;
-    struct WaitGrip { bool on = false; int kind = -1, axis = 0, ticks = 0; QList<int> lines; bool selected = false; };   // (selected: the one point that is selected, wherever its line is by then)
+    // (selected: the one point that is selected, wherever its line is by then; pressed, press: the drag begins from where the button went down, not from where the hand is by the time the script has run,
+    // and then catches up with the hand -- a point put on a surface is under the hand, and stays behind it otherwise by as far as the hand has moved meanwhile)
+    // (fresh: a point is being put into a body made of points by a press on its surface -- the point that is grabbed is the one on the line that the script names, see expectNewPoint, and never one
+    // that was selected before: the user, 2026-11-02, "when you drag a point out of a surface when you already have a points selected, it instead moves that point around")
+    struct WaitGrip { bool on = false; int kind = -1, axis = 0, ticks = 0; QList<int> lines; bool selected = false; QPoint press; bool pressed = false; bool fresh = false; };
     WaitGrip m_wait;
     QTimer m_waitTimer;
     bool provisionalVisible() const;
@@ -1210,12 +1249,27 @@ protected:
         Taken from the profile or curve that owns the point -- what it IS, whenever it was made -- and, for a point that has no gizmo to be found by, from the mark
         the library made on it  */
     int pointStyleOf(const Shape* s) const;
+    /*  Whether a point is one of the points of a body made of points (morph_polyhedron, morph_body): what its gizmo shows then depends on what kind of point it is -- a corner has its arrows and dot only, a
+        spline point also the rings that turn the plane its surface leaves it in and the ring of its influence, a sphere point the ring of its radius (its influence)  */
+    bool pointOfBody(const Shape* s) const;
     /*  Shift or Ctrl + the mouse wheel scales what the mouse is on, or what is selected: the point whose dot is under `at` (selected or not), else every selected shape or point that has
         scale numbers.  One gesture, written to the script when the wheel has rested a moment  */
-    bool scaleSelectionByWheel(int delta, QPoint at);
-    bool applyWheelFactor(float factor, Shape* only);      // (the scale numbers of `only`, or of every selected shape, times `factor`; false when none of them has numbers)
-    void waitForWheelNumbers(float factor);                // (a notch over a point that has no numbers yet is kept, with those that follow, until the run that writes them is over)
+    /*  The wheel over a point (its dot) scales it -- its size, with Shift its influence (the user, 2026-10-28: "I want shift scrollwheel to scale the influence while hover and regular scrollwheel on hover
+     *  scales the scale. And the point should not get selected when this happens, just scaled without any gizmo") -- and puts the selection back as it was.  Shift over nothing scales the selection, as it did.
+     *  `plain`: the wheel without Shift, which acts only on a point under the mouse (else it zooms)  */
+    bool scaleSelectionByWheel(int delta, QPoint at, bool shift, bool plain);
+    bool applyWheelFactor(float factor, Shape* only, bool shift);          // (what the wheel scales -- see wheelScalesInfluence -- of `only`, or of every selected shape, times `factor`; false when none of them has the numbers)
+    void waitForWheelNumbers(float factor, bool shift);                    // (a notch over a point that has no numbers yet is kept, with those that follow, until the run that writes them is over)
+    /*  What the wheel scales on a point: its influence -- the one number every point is scaled by, as a point's size is used nowhere but by a path extrude (the user, 2026-10-28: "every point only scales
+     *  its influece as scale is nowhere used anywhere except for the path extrude ... scaling the point does nothing, so it shouldnt be possible") -- and, on a spline point of a path extrude (the one
+     *  whose size is how thick the sweep is there), the plain wheel scales the size and Shift the influence.  A model that is not a point is scaled by its scale  */
+    Shape* originalOfImage(const Shape* image) const;                    // (the point a mirror point is the image of: found by the numbers they share; null when there is none -- see wheelNumbers)
+    bool wheelNumbers(const Shape* s, bool shift, std::vector<libfive::Tree::Id>& ids) const;     // (the numbers the wheel scales on a shape, read from its gizmo whether or not it is selected; false when it has none)
     void applyPendingWheel();
+    void finishWheelSelection();                           // (a point that a notch selected to be given its numbers is not selected any more: the selection is what it was)
+    bool m_wheelPendingShift = false;
+    bool m_wheelRestore = false;
+    QList<int> m_wheelRestoreLines;
     bool m_wheelScaling = false;
     QTimer m_wheelTimer;
     float m_wheelPending = 1.0f;

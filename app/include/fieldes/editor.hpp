@@ -36,6 +36,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QIcon>
 #include <QElapsedTimer>
 #include <QTextCursor>
+#include <QFuture>
+#include <QPair>
 
 #include "fieldes/documentation.hpp"
 #include "fieldes/formatter.hpp"
@@ -56,6 +58,7 @@ class Editor : public QWidget
     Q_OBJECT
 public:
     Editor(Language::Type language);
+    ~Editor() override;
     /*  `path` is the file the text is of (empty: none): the breakpoints it had when it was last closed are brought back  */
     void setScript(const QString& s, bool reload=false, const QString& path=QString());
     QString getScript() const;
@@ -394,6 +397,12 @@ protected:
     // out about the statements (see outline.py)
     QTimer m_outlineTimer;
     void refreshOutline(bool runDone = false);
+    bool m_outlineBusy = false;                                // (a reading of the tree is on its way in a thread of its own: see refreshOutline)
+    bool m_outlineAgain = false;                               // (the text changed while it was: it is read once more when it is back)
+    bool m_outlineRunDone = false;                             // (a run has ended and its reading is still to be made: it is made with what the run found out)
+    qint64 m_outlineCostMs = 0;                                // (how long the last reading took)
+    QElapsedTimer m_outlineClock;
+    QFuture<QPair<QString, QString>> m_outlineFuture;
 
     // Debounces the interpreter's "busy" signal to avoid UI jitter
     QTimer m_interpreterBusyDebounce;
@@ -415,6 +424,10 @@ protected:
     bool m_dragActive = false;
     bool m_textChangedDuringDrag = false;
     QTimer m_dragGuard;                     // (a drag that does not say it has ended is ended after a while: the text would never run again)
+    QMap<libfive::Tree::Id, float> m_pendingDragVars;        // (the numbers of a drag that are not written into the text yet: see setVarValues)
+    QElapsedTimer m_dragWriteClock;                           // (when the text was written last during this drag)
+    QTimer m_dragWriteTimer;                                  // (writes the numbers that came after the last write, once the pause is over)
+    void flushDragVars();
 
     // The buttons at the right of the bottom row: pause / continue, run again, terminate (the red dot)
     QWidget* m_controls = nullptr;

@@ -281,16 +281,21 @@ def _placement(features, written=()):
     body = motion['body']
     args = getattr(body, '_placement_args', None)
     parts = getattr(body, '_placed_parts', None)
+    frame = args[5] if args is not None and len(args) > 5 else getattr(body, '_placement_frame', None)
     placed = bool(parts is not None and args is not None and any(a in written for a in ('position', 'rotation', 'scale')) and any(v is not None for v in args[:3]))
     if placed:
         m0, r0, c = _numbers(args[0], (0.0, 0.0, 0.0)), _numbers(args[1], (0.0, 0.0, 0.0)), tuple(float(v) for v in parts[1])
+        if frame != 'origin' and args[0] is not None:
+            m0 = tuple(float(m0[i]) - c[i] for i in range(3))      # (the position is GLOBAL, where the pivot is: the body is moved by it less the pivot)
+    elif frame == 'origin':
+        m0, r0, c = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)        # (made in its own frame: its position is where that frame is)
     else:
         m0, r0, c = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), _pivot(body)
     R0 = [[float(v) for v in row] for row in _turn_matrix(r0)]
     M, own, at = motion['matrix'], motion['own'], motion['at']
     inside = tuple(c[i] + m0[i] - own[i] for i in range(3))
     moved = _apply(M, inside)
-    position = tuple(_clean(moved[i] + at[i] - c[i], 4) for i in range(3))
+    position = tuple(_clean(moved[i] + at[i], 4) for i in range(3))        # (the position is GLOBAL: where the pivot is after the move)
     rotation = tuple(_clean(v, 4) for v in _euler(_matmul(M, R0)))
     return {'body': body, 'position': position, 'rotation': rotation, 'scale': not (callable(getattr(body, '_remake', None)) and bool(getattr(body, 'points', None))),
             'motion': motion}

@@ -1,6 +1,6 @@
 # A mesh of the air in a channel round a post, for the solver of another program: Fluent, OpenFOAM, Gmsh ...  Docs: docs/meshing.md.
 #
-# What to look at: the result card of `mesh` -- press "Elements" and the cells are drawn, coloured by their size (the card's menu changes it to the skewness, the aspect ratio, the
+# What to look at: the cells of `mesh`, drawn at once and coloured by their size (the card's menu changes it to the skewness, the aspect ratio, the
 # orthogonal quality): small round the post, large away from it, and a few prism layers on the post itself.  The output lists the cells, the zones and the quality of the mesh;
 # the files are in the folder it names.  (About half a minute.)
 import os
@@ -9,12 +9,12 @@ import tempfile
 from fieldes import *
 
 view.set_bounds([-5, -20, -5], [65, 20, 15], auto_scale=True)
-view.set_resolution(4)
+view.set_resolution(20)
 view.set_quality(8)
 
 # The air: a channel 60 mm long, 30 wide, 10 high, less a post 8 mm across that stands in it (and is taller than the channel, so that its ends are not on the floor and the ceiling).
-channel = box((0, -15, 0), (60, 15, 10))
-post = cylinder(4, 14, (20, 0, -2))
+channel = box((60, 30, 10), position=(30, 0, 5))
+post = cylinder(4, 14, position=(20, 0, 5))
 air = difference(channel, post)
 
 mesh = mesh_volume(
@@ -24,7 +24,7 @@ mesh = mesh_volume(
     # three layers of prisms on the post, the first 0.15 mm thick, each 1.3 times as thick as the one before
     boundary_layers=inflation_layers(post, first_height=0.15, growth_rate=1.3, layers=3),
     # the two ends are the inlet and the outlet; everything else is wall, split where the surface turns by more than 30 degrees
-    zones={'inlet': box((-1, -16, -1), (0.01, 16, 11)), 'outlet': box((59.99, -16, -1), (61, 16, 11))},
+    zones={'inlet': box((1.01, 32, 12), position=(-0.495, 0, 5)), 'outlet': box((1.01, 32, 12), position=(60.495, 0, 5))},
     feature_angle=30,
 )
 print(mesh)

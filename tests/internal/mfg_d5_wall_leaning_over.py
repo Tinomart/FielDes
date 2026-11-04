@@ -23,11 +23,11 @@ t = Table('d5_wall_leaning_over: a wall that leans OVER (3 degrees, wider at the
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 tn = math.tan(math.radians(3.0))
-over = half_space((1.0, 0.0, -tn), (0.0, 0.0, 0.0))                              # (inside: x <= z tan 3: the face leans out going up)
+over = half_space((1.0, 0.0, -tn))                              # (inside: x <= z tan 3: the face leans out going up)
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them
 t.check('the plane of the leaning wall faces the way the case assumes (inside to its left)', evaluate(over, [(-3.0, 5.0, 10.0)])[0] < 0 < evaluate(over, [(3.0, 5.0, 1.0)])[0], '', '')
-wall = intersection(over, box((-12, 0, 0), (40, 10, 20)))
-part = union(wall, box((-12, 0, -3), (40, 10, 0)))                                # (standing on a base: material below the overhang)
+wall = intersection(over, box((52, 10, 20), position=(14, 5, 10)))
+part = union(wall, box((52, 10, 3), position=(14, 5, -1.5)))                                # (standing on a base: material below the overhang)
 lo, hi = (-14, -3, -6), (42, 13, 23)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 only_draft = manufacturing_constraint(draft=1.0)

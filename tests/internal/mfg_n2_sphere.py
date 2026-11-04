@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('n2_sphere: a sphere of radius 15: a smooth part that keeps every rule, nothing to change, nothing to report')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = sphere(15, (0, 0, 15))
+part = sphere(15, position=(0, 0, 15))
 lo, hi = (-18, -18, -3), (18, 18, 33)
 res = control(t, part, lo, hi, 'sphere')
 

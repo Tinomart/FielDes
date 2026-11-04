@@ -19,8 +19,8 @@ from mfgkit import *
 t = Table('x7_hollow_with_inner_body: a hollow sphere (outer radius 10, wall 0.5) with a solid ball of radius 4 floating in its cavity, a wall rule of 0.8 mm: the shell is thickened on both sides to 0.8, the ball is not touched (look at it in the section view)')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-shell_ = difference(sphere(10.0, (0, 0, 10)), sphere(9.5, (0, 0, 10)))
-ball = sphere(4.0, (0, 0, 10))
+shell_ = difference(sphere(10.0, position=(0, 0, 10)), sphere(9.5, position=(0, 0, 10)))
+ball = sphere(4.0, position=(0, 0, 10))
 part = union(shell_, ball)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)

@@ -28,24 +28,26 @@ space, (lo, hi) = parts[0]
 box_lo, box_hi = (-78, -92, -63), (78, 38, 31)
 shift = 1.2 * (box_hi[0] - box_lo[0])
 view.set_bounds([box_lo[0] - 5, box_lo[1] - 5, box_lo[2] - 5], [box_hi[0] + 2 * shift + 5, box_hi[1] + 5, box_hi[2] + 5], auto_scale=True)
-view.set_resolution(1)
+view.set_resolution(5)
 view.set_quality(8)
 
 # the bolting plates (held), the lug ends (the pull acts here) and the two bolt holes with the ring of material round each: they stay as they are
-plates = union(box((-76, 5, -61), (-45, 36, 29)),
-               box((45, 5, -61), (76, 36, 29)))
+plates = union(box((31, 31, 90), position=(-60.5, 20.5, -16)),
+               box((31, 31, 90), position=(60.5, 20.5, -16)))
 # hidden: plates
-lugs = box((-60, -90, -61), (60, -60, 29))
+lugs = box((120, 30, 90), position=(0, -75, -16))
 # hidden: lugs
-holes = union(box((-48, -88, -22), (-26, -44, 22)),
-              box((26, -88, -22), (48, -44, 22)))
+holes = union(box((22, 44, 44), position=(-37, -66, 0)),
+              box((22, 44, 44), position=(37, -66, 0)))
 # hidden: holes
 design = exclude(space, holes)
 # hidden: design
 
 # the bracket as the optimizer makes it from the loads and the supports alone
 opt_stress = static_analysis(design, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, element_size=5)
-opt = topology_optimization(opt_stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.5'])
+compliance_1 = opt_stress.compliance
+volume_fraction_1 = opt_stress.volume_fraction
+opt = topology_optimization(opt_stress, conditions=[minimize(compliance_1), keep_below(volume_fraction_1, 0.5)])
 # hidden: opt
 bracket = opt.shape()
 # hidden: bracket

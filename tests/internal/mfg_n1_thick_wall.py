@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('n1_thick_wall: a thick wall (5 mm) for a 0.8 mm rule: nothing to do, nothing may change')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-wall = box((0, 0, 0), (5, 16, 24))
+wall = box((5, 16, 24), position=(2.5, 8, 12))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

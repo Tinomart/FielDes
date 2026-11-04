@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('g1_slot_fill: two blocks 2 mm apart, a 4 mm gap asked: the slot is closed, level with the faces')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((0, 0, 0), (12, 16, 18)), box((14, 0, 0), (26, 16, 18)))
+part = union(box((12, 16, 18), position=(6, 8, 9)), box((12, 16, 18), position=(20, 8, 9)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_gap=4.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

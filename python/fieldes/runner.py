@@ -250,6 +250,23 @@ def run(s, breakpoints=None, **env):
         'printed': io.StringIO(),
     }
     state['printed'].write(block_trouble)
+    import os
+    profile_to = os.environ.get('FIELDES_PROFILE_RUN')
+    if profile_to:
+        # (a profile of the whole run, inside the program, for whoever measures what a run costs: FIELDES_PROFILE_RUN=<file> appends the 45 most expensive calls of every run to that file; nothing
+        # is done without it)
+        import cProfile
+        import pstats
+        profiler = cProfile.Profile()
+        try:
+            return profiler.runcall(_continue, state, breakpoints, skip_first=False)
+        finally:
+            try:
+                with open(profile_to, 'a', encoding='utf-8') as out:
+                    out.write('=== run of %d statements ===\n' % len(state['body']))
+                    pstats.Stats(profiler, stream=out).sort_stats('cumulative').print_stats(45)
+            except Exception:
+                pass
     return _continue(state, breakpoints, skip_first=False)
 
 
@@ -355,6 +372,7 @@ def apply_edit(new_text):
     global running_source
     with st['lock']:
         plan = plan_edit(new_text)
+        _tlog('an edit is offered to the run that is going: %s' % ('it goes into the run' if isinstance(plan, dict) else 'it does not (%s)' % (plan,)))
         if not isinstance(plan, dict):
             return ''
         out, lines, body, gs = st['out'], st['lines'], st['body'], st['gs']
@@ -425,6 +443,7 @@ def stop_after_statement():
         result, a field), so that the run that follows finds it made -- for an edit below it that cannot be put into the run '''
     st = running_state
     if st is not None:
+        _tlog('an edit asks the run to stop when its statement is done')
         st['stop'] = True
 
 
@@ -513,6 +532,39 @@ def _partial_scenes(state):
         return None
 
 
+def _profiled(code, gs, line):
+    ''' (a measurement for the lag of H68c, only with FIELDES_PROFILE set) runs a statement under cProfile, and writes where its time went to the window's log when it took more than a second '''
+    import cProfile
+    import io
+    import pstats
+    import sys
+    import time
+    pr = cProfile.Profile()
+    started = time.time()
+    pr.enable()
+    try:
+        return exec(code, gs)
+    finally:
+        pr.disable()
+        if time.time() - started > float(__import__('os').environ.get('FIELDES_PROFILE_MIN', '1.0')):
+            for how in ('tottime', 'cumulative'):
+                buf = io.StringIO()
+                pstats.Stats(pr, stream=buf).sort_stats(how).print_stats(25)
+                sys.__stderr__.write('[runner] line %d took %.1f s under the profiler; by %s:\n%s\n' % (line, time.time() - started, how, buf.getvalue()))
+            sys.__stderr__.flush()
+
+
+def _tlog(message):
+    ''' With FIELDES_TIMING set (a test window's launcher sets it, the program as the user starts it does not): one line of the window's log with the clock the automation lines use, so that what a run does
+        can be put beside what the window was told (the lag when a point is dragged out of a face, H68c) '''
+    import os
+    if os.environ.get('FIELDES_TIMING'):
+        import sys
+        import time
+        sys.__stderr__.write('[at %d ms] [runner] %s\n' % (int(time.time() * 1000) % 100000000, message))
+        sys.__stderr__.flush()
+
+
 def _continue(state, breakpoints, skip_first):
     global last_lines, last_scene, last_output, last_paused, _paused, last_globals, last_hole, last_partial, running_lines, running_source
     global running_state
@@ -542,6 +594,7 @@ def _continue(state, breakpoints, skip_first):
     if progress_lib:
         progress_lib.libfive_run_begin(len(body))
     state['t0'] = time.time()
+    _tlog('a run begins: %d statements' % len(body))
     running_source = state['s']
     state['breakpoints'] = list(breakpoints or ())          # (an edit that moves the lines of the statements below it asks whether lines matter)
     lock = state.setdefault('lock', threading.RLock())
@@ -554,6 +607,7 @@ def _continue(state, breakpoints, skip_first):
                 # (an edit that does not reach the statement that runs is put into the run between its statements: see apply_edit)
                 with lock:
                     if state['stop']:
+                        _tlog('the run is stopped before statement %d: an edit asked for it' % state['i'])
                         raise Exception()   # (a run that an edit has replaced ends so: nothing is shown of it)
                     i = state['i']
                     if i >= len(body):
@@ -590,6 +644,10 @@ def _continue(state, breakpoints, skip_first):
                     break
                 state['skip'] = -1
                 running_lines = (p.lineno, p.end_lineno)
+                _t_stmt = time.time()
+                _c_stmt = time.thread_time()
+                _tlog('line %d begins' % p.lineno)
+                _s0 = _s1 = _s2 = _s3 = _s4 = _s5 = time.time()          # (a measurement of where a statement's time goes, only printed with FIELDES_TIMING: H72)
                 run_progress.end_to(0)
                 if progress_lib:
                     progress_lib.libfive_run_step(i, run_progress._b(_step_label(source_lines, p)))
@@ -605,8 +663,11 @@ def _continue(state, breakpoints, skip_first):
                     f = compile(mod, '<file>', 'exec')
                     # A field built by `name = ...` that has been built before from the same inputs is not built again
                     # (see field_cache.py): in this session, or from the file an earlier session kept
+                    _s0 = time.time()
                     inputs = made_from.reads(p, gs)         # (the models it reads, before it runs: see made_from.py)
+                    _s1 = time.time()
                     hit, key = field_cache.lookup(p, gs, source_lines)
+                    _s2 = time.time()
                     if hit is not None:
                         gs[p.targets[0].id] = hit[0]
                         if hit[1]:
@@ -615,16 +676,27 @@ def _continue(state, breakpoints, skip_first):
                     else:
                         before = len(state['printed'].getvalue())
                         started = time.time()
-                        r = exec(f, gs)
+                        if __import__('os').environ.get('FIELDES_PROFILE'):
+                            r = _profiled(f, gs, p.lineno)
+                        else:
+                            r = exec(f, gs)
+                        _s3 = time.time()
                         if key is not None:
                             field_cache.store(key, gs.get(p.targets[0].id), state['printed'].getvalue()[before:],
                                               time.time() - started)
+                        _s4 = time.time()
                     made_from.note(p, gs, inputs)           # (the model keeps the models it was made from: a field the cache handed back too -- these are this run's)
                 with lock:
                     i = state['i']      # (an edit put into the run while the statement ran has moved it: see apply_edit)
+                    _took = time.time() - _t_stmt
+                    if _took > 0.05:
+                        _tlog('line %d took %.0f ms wall, %.0f ms of cpu of the thread that runs the script' % (p.lineno, _took * 1000, (time.thread_time() - _c_stmt) * 1000))
                     out.append(r)
                     lines.append((p.lineno, p.end_lineno))
+                    _s5 = time.time()
                     outline.record(p, state['src'], gs, r)
+                    if time.time() - _t_stmt > 0.5:
+                        _tlog('line %d stages: reads %.0f ms, lookup %.0f ms, exec %.0f ms, store %.0f ms, note+lock %.0f ms, record %.0f ms' % (p.lineno, (_s1 - _s0) * 1000, (_s2 - _s1) * 1000, (_s3 - _s2) * 1000, (_s4 - _s3) * 1000, (_s5 - _s4) * 1000, (time.time() - _s5) * 1000))
                     if pending:
                         # (a name that a statement that waits would have made is made by this one after all: nothing waits for it any more)
                         pending -= {n.id for n in ast.walk(p) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
@@ -646,6 +718,7 @@ def _continue(state, breakpoints, skip_first):
         raise
     finally:
         running_lines = None
+        _tlog('the run ends')
         with lock:
             running_state = None            # (an edit now finds no run to put itself into: it makes one)
         if watcher:

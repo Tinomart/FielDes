@@ -20,7 +20,7 @@ from mfgkit import *
 t = Table('x5_grit_texture: a plate 24 x 24 x 4 with a grit texture (bumps and pits 0.3 mm high, 1.5 mm across) on every face, an inside corner radius of 1 mm and a wall of 0.8 asked: a surface that is nowhere flat; the tool must not run away -- nothing added farther than 0.6 mm from the part, the texture still a texture')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = texture(box((0, 0, 0), (24, 24, 4)), 'grit', depth=0.3, size=1.5)
+part = texture(box((24, 24, 4), position=(12, 12, 2)), 'grit', depth=0.3, size=1.5)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_radius=1.0, min_wall=0.8)
 lo, hi = (-2, -2, -2), (26, 26, 6)

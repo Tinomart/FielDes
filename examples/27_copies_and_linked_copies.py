@@ -17,20 +17,20 @@
 from fieldes import *
 
 view.set_bounds([-15, -15, -5], [95, 55, 40], auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 # A plate with a lug, and a copy of the lug that was made thicker.
-base = box((-10, -10, 0), (90, 40, 4))
+base = box((100, 50, 4), position=(40, 15, 2))
 base
-lug = box((0, 10, 4), (14, 20, 24))
+lug = box((14, 10, 20), position=(7, 15, 14))
 lug
-lug_2 = box((60, 10, 4), (74, 20, 24))
+lug_2 = box((14, 10, 20), position=(67, 15, 14))
 lug_2 = handles(lug_2, [var(67.0), var(7.0), var(18.0), var(8.0), var(14.0), var(10.0)])
 lug_2
 
 # One bolt, drawn with its numbers as handles, and three linked copies of it set out along the plate.
-bolt = cylinder(3, 12, (20, 30, 4))
+bolt = cylinder(3, 12, position=(20, 30, 10))
 bolt = handles(bolt, [var(20.0), var(30.0), var(3.0), var(4.0), var(16.0)])
 bolt
 bolt_2 = instance(bolt,

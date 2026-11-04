@@ -188,9 +188,8 @@ fields of a solver (a result coloured by stress) cannot: the solvers have caches
 `manufacturing_optimization` can -- its fields are expressions -- and its mesh is kept with the values of every field at its vertices (the key holds each field).
 The meshes that come with the program (`seed-cache/render-cache`, the pictures of the guided tour's printer steps) are read where they are when the
 folder has none. The folder holds at
-most 4 GB (`FIELDES_RENDER_CACHE_MB` changes that), oldest files first out; **Settings → Clear the caches**
-deletes all of it (and the field cache's files). The mesher's output changes now and then; the cache then starts anew by a version number
-(`kRenderCacheVersion`), not on every build.
+most 2 GB (`FIELDES_RENDER_CACHE_MB` changes that), the least recently used files first out; **Settings → Clear the caches**
+deletes all of it (and the field cache's files). A mesh is tied to the build that made it (its key holds the time of the program and of the Python library), so a new build never shows a mesh of an older one, and the first start of a new build deletes the old ones from the folder. The program also tidies the folder as it runs, 20 s after a start and every six hours: a mesh that none of the files you opened lately still holds, and one nothing has asked for in two weeks, is deleted. The window's status bar ends with the build it is (`build 2026-11-03 20:05`), so that a picture and a bug report say which program they came from.
 
 ## Editing while it runs
 
@@ -245,23 +244,25 @@ Building the tree is fast: 400 models take about 60 ms (the rows are made apart 
 ## Resolution and quality
 
 The viewport meshes the script's shapes over `view.set_bounds(...)` at `view.set_resolution(...)`
-(samples per mm) and `view.set_quality(...)` (1–10, mesh accuracy). The mesher splits the region in
-halves until a cell is no larger than `1 / resolution`, so **the cost changes in steps** of four to six
-times the vertices at every halving: doubling a resolution that just misses a halving costs nothing extra
+(ten samples across the longest side of a model for every unit of it: a hundred at the default 10) and `view.set_quality(...)` (1–10, mesh
+accuracy). The mesher splits the region in halves until a cell is no larger than one over the samples per mm that comes to, so **the cost
+changes in steps** of four to six times the vertices at every halving: doubling a resolution that just misses a halving costs nothing extra
 until it crosses one. `roi_resolution` picks resolutions that are whole numbers of halvings.
 
-- **Every model is meshed at a resolution of its own**, scaled from `view.set_resolution`: that number is for a model as big as
-  the region; a model that is smaller gets finer in proportion to the square root of how many times smaller it is (at most 2000
-  samples across it, never below the number you set), so a large and a small part render at the same time without the small one
-  being a jumble of triangles. Raise `view.set_resolution` and every model gets finer. The quick first picture is sized by the model
-  too, not by the region. Models that have a resolution of their own (an imported part's, a render hint) keep it.
+- **The resolution is normed by the size of every model.** `view.set_resolution(r)` is how many samples go across the longest side of the box of a model -- ten for every
+  unit of `r` (at most 2000) -- whatever the size of the model in mm and whatever is next to it. Scaling a model does not change its number of triangles, and a huge
+  cylinder next to a small one have the same number of vertices. A model whose box could not be found (a formula too large to search, a shape drawn from its points)
+  is normed by the box of the mesh it has, and by the region for its first picture. A result whose fields are expressions (the optimization of a topology, a check of a process) is a model like any other and is normed like one; the result of a solver is read from its elements and is meshed at the scene's resolution as samples per mm. Raise `view.set_resolution` and every model gets finer; the quick first picture is sized
+  by the model too. Models that have a resolution of their own (an imported part's, a render hint) keep it, as samples per mm, and so does a script that writes
+  `auto_scale=False` (every model is meshed at the scene's resolution as samples per mm). `fieldes.view.resolution_per_mm(size)` says the samples per mm that comes to for a model `size` mm
+  long; the exports (`export_mesh`, `export_layers`, `export_field`) use it when they are not given a resolution.
 - Too coarse: thin walls and small features vanish (a lattice with 0.6 mm walls wants 3 samples per mm or
-  more).
-- Too fine for the region: minutes of meshing (and gigabytes). Cancel with `Esc` and lower it.
+  more: for a part 100 mm long that is 300 samples across, so `view.set_resolution(30)`).
+- Too fine: minutes of meshing (and gigabytes). Cancel with `Esc` and lower it.
 - For imports, prefer `roi_resolution(model)` — every part gets its own resolution. See
   [Region and resolution](step-import.md#region-and-resolution).
 - `view.set_quality(8)` is a good default; lower numbers are faster and rougher.
-- **One body that needs more (or less) than the scene**: `custom_resolution(body, 8)` draws that body as if the scene's resolution (`view.set_resolution`) were 8 -- the SAME number, so `custom_resolution(body, 2)` in a scene at 2 is the body as it was and twice as much is twice as fine, and it is made finer for a small body in a big region by how small it is, as the scene's is (there is no need to write a number far from the scene's to get a picture as fine as its own). A fine part does not make the whole scene fine. It is a **property row under the variable** in the model tree -- an argument like any other: click it and its number is selected in the code, ready to be typed over; the bin takes the line away -- and an entry of the right-click menu. The finest a body can be drawn is 2000 samples along its longest side; a number above that is not an error: the body is drawn at the finest there is.
+- **One body that needs more (or less) than the scene**: `custom_resolution(body, 8)` draws that body as if the scene's resolution (`view.set_resolution`) were 8 -- the SAME number, so `custom_resolution(body, 2)` in a scene at 2 is the body as it was and twice as much is twice as fine, and it is normed by the size of the body, as the scene's is. A fine part does not make the whole scene fine. It is a **property row under the variable** in the model tree -- an argument like any other: click it and its number is selected in the code, ready to be typed over; the bin takes the line away -- and an entry of the right-click menu. The finest a body can be drawn is 2000 samples along its longest side; a number above that is not an error: the body is drawn at the finest there is.
 - **Quality of the exact STEP surface** is separate: `exclude(..., quality=64)` (points per full turn of a
   circle). The locked field of an excluded STEP part (its tessellation and the distance structure of the
   triangles) is made once per part and kept in memory while the script is run again; the kernel keeps the

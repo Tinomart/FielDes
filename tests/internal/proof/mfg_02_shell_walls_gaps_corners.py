@@ -27,10 +27,10 @@ view.set_bounds([-10, -75, -5], [75, 45, 30], auto_scale=True)
 view.set_resolution(3)
 view.set_quality(8)
 
-fin = box((0, 0, 0), (1.5, 16, 24))
-slot = union(box((20, 0, 0), (32, 16, 18)), box((34, 0, 0), (46, 16, 18)))
+fin = box((1.5, 16, 24), position=(0.75, 8, 12))
+slot = union(box((12, 16, 18), position=(26, 8, 9)), box((12, 16, 18), position=(40, 8, 9)))
 # (the L is turned half a turn about z, so that its inside corner faces the viewer)
-corner = rotate_z(union(box((52, 0, 0), (82, 3, 20)), box((52, 0, 0), (55, 30, 20))), math.pi, center=(67, 15, 0))
+corner = rotate_z(union(box((30, 3, 20), position=(67, 1.5, 10)), box((3, 30, 20), position=(53.5, 15, 10))), math.pi, center=(67, 15, 0))
 
 print('BY HAND: fin +960 (up to 1008 with the margin), slot +576, corner +154.5 mm^3, nothing removed')
 better_fin = manufacturing_optimization(fin, constraints=[manufacturing_constraint(min_wall=4.0)], max_change=3.0)

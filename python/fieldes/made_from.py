@@ -47,3 +47,85 @@ def note(p, namespace, before):
             value._made_from = made
         except AttributeError:
             pass
+        _note_feature(value, made)
+        _note_carried(value)
+
+
+def carried(shape, depth=0):
+    ''' The gizmos (`_gizmo`: mode, about, move, rotate, scale) of the lowest parts a model is made of that are placed by numbers a gizmo drags: a part is the lowest where it has such numbers
+        of its own, the models a part is made of are not looked into.  Points are not parts (a profile, a line, a body of points is placed through its points, which the viewport shares the gizmo of) '''
+    from fieldes.shape import Shape
+    out = []
+    if depth > 24:
+        return out
+    for m in getattr(shape, '_made_from', None) or ():
+        if hasattr(m, 'xyz'):
+            continue
+        own = getattr(m, '_gizmo', None)
+        if own is not None and len(own) == 5 and any(isinstance(v, Shape) for part in own[2:5] for v in part):
+            out.append(own)
+            continue
+        out.extend(carried(m, depth + 1))
+    return out
+
+
+def _note_carried(value):
+    ''' A model made of others that has no numbers of its own to be placed by carries the gizmos of its parts (`value._carried`): the viewport moves, turns and scales those with it -- the one
+        position of an operation is where its parts put it, and the operation and its parts stay on top of each other (the user, 2026-11-03, H93: "the operation and the underlying parts should
+        always stay on top of each other ... only a one way link is necessary").  Nothing of it is written in the script: the parts and the operation are what the script says they are '''
+    if getattr(value, '_gizmo', None) is not None or hasattr(value, 'xyz') or callable(getattr(value, '_remake', None)) or getattr(value, '_sweep_ppos', None) is not None:
+        return
+    found, seen = [], set()
+    for g in carried(value):
+        if id(g) not in seen:
+            seen.add(id(g))
+            found.append(g)
+    if found:
+        try:
+            value._carried = tuple(found)
+        except AttributeError:
+            pass
+
+
+def _smallest_feature(shape, depth=0):
+    ''' The size of the smallest feature of what a model is, in mm, or None: the pitch of a threaded rod (`_feature_size`) -- scaled by the placement the rod was given -- or, for a model
+        made of others, the smallest of theirs '''
+    from fieldes.shape import Shape
+    if depth > 8 or not isinstance(shape, Shape):
+        return None
+    node, own = shape, None
+    for _ in range(8):
+        own = getattr(node, '_feature_size', None)
+        node = getattr(node, '_placed_from', None)
+        if own is not None or node is None:
+            break
+    if own is None:
+        sizes = [f for f in (_smallest_feature(m, depth + 1) for m in getattr(shape, '_made_from', None) or ()) if f]
+        return min(sizes) if sizes else None
+    own = float(own)
+    gizmo = getattr(shape, '_gizmo', None)
+    if gizmo is not None and len(gizmo) > 4:
+        try:
+            from fieldes.stdlib.curves import value_of
+            own *= min(abs(float(value_of(c) if isinstance(c, Shape) else c)) for c in gizmo[4])
+        except (TypeError, ValueError):
+            pass
+    return own if own > 1e-9 else None
+
+
+def _note_feature(value, made):
+    ''' A model made of others has the smallest feature of theirs: a difference of a threaded rod and a cylinder is drawn at a resolution that shows the turns of the thread, not at the one the
+        cylinder asks for (the user, 2026-10-28: the rim of the hole was torn lumps) '''
+    node = value
+    for _ in range(8):
+        if getattr(node, '_feature_size', None) is not None:
+            return
+        node = getattr(node, '_placed_from', None)
+        if node is None:
+            break
+    sizes = [f for f in (_smallest_feature(m) for m in made) if f]
+    if sizes:
+        try:
+            value._feature_size = min(sizes)
+        except AttributeError:
+            pass

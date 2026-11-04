@@ -29,8 +29,12 @@ class App : public QApplication
     Q_OBJECT
 public:
     App(int& argc, char** argv);
+    /*  With FIELDES_TIMING: the stall clock of main.cpp calls it at every tick with the time since the tick before.  When that is long it writes what the events of the stall were -- how many of each
+     *  kind for which object and how long they took in all -- and it forgets them for the next stall  */
+    static void eventStatsReport(qint64 gap);
 protected:
     bool event(QEvent* event) override;
+    bool notify(QObject* receiver, QEvent* event) override;       // (with FIELDES_TIMING: the events that the window thread takes 80 ms or more for are logged)
 
     QScopedPointer<Window> window;
     QScopedPointer<AppWindow> appWindow;

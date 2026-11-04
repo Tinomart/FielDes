@@ -80,6 +80,11 @@ public:
     /*  A body force per unit mass (gravity, mm/s^2): f = rho g  */
     void setBodyForce(Eigen::Vector3d g);
 
+    /*  A mesh made elsewhere (meshFromArrays) in place of the one prepare() makes from the shape: the part, the conditions and the material are as they were, only
+     *  the elements are the user's.  The shape stays what the 10-node element's curved edges are measured against, and `h` of the constructor is then the size a
+     *  node's distance to a region is measured in (a twentieth of it).  Before prepare  */
+    void setMesh(std::shared_ptr<const TetMesh> mesh) { m_given = std::move(mesh); m_prepared = false; }
+
     struct Options
     {
         bool stokes = false;            // leave the convection out (creeping flow)
@@ -224,6 +229,7 @@ private:
     Tree m_shape;
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_rho, m_mu;
+    std::shared_ptr<const TetMesh> m_given;     // (a mesh made elsewhere: see setMesh)
     Eigen::Vector3d m_g = Eigen::Vector3d::Zero();
     std::vector<Inlet> m_inlets;
     std::vector<Outlet> m_outlets;

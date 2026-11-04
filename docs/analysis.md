@@ -42,9 +42,9 @@ hole). Nothing is selected by clicking faces: you describe where.
 | `thermal_expansion(temperature, reference=20)` | See [Thermal stress](#thermal-stress). |
 
 ```python
-plates = union(box((-76, 5, -61), (-45, 36, 29)),
-               box((45, 5, -61), (76, 36, 29)))
-lugs = box((-60, -90, -61), (60, -60, 29))
+plates = union(box((31, 31, 90), position=(-60.5, 20.5, -16)),
+               box((31, 31, 90), position=(60.5, 20.5, -16)))
+lugs = box((120, 30, 90), position=(0, -75, -16))
 ```
 
 View the regions by displaying them together with the part (and hide them afterwards with the eye in the
@@ -63,7 +63,7 @@ each kind of condition it takes; a kind it has none of is `[]`:
 |---|---|
 | `static_analysis(part, supports, loads, material=steel, ...)` | `supports` (`fixed(...)`), `loads` (`force(...)`, `gravity(...)`, `thermal_expansion(...)`) |
 | `modal_analysis(part, supports, material=steel, ...)` | `supports` |
-| `topology_optimization(analysis, constraints, ...)` | none of its own: the problem is the **analysis** it is given -- its part, supports, loads and material (a list of analyses is several load cases, see [Topology optimization](#topology-optimization)); of a `thermal_analysis`: its part, conditions and material |
+| `topology_optimization(analysis, conditions, ...)` | none of its own: the problem is the **analysis** it is given -- its part, supports, loads and material (a list of analyses is several load cases, see [Topology optimization](#topology-optimization)); of a `thermal_analysis`: its part, conditions and material |
 | `thermal_analysis(part, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium, ...)` | those four |
 | `fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, ...)` | those three (`boundaries` takes `wall(...)` and `slip(...)` items, one kind or both); the flow goes around the `body`, inside the `domain` |
 
@@ -316,7 +316,7 @@ just grow. Static analysis only.
 
 ## Topology optimization
 
-`topology_optimization(analysis, constraints, iterations=100, filter_radius=None, keep=None, avoid=None, grow=0.0, extrude=None,
+`topology_optimization(analysis, conditions, iterations=100, filter_radius=None, keep=None, avoid=None, grow=0.0, extrude=None,
 penalty=3, sharpness=16, symmetry='auto', tolerance=1e-5, cache=True)` finds the layout of material, inside the part of an analysis,
 that is best for what you ask of it. **The analysis is the problem**: its part is the design space, and its supports, loads and
 material are what the design is made for. Anything the analysis measures can be the goal or a condition, as in
@@ -325,36 +325,72 @@ material are what the design is made for. Anything the analysis measures can be 
 ```python
 stress = static_analysis(part, supports=[fixed(base)], loads=[force(lug, (0, 0, -300))], material=steel, element_size=2)
 
-stiffest = topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.3'])
-lightest = topology_optimization(stress, constraints=[minimize('mass'), 'max_von_mises <= 120', 'max_displacement <= 0.4'])
+compliance_1 = stress.compliance                 # the numbers the design is asked about, each one result of this analysis
+volume_fraction_1 = stress.volume_fraction
+mass_1 = stress.mass
+max_von_mises_1 = stress.max_von_mises
+max_displacement_1 = stress.max_displacement
+
+stiffest = topology_optimization(stress, conditions=[minimize(compliance_1), keep_below(volume_fraction_1, 0.3)])
+lightest = topology_optimization(stress, conditions=[minimize(mass_1), keep_below(max_von_mises_1, 120), keep_below(max_displacement_1, 0.4)])
 ```
 
-**`constraints`** is one list. `minimize(x)` makes x as small as it can be and `maximize(x)` as large (at most one of them; without
-one the design only has to keep the conditions). The conditions are comparisons in a text -- `'volume_fraction <= 0.3'`,
-`'max_von_mises <= 90'`, an exact value `'frequencies[0] == 100'` (kept to within a thousandth), a range `'80 <= frequencies[0] <= 120'`
--- or functions of the result that are 0 or less when kept. x is a **measure** of the design: the name of one of its numbers, a formula of
-them (`'mass + 0.01 * compliance'`) or a function of the result (`lambda r: r.max_von_mises / r.mass`). What a design measures:
+**`conditions`** is one list of **optimization conditions**, each made from results of the analysis; nothing else is read in it -- no text, no function. A **result** is one result of
+one analysis -- the von Mises stress, the deformation, a temperature, a frequency, a drag force: not a whole simulation -- `stress.max_von_mises`. It is a field
+too, so it works in every expression, and it carries its name, unit and number (`.value`); without a kind it is the result the analysis is mainly about, and an analysis given to a condition stands for that result (`minimize(stress)`). The conditions say what the
+optimization does with results:
+
+| Condition | |
+|---|---|
+| `keep_below(result, limit)` | the result stays at most `limit` |
+| `keep_above(result, limit)` | at least `limit` |
+| `keep_between(result, lower, upper)` | between the two limits; with both the same number, at that value (kept to within a thousandth) |
+| `minimize(result)`, `maximize(result)` | the goal: the result as small, or as large, as it can be -- at most one goal; without one the design only has to keep the conditions |
+| `optimization_condition(condition)` | one condition written whole, a comparison of results and numbers: `optimization_condition(max_von_mises_1 <= 90)`, `optimization_condition(mass_1 / volume_1 < 5)`. It is the parent of the five above, and it must have an analysis result in it: a condition that no analysis can change is refused |
+
+A result in a formula is still a result: `minimize(mass_1 + 0.01 * compliance_1)`, `maximize(lift_force_1 / drag_force_1)`, `keep_below(max_von_mises_1 * 1.5, 200)`. A chained comparison such as
+`10 < max_von_mises_1 < 90` cannot hold a condition (Python reads it with `and`), so it is refused and the message points to `keep_between`. A condition made of the results of one analysis
+is kept in that analysis; one made of the results of several analyses (the load cases of one design) reads each result in its own. They are all in the *Optimization condition* section of
+the Engineering menu of a result, so no line has to be written by hand (the result itself is not an entry of any menu: it is a class internal to the simulations; the menu writes the
+call for the result that is selected, with the limits as placeholders):
+
+```python
+von_mises_1 = stress.max_von_mises                 # one result of the analysis
+limit_1 = keep_below(von_mises_1, 90)                                  # at most 90 MPa
+goal_1 = minimize(stress.mass)
+best = topology_optimization(stress, conditions=[goal_1, limit_1])
+```
+
+The results an analysis offers -- the names a result and a formula can use -- are one table (`register_result_kind` in `analysis_results.py`): a new kind of
+result is a new row there, and the optimizer, the results and their error messages follow it. A result that is only a field (the velocity or the pressure of
+a flow) is a result, but no optimization can be asked about it: the error says which numbers it can be asked about. What a design measures:
 
 | Measure | |
 |---|---|
 | `volume_fraction`, `volume`, `mass` | the share of the part's volume the design uses (`1` is all of it), its volume, its mass |
 | `compliance` | from a static analysis: the work of the loads (lower is stiffer) |
 | `max_von_mises`, `safety_factor` | from a static analysis: the peak stress (see below), and the material's yield over it |
-| `max_displacement`, `ux(x, y, z)`, `uy(...)`, `uz(...)`, `displacement(...)` | from a static analysis: the largest displacement, and the displacement at a place |
+| `max_displacement` | from a static analysis: the largest displacement |
 | `frequencies[i]` | from a modal analysis: the natural frequency (Hz) |
 
+The displacement or the temperature at one place is a result too: a field result is read there with `.at(x, y, z)`, and `keep_below(stress.uz.at(100, 0, 0), 0.5)` keeps the
+movement of that place below half a millimetre (`ux`, `uy`, `uz` and `displacement` of a static analysis, `temperature` of a thermal one).
+
 A name the design does not have is refused with the list of those it has. Because the problem is the analysis, a stress limit, a
-frequency or a displacement need no switch: `[stress, vibration]` makes the design for both, and `'frequencies[0] >= 80'` is one more
-line in `constraints`.
+frequency or a displacement need no switch: `[stress, vibration]` makes the design for both, and `keep_above(frequency_1, 80)` is one more
+line in `conditions`.
 
 **Several load cases.** Several loads in **one** analysis act together (and cancel where they oppose). To make a part for **several cases**
 -- pushed *and* pulled, held here in one use and there in another -- give a **list of analyses** of the same part: each is simulated completely
-separately, and the design is made for all of them (the compliances of the cases are added up, a limit is kept in each one):
+separately, and the design is made for all of them (what is asked of the cases is written out: the compliances added up, a limit for each case):
 
 ```python
 push = static_analysis(part, supports=[fixed(base)], loads=[force(lug, (0, 0, -300))], material=steel)
 pull = static_analysis(part, supports=[fixed(base)], loads=[force(lug, (0, 0, +300))], material=steel)
-design = topology_optimization([push, pull], constraints=[minimize('compliance'), 'volume_fraction <= 0.3'])
+compliance_push = push.compliance
+compliance_pull = pull.compliance
+volume_fraction_1 = push.volume_fraction
+design = topology_optimization([push, pull], conditions=[minimize(compliance_push + compliance_pull), keep_below(volume_fraction_1, 0.3)])
 ```
 
 | Option | |
@@ -427,17 +463,19 @@ stays whole or goes empty, the input is off: check the supports and the loads (a
 of the model), the limits, and the element size. The picture is only a picture -- nothing is computed from it -- and it
 goes when the optimisation ends and the result takes its place. (The flow topology optimisation does too, below.)
 
-**Topology optimization of a thermal analysis** (`topology_optimization(sink, constraints=[...])`, `sink` the result of a `thermal_analysis` with tetrahedral elements) designs the material of the part
-for what is asked of its temperature, with the same optimiser, the same list of constraints and the same options as a structure (`keep`, `avoid`, `extrude`, `symmetry`, `iterations`, `filter_radius`, `sharpness`):
+**Topology optimization of a thermal analysis** (`topology_optimization(sink, conditions=[...])`, `sink` the result of a `thermal_analysis` with tetrahedral elements) designs the material of the part
+for what is asked of its temperature, with the same optimiser, the same list of conditions and the same options as a structure (`keep`, `avoid`, `extrude`, `symmetry`, `iterations`, `filter_radius`, `sharpness`):
 
 ```python
 sink = thermal_analysis(plate, [fixed_temperature(base, 20)], [heat_input(chip, 10.0)], [], [], aluminium, element_size=1.0)
-best = topology_optimization(sink, constraints=[minimize('input_temperature'), 'volume_fraction <= 0.3'])
+input_temperature_1 = sink.input_temperature
+volume_fraction_1 = sink.volume_fraction
+best = topology_optimization(sink, conditions=[minimize(input_temperature_1), keep_below(volume_fraction_1, 0.3)])
 best.shape()                           # the layout of 30 % of the plate that keeps the chip coolest
 ```
 
 The numbers the formulas can read: `input_temperature` (the temperature the heat comes in at -- the mean temperature of the heat inputs, weighted by how much comes in at each place: the usual goal of a heat sink), `max_temperature` and
-`min_temperature` (the peaks of the temperature of the nodes, as p-norms brought to the peak), `max_heat_flux`, `temperature(x, y, z)`, and the design's `volume_fraction`, `volume` and `mass`.
+`min_temperature` (the peaks of the temperature of the nodes, as p-norms brought to the peak), `max_heat_flux`, the temperature at a place (`sink.temperature.at(x, y, z)`), and the design's `volume_fraction`, `volume` and `mass`.
 The held temperatures are the sinks, the heat inputs and generations the sources: the elements that hold a temperature or carry a heat input (over a surface, at a point) stay solid, a heat generation is
 a condition of the design space, as in the classic volume-to-point problem (its heat is made where its region is, material or not, and the conductors have to reach it; the analysis of the optimized part makes it
 in the part only), and material that nothing joins to a held temperature or a convecting surface is taken out. The conductivity of an element is the material's times its density to the power `penalty` (3 by default, a thousandth for an empty element). Convection acts on the surface of the part
@@ -452,13 +490,13 @@ follow the surface as the other analyses. `fluid_analysis` takes the body, the d
 `static_analysis` is to a structure -- the analysis that `topology_optimization` designs it for:
 
 ```python
-slab = box((0, 0, 0), (80, 40, 4))                           # a thin slab of water, open at its sides...
-post = cylinder(5, 6, (24, 20, -1))                              # ...with a round post standing in it
-faces = union(box((-1, -1, -1), (81, 41, 0.01)), box((-1, -1, 3.99), (81, 41, 5)))
-sides = union(box((-1, -1, -1), (81, 0.01, 5)), box((-1, 39.99, -1), (81, 41, 5)))
+slab = box((80, 40, 4), position=(40, 20, 2))                           # a thin slab of water, open at its sides...
+post = cylinder(5, 6, position=(24, 20, 2))                              # ...with a round post standing in it
+faces = union(box((82, 42, 1.01), position=(40, 20, -0.495)), box((82, 42, 1.01), position=(40, 20, 4.495)))
+sides = union(box((82, 1.01, 6), position=(40, -0.495, 2)), box((82, 1.01, 6), position=(40, 40.495, 2)))
 flow = fluid_analysis(post, slab,
-                      inlets=[inlet(box((-1, -1, -1), (0.01, 41, 5)), speed=4.0)],       # Re = U D / nu = 40
-                      outlets=[outlet(box((79.99, -1, -1), (81, 41, 5)), pressure=0)],
+                      inlets=[inlet(box((1.01, 42, 6), position=(-0.495, 20, 2)), speed=4.0)],       # Re = U D / nu = 40
+                      outlets=[outlet(box((1.01, 42, 6), position=(80.495, 20, 2)), pressure=0)],
                       boundaries=[slip(faces), slip(sides)],          # a two-dimensional flow (the post is a wall at rest: so is everything not named)
                       fluid=water, element_size=1.0)
 print(flow)                              # the flows, the pressure drop, the Reynolds number, the drag on the post
@@ -553,17 +591,20 @@ fluid domain is the space the body may fill, and what is asked is asked as for e
 
 ```python
 flow = fluid_analysis(post, slab, inlets=[...], outlets=[...], boundaries=[...], element_size=1.5)
-best = topology_optimization(flow, constraints=[minimize('drag_force'), 'volume_fraction == 1.0'], extrude='z')
-wing = topology_optimization(flow, constraints=[maximize('lift_force / drag_force'), 'volume_fraction <= 0.4'])
+drag_force_1 = flow.drag_force
+lift_force_1 = flow.lift_force
+volume_fraction_1 = flow.volume_fraction
+best = topology_optimization(flow, conditions=[minimize(drag_force_1), keep_between(volume_fraction_1, 1.0, 1.0)], extrude='z')
+wing = topology_optimization(flow, conditions=[maximize(lift_force_1 / drag_force_1), keep_below(volume_fraction_1, 0.4)])
 ```
 
-| The numbers the constraints read | |
+| The numbers the conditions read | |
 |---|---|
 | `drag_force`, `lift_force` | the force of the flow on the body along the flow and across it, N. The flow's direction is that of the inlets' `velocity=`, or from the middle of the inlets to the middle of the outlets; the lift direction is the one across it that is most nearly Z (Y for a flow along Z) |
 | `volume_fraction`, `volume` | the share of the body's own volume the design uses, and its volume (mm³) |
 
-A ratio, a sum or any formula of them is read the same way, and `==` keeps a number to within a thousandth from both sides (`'volume_fraction == 1.0'` keeps the
-body's volume). `keep` / `avoid` give regions that stay solid (a shaft, a mounting) and fluid (everything but a box round the post, so that the body is reshaped only
+A ratio, a sum or any formula of them is a result too (`maximize(lift_force_1 / drag_force_1)`), and `keep_between(x, v, v)` keeps a number at `v` to within a thousandth from both sides
+(`keep_between(volume_fraction_1, 1.0, 1.0)` keeps the body's volume). `keep` / `avoid` give regions that stay solid (a shaft, a mounting) and fluid (everything but a box round the post, so that the body is reshaped only
 where it is), what the body has excluded (`exclude()`) is kept by itself; `extrude='x'`, `'y'`, `'z'` makes the body the same all along that axis (a 2D shape in a 2D
 flow); `filter_radius` (mm, default 1.5 elements) is the smallest feature; `sharpness` how crisp the design is. **`symmetry='auto'`** (default), `None`, `'x'` /
 `'y'` / `'z'` or several (`'xz'`), or `{'y': 20.0}` with the plane's position: a symmetric problem gets a symmetric body -- when the domain, the body, the regions and the
@@ -620,23 +661,26 @@ analysis to the optimisation with the range of each variable and what is to be m
 ```python
 width = var(20)
 height = var(12)
-beam = box((0, 0, 0), (100, width, height))
-wall = fixed(box((-1, -1, -1), (1, 60, 60)))
-pull = force(box((99, -1, -1), (101, 60, 60)), (0, 0, -200))
+beam = box((100, width, height), position=(50, width / 2, height / 2))
+wall = fixed(box((2, 61, 61), position=(0, 29.5, 29.5)))
+pull = force(box((2, 61, 61), position=(100, 29.5, 29.5)), (0, 0, -200))
 stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=4)
 
+mass_1 = stress.mass
+max_von_mises_1 = stress.max_von_mises
+max_displacement_1 = stress.max_displacement
 best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)],
-                               constraints=[minimize('mass'), 'max_von_mises <= 90', 'max_displacement <= 0.5'])
+                               conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), keep_below(max_displacement_1, 0.5)])
 ```
 
 It is in the **Engineering** menu, directly (it works over an analysis of any domain, so it is in none of the categories): select a
-result and choose it, and the call is written with `variables=...` and `constraints=...` for you to fill in.
+result and choose it, and the call is written with `variables=...` and `conditions=...` for you to fill in.
 
 | Argument | |
 |---|---|
 | `analysis` | the result of an analysis made in this script and made of the `var()`s -- a static, modal, thermal or flow analysis. |
 | `variables` | `(var, low, high)`: the `var()` that is changed and the range it is looked for in; a list of them for several. |
-| `constraints` | what the design is for -- **one list**, as in [topology_optimization](#topology-optimization). **The goal**: `minimize(x)` makes x as small as it can be, `maximize(x)` as large (at most one) -- x is **a measure** of the result: the name of one of its numbers (`'mass'`, `'max_von_mises'`, `'max_displacement'`, `'compliance'`, `'safety_factor'`, `'volume'`, `'max_temperature'`, `'pressure_drop'`, `'frequencies[0]'` ...), an expression of them (`'mass + 0.01 * compliance'`: numbers, `+ - * / **`, `[index]`, `abs`, `min`, `max`, `sqrt`, `log`, `exp`), or a function of the result (`lambda r: r.max_von_mises / r.mass`); a name the result does not have is refused with the list of those it has. **What the best design keeps**: comparisons in a text (`'max_von_mises <= 90'`, `'frequencies[0] >= 80'`, an exact value `'frequencies[0] == 100'`, a range `'80 <= frequencies[0] <= 120'`), or functions of the result that give how much the limit is broken (0 or less when it is kept). A limit is kept when it is broken by less than a millionth of its size (an exact value: within a thousandth). Without a goal the search stops at the first design that keeps them. |
+| `conditions` | what the design is for -- **one list** of optimization conditions made from results of the `analysis`, as in [topology_optimization](#topology-optimization). **The goal**: `minimize(x)` makes x as small as it can be, `maximize(x)` as large (at most one) -- x is **a result** of the analysis or a formula of results (`mass_1`, `mass_1 + 0.01 * compliance_1`; the results an analysis offers include `mass`, `max_von_mises`, `max_displacement`, `compliance`, `safety_factor`, `volume`, `max_temperature`, `pressure_drop`, `frequencies[0]`). **What the best design keeps**: `keep_below(x, limit)`, `keep_above(x, limit)`, `keep_between(x, lower, upper)`, or one comparison written whole, `optimization_condition(x <= limit)`. A condition made from another analysis than `analysis` is refused. Without a goal the search stops at the first design that keeps the conditions. |
 | `max_evaluations` | how many designs it tries at most (default 20, and 10 for each variable). |
 | `tolerance` | it stops when it has closed in to this fraction of the ranges and nothing better comes (default 0.2 %). |
 | `apply` | `True` writes the best numbers into the `var()`s of the text when the run is over, the way dragging does. Otherwise they hold for the run only: the model, and everything after the call, is the best design, and the numbers in the text are as you wrote them. |
@@ -703,6 +747,32 @@ then halve `element_size` once and see whether the peak stress moved by more tha
 is a preconditioned conjugate gradient (multigrid for large voxel problems).
 
 **Measured on the bracket of example 05** (linear elements of 2 mm, 445,000 tetrahedra, a pull of 2 kN on the lugs): the peak von Mises stress was 58, 62, 67 and 67 MPa with the mesh lattice at four places (a quarter of an element apart in x), and 41 MPa on one more, while the largest displacement was 0.0498 to 0.0501 mm (0.6 %). The stress at a corner or a fillet is the mesh's, the displacement and the compliance are not: the safety factor of the example reads between 1.4 and 1.6 (it read 2.3 on the mesh of an earlier version), and a peak is to be trusted to no better than that before the element size is halved or `element='tet10'` is asked for.
+
+## A mesh of your own
+
+An analysis that is given a body meshes it itself: tetrahedra of **one size** (`element_size`) cut from a lattice laid over the body. The meshing operations ([meshing.md](meshing.md)) do more --
+a size that grows from the surface (`graded_size`), a size given by a field, a mesh that was mended after it was cut, 10-node elements -- so an analysis takes **the mesh in place of the part**:
+
+```python
+mesh = mesh_volume(bracket, graded_size(bracket, wall_size=0.6, growth_rate=1.3, max_size=5.0))     # fine at the surface, coarse inside
+result = static_analysis(mesh, supports=[fixed(base)], loads=[force(lug, (0, 0, -300))], material=steel)
+```
+
+`static_analysis`, `modal_analysis` and `thermal_analysis` take the mesh as their part, and `fluid_analysis` takes the mesh **of the fluid** as its `domain` (`mesh_volume(difference(domain, body), ...)`;
+the `body` is still given, for the drawing and the force on it). The analysis solves on those tetrahedra **exactly as they are**: none is added and none is dropped (one of no volume is, and one that is
+inside out is turned), so `result.elements` is the number of tetrahedra of the mesh. Everything else is as it was: supports and loads are regions (the nodes inside a region are held, the boundary
+faces inside it are loaded), a material or a load that is a field is read at the centre of each element, `element='tet10'` makes the quadratic element on the corners of the mesh, the result is drawn on
+the body the mesh was made of, and it is drawn as its own tetrahedra (a mesh has nothing but its cells: no body behind them and no Elements button). In the menu, a selected mesh row is offered the analyses; the row of an analysis accepts a mesh in its part.
+
+What a mesh must be for them:
+
+- **tetrahedra**: the default of `mesh_volume` (`element='tet'`), or `'tet10'`, whose four corners are taken. The solvers of FielDes work on tetrahedra, so a mesh of hexahedra, or one with the prisms of
+  `boundary_layers` (they are for the solver of another program), is refused, and the error says so;
+- **conforming**: two tetrahedra share a whole face or nothing (a mesh of `mesh_volume` is). A face that more than two tetrahedra share is refused;
+- the mesh of **a body**: `mesh_volume(body, ...)` remembers its body; the analysis draws on it, finds the bounds from the mesh, and a region is placed on it as ever.
+
+`element_size` beside a mesh is an error (the mesh is the elements: make it finer with `mesh_volume(body, element_size)`), and so is `element='hex'` (a voxel grid of its own). `topology_optimization` designs on
+its own lattice and takes the shape. The element size the result reports is the **middle edge length** of the mesh. An analysis of a mesh is cached by the content of the mesh: the same mesh asked again is not solved again.
 
 ## Caching
 

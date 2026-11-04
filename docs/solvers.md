@@ -17,9 +17,9 @@ FielDes solves its analyses (static, modal, thermal, flow) in C++, because that 
 ```python
 from fieldes import *
 
-plate = box((0, 0, 0), (60, 20, 3))
-cold = box((-1, -1, -1), (1, 21, 4))                 # where the plate is held at 20 degrees
-hot = box((59, -1, -1), (61, 21, 4))                 # and where it is at 80
+plate = box((60, 20, 3), position=(30, 10, 1.5))
+cold = box((2, 22, 5), position=(0, 10, 1.5))                 # where the plate is held at 20 degrees
+hot = box((2, 22, 5), position=(60, 10, 1.5))                 # and where it is at 80
 
 result = solve('heat', plate, fixed=[(cold, 20), (hot, 80)], conductivity=0.2)
 result                                               # displayed: the temperature, coloured on the plate
@@ -118,9 +118,9 @@ Gives the field `temperature` and the numbers `max_temperature`, `min_temperatur
 Gives the fields `von_mises`, `displacement`, `ux`, `uy`, `uz` and the numbers `max_von_mises`, `max_displacement`.
 
 ```python
-bar = box((0, 0, 0), (40, 10, 10))
-held = box((-1, -1, -1), (0, 11, 11))
-pulled = box((40, -1, -1), (41, 11, 11))
+bar = box((40, 10, 10), position=(20, 5, 5))
+held = box((1, 12, 12), position=(-0.5, 5, 5))
+pulled = box((1, 12, 12), position=(40.5, 5, 5))
 result = solve('elasticity', bar, element_size=2.5,
                fixed=[(held, (0, 0, 0))], forces=[(pulled, (10000, 0, 0))], young=210000)
 print(result.max_von_mises, result.max_displacement)          # 100 MPa, 0.019 mm: sigma = F / A, u = sigma L / E

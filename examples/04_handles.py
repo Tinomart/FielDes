@@ -19,7 +19,7 @@ from fieldes import *
 parts = import_model("step/PivotBearingSupportBracket.STEP")
 bracket = parts[0][0]
 view.set_bounds(*roi(parts), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 bracket = place(

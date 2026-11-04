@@ -25,10 +25,10 @@ spot = lambda k: (48.0 * (k % 3), 20.0 * (k // 3))                         # (th
 part = None
 for k, s in enumerate(spans):
     x0, y0 = spot(k)
-    piece = union(union(box((x0, y0, 0), (x0 + 4, y0 + 10, 8)), box((x0 + 4 + s, y0, 0), (x0 + 8 + s, y0 + 10, 8))), box((x0, y0, 8), (x0 + 8 + s, y0 + 10, 10)))
+    piece = union(union(box(((x0 + 4) - x0, (y0 + 10) - y0, 8), position=((x0 + (x0 + 4)) / 2, (y0 + (y0 + 10)) / 2, 4)), box(((x0 + 8 + s) - (x0 + 4 + s), (y0 + 10) - y0, 8), position=(((x0 + 4 + s) + (x0 + 8 + s)) / 2, (y0 + (y0 + 10)) / 2, 4))), box(((x0 + 8 + s) - x0, (y0 + 10) - y0, 2), position=((x0 + (x0 + 8 + s)) / 2, (y0 + (y0 + 10)) / 2, 9)))
     part = piece if part is None else union(part, piece)
 xl, yl = spot(5)
-ledge = union(box((xl, yl, 0), (xl + 4, yl + 10, 8)), box((xl, yl, 8), (xl + 20, yl + 10, 10)))
+ledge = union(box(((xl + 4) - xl, (yl + 10) - yl, 8), position=((xl + (xl + 4)) / 2, (yl + (yl + 10)) / 2, 4)), box(((xl + 20) - xl, (yl + 10) - yl, 2), position=((xl + (xl + 20)) / 2, (yl + (yl + 10)) / 2, 9)))
 part = union(part, ledge)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(max_bridge=20.0)

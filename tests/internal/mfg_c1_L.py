@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('c1_L: an L of two walls 3 mm thick, an inside corner radius of 6 mm asked: a fillet, the arc of a ball of radius 6')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((0, 0, 0), (30, 3, 20)), box((0, 0, 0), (3, 30, 20)))
+part = union(box((30, 3, 20), position=(15, 1.5, 10)), box((3, 30, 20), position=(1.5, 15, 10)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_radius=6.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

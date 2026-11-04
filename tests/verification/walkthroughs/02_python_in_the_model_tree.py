@@ -34,20 +34,20 @@ view.set_quality(8)
 size = 10
 
 for i in range(3):
-    b = box((i * 20, 0, 0), (i * 20 + 10, 10, 10))
+    b = box(((i * 20 + 10) - (i * 20), 10, 10), position=(((i * 20) + (i * 20 + 10)) / 2, 5, 5))
 
 if size > 5:
-    a = sphere(5, (0, 20, 5))
+    a = sphere(5, position=(0, 20, 5))
 elif size > 2:
-    a = sphere(3, (0, 20, 3))
+    a = sphere(3, position=(0, 20, 3))
 else:
-    a = sphere(1, (0, 20, 1))
+    a = sphere(1, position=(0, 20, 1))
 
 while size > 8:
     size = size - 1
 
 def make_post(r, h):
-    return cylinder(r, h, (40, 20, 0))
+    return cylinder(r, h, position=(40, 20, 0))
 
 post = make_post(4, 20)
 post
@@ -57,9 +57,9 @@ class Holder:
         self.width = width
 
 try:
-    c = cone(4, 8, (50, 0, 0))
+    c = cone(4, 8, position=(50, 0, 0))
 except Exception as error:
     print(error)
 
-last = sphere(4, (60, 20, 4))
+last = sphere(4, position=(60, 20, 4))
 last

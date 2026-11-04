@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('a9_small_violation_on_a_big_part: a big plate 60 x 60 x 3 mm with ONE thin fin 0.3 x 3 x 3 mm on it, for a wall rule of 0.8 mm: the check must find the one small violation among thousands of samples, and the same call twice must give the same report')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(box((0, 0, 0), (60, 60, 3)), box((30, 30, 3), (30.3, 33, 6)))
+part = union(box((60, 60, 3), position=(30, 30, 1.5)), box((0.3, 3, 3), position=(30.15, 31.5, 4.5)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 lo, hi = (-3, -3, -2), (63, 63, 8)

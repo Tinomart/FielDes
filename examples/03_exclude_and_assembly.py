@@ -29,17 +29,17 @@ parts = import_model("step/PivotBearingSupportBracket.STEP")
 bracket, (lo, hi) = parts[0]
 
 # The file's own surface in the lugs (the region is a box: any shape would do)
-lugs = box((-62, -88, -62), (62, -58, 30))
+lugs = box((124, 30, 92), position=(0, -73, -16))
 exact_bracket = exclude(bracket, lugs)
 
 # An assembly of three: the bracket as it is, and two turned about the vertical axis and set beside it
 width = hi[0] - lo[0]
 left = move(rotate_z(bracket, math.radians(180)), (-1.3 * width, 0, 0))
 right = move(rotate_z(bracket, math.radians(180)), (1.3 * width, 0, 0))
-base = box((lo[0] - 1.3 * width - 20, lo[1] - 20, lo[2] - 12), (hi[0] + 1.3 * width + 20, hi[1] + 20, lo[2] - 2))
+base = box(((hi[0] + 1.3 * width + 20) - (lo[0] - 1.3 * width - 20), (hi[1] + 20) - (lo[1] - 20), (lo[2] - 2) - (lo[2] - 12)), position=(((lo[0] - 1.3 * width - 20) + (hi[0] + 1.3 * width + 20)) / 2, ((lo[1] - 20) + (hi[1] + 20)) / 2, ((lo[2] - 12) + (lo[2] - 2)) / 2))
 
 view.set_bounds((lo[0] - 1.3 * width - 30, lo[1] - 30, lo[2] - 20), (hi[0] + 1.3 * width + 30, hi[1] + 60, hi[2] + 10), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 base

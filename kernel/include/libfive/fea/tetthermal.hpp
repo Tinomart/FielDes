@@ -54,6 +54,11 @@ public:
      *    a profile weights how a heat input or generation spreads over its region: by area times the profile (by volume times
      *      it for a generation, by it alone over the nodes of a region that holds no surface), not evenly  */
     void setConductivityField(const Tree& k);
+
+    /*  A mesh made elsewhere (meshFromArrays) in place of the one prepare() makes from the shape: the part, the conditions and the material are as they were, only
+     *  the elements are the user's.  The shape stays what the 10-node element's curved edges are measured against, and `h` of the constructor is then the size a
+     *  node's distance to a region is measured in (a twentieth of it).  Before prepare  */
+    void setMesh(std::shared_ptr<const TetMesh> mesh) { m_given = std::move(mesh); m_prepared = false; }
     void addTemperatureField(const Tree& region, double value, const Tree& field);
     void addHeatProfile(const Tree& region, double watts, const Tree& profile);
     void addGenerationProfile(const Tree& region, double watts, const Tree& profile);
@@ -114,6 +119,7 @@ private:
     Tree m_shape;
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_k;
+    std::shared_ptr<const TetMesh> m_given;     // (a mesh made elsewhere: see setMesh)
 
     struct Temperature { Tree region; double value; Tree field = Tree::invalid(); };
     struct Heat { Tree region; double watts; bool volume; Tree profile = Tree::invalid(); };

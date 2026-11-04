@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('d2_cylinder_cone: a vertical cylinder of radius 5 and height 20 for a draft of 2 degrees: the wall becomes a cone, the radius at each height is 5 + (20 - z) tan 2 degrees and the top is as it was')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = cylinder(5.0, 20.0, (0, 0, 0))
+part = cylinder(5.0, 20.0)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(draft=2.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

@@ -19,7 +19,7 @@ t = Table('n5_rounded_box: a rounded box 30 x 20 x 15 with 3 mm edges: a smooth 
 
 # (rounded_box(a, b, r) takes the radius as a fraction of HALF the shortest side: r = 0.4 of 7.5 mm is the 3 mm of the title.  Written as 3 it was a radius of 22.5 mm, a diamond a few
 # millimetres across -- which the tool rightly listed as breaking six rules; the picture of the first run showed it)
-part = rounded_box((0, 0, 0), (30, 20, 15), 0.4)
+part = rounded_box((30, 20, 15), 0.4, position=(15, 10, 7.5))
 lo, hi = (-3, -3, -3), (33, 23, 18)
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 res = control(t, part, lo, hi, 'rounded box')

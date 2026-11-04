@@ -84,6 +84,33 @@ class Uncacheable(Exception):
     ''' A value with no content key '''
 
 
+_local = __import__('threading').local()
+
+
+def _read_vars():
+    """ (a function that gives what the library calls take for the numbers of the script's var()s, or None -- read once for the same numbers --, a digest of the numbers or None) """
+    try:
+        from fieldes.app_support import _var_values, _var_digest
+        return _var_values, _var_digest()
+    except Exception:
+        return (lambda: None), None
+
+
+
+class frozen_vars:
+    ''' While one key is made, the numbers of the script's var()s are read once, not once for each shape in it: a statement that names 642 points read the 1926 numbers 642 times, 5.4 s (H72).
+        Nothing changes them while one key is made '''
+
+    def __enter__(self):
+        self._outer = getattr(_local, 'frozen', None)
+        _local.frozen = self._outer or _read_vars()
+        return _local.frozen
+
+    def __exit__(self, *exc):
+        _local.frozen = self._outer
+        return False
+
+
 def shape_key(shape):
     ''' An exact key of a shape's expression: the same expression built again -- a script run again -- has
         the same key, and a different one does not (a constant differing in the seventh digit, another
@@ -94,13 +121,9 @@ def shape_key(shape):
         ('local': nothing is kept under it for another session).  (Raises Uncacheable when the library has no
         such key.) '''
     from fieldes.ffi import lib
-    known = None
-    try:
-        from fieldes.stdlib.fields import _script_vars
-        known = _script_vars()
-    except Exception:
-        pass
-    numbers = None if known is None else tuple(known[1][i] for i in range(known[2]))
+    frozen = getattr(_local, 'frozen', None)
+    known_of, numbers = frozen if frozen is not None else _read_vars()
+    known = known_of()
     mine = getattr(shape, '_content_key', None)
     if mine is not None and mine[0] == shape.ptr and mine[2] == numbers:
         return mine[1]

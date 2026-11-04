@@ -66,11 +66,11 @@ for label, near, exact in (('top rim of a cylinder', (10, 0, 20), (0, 0, 20)), (
     c = attempt(label, lambda: circle_center_at(cyl, near))
     if c is not None:
         check('centre of the ' + label, far(xyz(c), exact) < 0.05, '{} (exact {})'.format(tuple(round(v, 3) for v in xyz(c)), exact))
-cn = cone(15, 30, (40, 0, 0))
+cn = cone(15, 30, position=(40, 0, 0))
 c = attempt('base of a cone', lambda: circle_center_at(cn, (55, 0, 0)))
 if c is not None:
     check('centre of the base of a cone', far(xyz(c), (40, 0, 0)) < 0.05, str(tuple(round(v, 3) for v in xyz(c))))
-plate = difference(box((0, 0, 0), (60, 60, 10)), cylinder(8, 20, (30, 30, -5)))
+plate = difference(box((60, 60, 10), position=(30, 30, 5)), cylinder(8, 20, position=(30, 30, -5)))
 c = attempt('edge of a hole', lambda: circle_center_at(plate, (38, 30, 10)))
 if c is not None:
     check('centre of the edge of a hole in a plate', far(xyz(c), (30, 30, 10)) < 0.05, str(tuple(round(v, 3) for v in xyz(c))))
@@ -87,7 +87,8 @@ c = attempt('rim of a tilted cylinder', lambda: circle_center_at(tilt, rim))
 if c is not None:
     check('centre of the rim of a tilted cylinder', far(xyz(c), exact) < 0.1, '{} (exact {})'.format(tuple(round(v, 3) for v in xyz(c)), tuple(round(v, 3) for v in exact)))
 try:
-    circle_center_at(box((0, 0, 0), (30, 30, 30)), (15, 0, 30))
+    # (a neighbourhood that is asked for is looked at as asked, and there is no circle there: an error.  Without one the neighbourhood widens and the point stays where it was, with a note in the console)
+    circle_center_at(box((30, 30, 30), position=(15, 15, 15)), (15, 0, 30), scale=3)
     check('a straight edge has no centre', False)
 except ValueError as e:
     check('a straight edge has no centre, and it says why', 'no circular edge' in str(e), str(e)[:120])
@@ -95,9 +96,9 @@ print(took())
 
 # ---------------------------------------------------------------- 2. rounded corners and edges
 stage('2. corner_at and edge_point_at through a rounding')
-block = round_edges(box((0, 0, 0), (40, 40, 40)), 5)
+block = round_edges(box((40, 40, 40), position=(20, 20, 20)), 5)
 try:
-    corner_at(block, (39, 39, 39))
+    corner_at(block, (39, 39, 39), scale=3)
     check('a rounded corner is not a corner without rounded=True', False)
 except ValueError:
     check('a rounded corner is not a corner without rounded=True', True)
@@ -111,7 +112,7 @@ e = attempt('rounded edge', lambda: edge_point_at(block, (40, 20, 38.5), rounded
 if e is not None:
     p = xyz(e)
     check('a point of the edge that the rounding replaced', abs(p[0] - 40) < 0.3 and abs(p[2] - 40) < 0.3, str(tuple(round(v, 3) for v in p)))
-sharp = attempt('sharp corner', lambda: corner_at(box((0, 0, 0), (40, 40, 40)), (39, 39, 39), rounded=True))
+sharp = attempt('sharp corner', lambda: corner_at(box((40, 40, 40), position=(20, 20, 20)), (39, 39, 39), rounded=True))
 if sharp is not None:
     check('rounded=True finds a sharp corner as before', far(xyz(sharp), (40, 40, 40)) < 0.05, str(tuple(round(v, 4) for v in xyz(sharp))))
 print(took())
@@ -122,7 +123,7 @@ face = select_surface(cyl, (3, 2, 0))
 c = attempt('face of a cylinder', lambda: face_center(face))
 if c is not None:
     check('centre of the bottom of a cylinder', far(xyz(c), (0, 0, 0)) < 0.2, str(tuple(round(v, 3) for v in xyz(c))))
-ell = union(box((0, 0, 0), (30, 10, 5)), box((0, 10, 0), (10, 30, 5)))
+ell = union(box((30, 10, 5), position=(15, 5, 2.5)), box((10, 20, 5), position=(5, 20, 2.5)))
 face = select_surface(ell, (5, 5, 5))
 c = attempt('L-shaped face', lambda: face_center(face))
 if c is not None:
@@ -142,12 +143,12 @@ cyl_face = select_surface(cyl, (3, 2, 0))
 cone_face = select_surface(cn, (42, 1, 0))
 cyl_centre = circle_center_at(cyl, (10, 0, 0))
 cone_centre = circle_center_at(cn, (55, 0, 0))
-found = snapping._placement([cone_face, cone_centre, cyl_face, cyl_centre])
-moved = place(cn, position=found['position'], rotation=found['rotation'])
+found = snapping._placement([cone_face, cone_centre, cyl_face, cyl_centre], ('position', 'rotation'))
+moved = cone(15, 30, position=found['position'], rotation=found['rotation'])
 check('the cone stands coaxial under the cylinder, base to base', inside(moved, (0, 0, -29)) and inside(moved, (14, 0, -1)) and not inside(moved, (16, 0, -1)) and not inside(moved, (0, 0, 1)) and not inside(moved, (0, 0, -31)),
       'position {} rotation {}'.format(found['position'], tuple(round(v, 4) for v in found['rotation'])))
-found = snapping._placement([cone_face, face_center(cone_face), cyl_face, face_center(cyl_face)])
-moved = place(cn, position=found['position'], rotation=found['rotation'])
+found = snapping._placement([cone_face, face_center(cone_face), cyl_face, face_center(cyl_face)], ('position', 'rotation'))
+moved = cone(15, 30, position=found['position'], rotation=found['rotation'])
 check('the same with the centres of the two faces', inside(moved, (0, 0, -29)) and inside(moved, (14, 0, -1)) and not inside(moved, (16, 0, -1)))
 print(took())
 
@@ -166,12 +167,12 @@ print(took())
 
 # ---------------------------------------------------------------- 6. what S writes: the placement of the body, and the features made on it go with it
 stage('6. the script as S rewrites it: a snap, then a second snap of the body that is placed already')
-PLAIN = 'cn = cone(15, 30, (40, 0, 0))\n'
-PLACED = 'cn = cone(15, 30, (40, 0, 0), position=%s, rotation=%s)\n'
+PLAIN = 'cn = cone(15, 30, position=(40, 0, 0))\n'
+PLACED = 'cn = cone(15, 30, position=%s, rotation=%s)\n'
 SOURCE = ('from fieldes import *\n'
           + PLAIN +
           'cyl = cylinder(10, 20)\n'
-          'slab = box((-30, -30, 40), (30, 30, 50))\n'
+          'slab = box((60, 60, 10), position=(0, 0, 45))\n'
           'near_place = (55, 0, 0)\n'
           'cone_face = select_surface(cn, seed=(42, 1, 0))\n'
           'cone_centre = circle_center_at(cn, (var(55), var(0), 0))\n'
@@ -201,7 +202,7 @@ def ask(text, names, written):
 
 
 ns0 = run(SOURCE)
-first = ask(SOURCE, ['cone_face', 'cone_centre', 'cyl_face', 'cyl_centre'], [])
+first = ask(SOURCE, ['cone_face', 'cone_centre', 'cyl_face', 'cyl_centre'], ['position'])
 check('the snap is worked out from the script (no error)', 'error' not in first, str(first.get('error', ''))[:160])
 check('the feature whose place is a name is reported, not guessed', first.get('left') == ['cone_rim'], str(first.get('left')))
 check('the places of the two features that are on the cone are rewritten (six numbers), no other', len(first.get('edits', [])) == 6 and all(e[0] in (5, 6) for e in first['edits']), str(first.get('edits'))[:200])
@@ -230,12 +231,12 @@ print(took())
 
 # ---------------------------------------------------------------- 7. points that a gizmo has wrapped in place(...)
 stage('7. two points wrapped in place(...) -- FielDes does it when a point is selected -- are still on their bodies, and S goes by them')
-a7 = box((0, 0, 0), (10, 10, 10))
-b7 = box((30, 0, 0), (40, 10, 20))
+a7 = box((10, 10, 10), position=(5, 5, 5))
+b7 = box((10, 10, 20), position=(35, 5, 10))
 pa7 = corner_at(a7, (10, 10, 10))
 pb7 = corner_at(b7, (30, 0, 20))
-wa = place(pa7, position=(0, 0, 0), rotation=(0, 0, 0), scale=(1, 1, 1))
-wb = place(pb7, position=(0, 0, 0), rotation=(0, 0, 0), scale=(1, 1, 1))
+wa = place(pa7, position=(10, 10, 10), rotation=(0, 0, 0), scale=(1, 1, 1))     # (the point's own place: the one global position)
+wb = place(pb7, position=(30, 0, 20), rotation=(0, 0, 0), scale=(1, 1, 1))
 check('a point wrapped in place(...) says which body it is on (it was "none of the features says which body it is on")', snapping._body_key(snapping._describe(wa, 0)['body']) == snapping._body_key(a7))
 found7 = attempt('the snap by two wrapped points', lambda: snapping._placement([wa, wb]))
 if found7 is not None:

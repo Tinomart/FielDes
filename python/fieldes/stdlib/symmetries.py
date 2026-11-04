@@ -3,7 +3,7 @@ Symmetry: `symmetry_planes(...)`, a model that is a set of mirror planes, and `s
 
     mirror = symmetry_planes()                        # one plane, through the origin, the plane x = 0: a mirror
     mirror = symmetry_planes(position=(var(0), var(0), var(0)), rotation=(var(0), var(0), var(0)))        # moved and turned with its gizmo, like any model
-    leg = cylinder(5, 30, (40, 22, 0))                # the one you edit
+    leg = cylinder(5, 30, position=(40, 22, 15))                # the one you edit
     leg_images = symmetry_images(leg, mirror)         # all its images, one model: the leg as it looks in the mirror, left to right
 
 The leg is the only model with numbers: the images are not models of their own, they are what the symmetry makes of the leg, so a symmetry of two planes at right angles makes three
@@ -263,7 +263,7 @@ class SymmetryPlanes(Shape):
         self._point_pos = centre
         from fieldes.stdlib.points import _view
         res, lo, hi = _view()
-        radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
+        radius = max(hi[i] - lo[i] for i in range(3)) / 120.0         # (as fine as any shape: the resolution is normed by the size of a shape)
         x, y, z = (Shape.wrap(c) for c in centre)
         dx, dy, dz = Shape.X() - x, Shape.Y() - y, Shape.Z() - z
         ball = (dx.square() + dy.square() + dz.square()).sqrt() - radius
@@ -312,11 +312,55 @@ def _native_sweep(shape):
         return value_of(v) if isinstance(v, Shape) else float(v)
     if getattr(shape, '_sweep_ppos', None) is None or getattr(shape, '_sweep_qpos', None) is None:
         return False
-    for rotations in (getattr(shape, '_sweep_prot', None), getattr(shape, '_sweep_qrot', None)):
-        for r in rotations or []:
-            if r is not None and any(abs(number(c)) > 1e-9 for c in r):
-                return False
+    # (a point of the PATH may be turned -- it turns the direction the path leaves it in, and its image's turn is made from it: see `_image_turns`; a point of the outline may not)
+    for r in getattr(shape, '_sweep_prot', None) or []:
+        if r is not None and any(abs(number(c)) > 1e-9 for c in r):
+            return False
     return True
+
+
+def _axis_signs(mn):
+    ''' The signs of a map that only reverses axes (a mirror across a plane of the axes, or a half turn: diagonal, +1 or -1), or None '''
+    for i in range(3):
+        for j in range(3):
+            if i != j and abs(mn[i][j]) > 1e-9:
+                return None
+        if abs(abs(mn[i][i]) - 1.0) > 1e-9:
+            return None
+    return tuple(1.0 if mn[i][i] > 0 else -1.0 for i in range(3))
+
+
+def _conjugated_turn(degrees, mn):
+    ''' The turn (about x, then y, then z, in degrees) that is M R Mt where R is the turn of `degrees`: what a turn of a point is at its image under the map M '''
+    a, b, c = (math.radians(d) for d in degrees)
+    ca, sa, cb, sb, cc, sc = math.cos(a), math.sin(a), math.cos(b), math.sin(b), math.cos(c), math.sin(c)
+    r = [[cc * cb, cc * sb * sa - sc * ca, cc * sb * ca + sc * sa],
+         [sc * cb, sc * sb * sa + cc * ca, sc * sb * ca - cc * sa],
+         [-sb, cb * sa, cb * ca]]
+    m = _matmul(mn, _matmul(r, _transpose(mn)))
+    up = max(-1.0, min(1.0, -m[2][0]))
+    if abs(up) < 1.0 - 1e-9:
+        return tuple(math.degrees(v) for v in (math.atan2(m[2][1], m[2][2]), math.asin(up), math.atan2(m[1][0], m[0][0])))
+    return tuple(math.degrees(v) for v in (0.0, math.asin(up), math.atan2(-m[0][1], m[1][1])))
+
+
+def _image_turns(rotations, mn, number, guard):
+    ''' The turns of the points of the path of a sweep, for the path of its image.  A point turns the direction the path leaves it in (t -> R t, about x, then y, then z), and at the image
+        point the direction is M R t: R becomes M R Mt.  For a map that only reverses axes (the mirror x = 0 is one) that is the same three angles with signs -- each as an expression
+        of the original's numbers, so that the image follows a turn dragged -- and for any other map it is made from the numbers of now, the originals guarded at them: after a drag the script
+        runs again and it is native again.  (A path point that was turned made the whole image a field of thousands of terms: the user's sheep horn, 2026-10-28) '''
+    signs = _axis_signs(mn)
+    out = []
+    for r in rotations or []:
+        if r is None:
+            out.append(None)
+        elif signs is not None:
+            det = signs[0] * signs[1] * signs[2]
+            out.append(tuple(r[i] if signs[i] * det > 0 else _mul(-1.0, r[i]) for i in range(3)))
+        else:
+            guard.extend((v, number(v)) for v in r if isinstance(v, Shape))
+            out.append(tuple(Shape.wrap(v) for v in _conjugated_turn([number(v) for v in r], mn)))
+    return out
 
 
 def _map_place(p, mn, cn):
@@ -350,20 +394,26 @@ def _sweep_image(out, shape, mn, cn):
     out._sweep_pradius = radius
     out._sweep_pdefault = shape._sweep_pdefault
     out._sweep_qpos = [_map_place(p, mn, cn) for p in shape._sweep_qpos]
-    out._sweep_qrot, out._sweep_qflag, out._sweep_qscale = shape._sweep_qrot, shape._sweep_qflag, shape._sweep_qscale
+    guard = list(getattr(shape, '_sweep_guard', []))
+    out._sweep_qrot = _image_turns(getattr(shape, '_sweep_qrot', None) or [None] * len(out._sweep_qpos), mn, number, guard)
+    out._sweep_qflag, out._sweep_qscale = shape._sweep_qflag, shape._sweep_qscale
     out._sweep_qinfluence = getattr(shape, '_sweep_qinfluence', None) or [None] * len(out._sweep_qpos)
     out._sweep_qdefault, out._sweep_qclosed = shape._sweep_qdefault, shape._sweep_qclosed
     out._sweep_twist = Shape.wrap(shape._sweep_twist) * (-1.0 if improper else 1.0)
     out._sweep_free = False                      # (its outline is given in space: the plane is the one its points make)
-    guard = list(getattr(shape, '_sweep_guard', []))
     place = getattr(shape, '_sweep_place', None)
     if place is not None:
         about, move, rotate, scale_ = place
-        guard += [(v, 0.0) for v in rotate if isinstance(v, Shape)] + [(v, 1.0) for v in scale_ if isinstance(v, Shape)]
-        if any(abs(number(v)) > 1e-9 for v in rotate) or any(abs(number(v) - 1.0) > 1e-9 for v in scale_):
-            return False                         # (it is turned or scaled by its gizmo now: drawn from its field)
+        # A turn must stay what it is (none), and so must the scale numbers while they are dragged -- each is guarded at the value it has now: the image is made from the numbers at every run, so after a
+        # drag (the script runs again) it is native again.  A sweep that is SCALED by its gizmo -- a mouse wheel notch is enough -- has a mirror image that is scaled by the same number about the mirror
+        # image of the same place: it was drawn from its field (a sweep's field is thousands of terms, and its image as many again: the image took seconds to minutes, or vanished, and the editing
+        # with it -- the user's sheep horn, 2026-10-28: scale=(var(0.909091), ...) on the path_extrude)
+        sizes = [number(v) for v in scale_]
+        guard += [(v, 0.0) for v in rotate if isinstance(v, Shape)] + [(v, number(v)) for v in scale_ if isinstance(v, Shape)]
+        if any(abs(number(v)) > 1e-9 for v in rotate) or max(sizes) - min(sizes) > 1e-9 * max(1.0, abs(max(sizes))):
+            return False                         # (it is turned, or scaled by a different number along each axis, by its gizmo now: drawn from its field)
         turned = tuple(_add(_add(_mul(mn[i][0], move[0]), _mul(mn[i][1], move[1])), _mul(mn[i][2], move[2])) for i in range(3))
-        out._sweep_place = (_map_place(about, mn, cn), tuple(Shape.wrap(v) for v in turned), tuple(Shape.wrap(0.0) for _ in range(3)), tuple(Shape.wrap(1.0) for _ in range(3)))
+        out._sweep_place = (_map_place(about, mn, cn), tuple(Shape.wrap(v) for v in turned), tuple(Shape.wrap(0.0) for _ in range(3)), tuple(Shape.wrap(number(v)) for v in scale_))
     out._sweep_guard = guard
     out._drawn_key = getattr(shape, '_drawn_key', None)
     return True
@@ -452,6 +502,29 @@ def symmetry_image(shape, symmetry, index=1):
     return out
 
 
+_FAST_BODY_IMAGE = True        # (False: the image of a body is made again through the images of its points, the way it was: the check compares the two)
+
+
+def _image_mapper(sym, k):
+    """ The map of the image numbered `k` as expressions -- a place p goes to c + M (p - c), M and c of the symmetry with its numbers in them -- for the control points of the surface of a body (see morph.remake_mapped) """
+    c, turn = _frame_of(sym)
+    m = _matmul_expr(turn, _matmul_expr(base_elements(sym._symmetry_def)[k - 1], _transpose(turn)))
+
+    def mapper(p):
+        d = [_add(p[i], _mul(-1.0, c[i])) for i in range(3)]
+        return tuple(_add(c[i], _add(_add(_mul(m[i][0], d[0]), _mul(m[i][1], d[1])), _mul(m[i][2], d[2]))) for i in range(3))
+    return mapper
+
+
+def _image_field(shape, sym, k):
+    """ The field of the image numbered `k` of `shape`: the shape asked at the places the way back of the image takes it from -- what symmetry_image makes of any shape (a call, the shape kept once) """
+    c, turn = _frame_of(sym)
+    m = _matmul_expr(turn, _matmul_expr(base_elements(sym._symmetry_def)[k - 1], _transpose(turn)))
+    d = [_add(V, _mul(-1.0, c[i])) for i, V in enumerate((Shape.X(), Shape.Y(), Shape.Z()))]
+    pre = tuple(_add(c[i], _add(_add(_mul(m[0][i], d[0]), _mul(m[1][i], d[1])), _mul(m[2][i], d[2]))) for i in range(3))
+    return Shape.wrap(shape)(*[Shape.wrap(q) for q in pre])
+
+
 def _outline_image(part, sym, k):
     ''' The image numbered `k` of a profile, a polyline or a spline: the same outline through the images of its points (each a dot that is pressed, dragged, double clicked and
         selected, and it is the original's point that all of those reach), so that whatever is done to the original -- a point dragged, pulled out of its edge, deleted -- is done to its
@@ -466,7 +539,11 @@ def _outline_image(part, sym, k):
         dot._gizmo_dot_only = True
         dots.append(dot)
     improper = bool(dots) and _determinant(dots[0]._symmetry_linear) < 0
-    made = part._remake(dots, improper)
+    fast = getattr(part, '_remake_mapped', None) if _FAST_BODY_IMAGE else None
+    if fast is not None:
+        made = fast(dots, _image_mapper(sym, k), _image_field(part, sym, k), improper)       # (a body of points: its image is its surface taken through the map, not made again: H70)
+    else:
+        made = part._remake(dots, improper)
     mn, cn = _numeric_map(sym, k)
     made._image_dots = dots
     made._edit_map = (tuple(v for row in mn for v in row), tuple(cn), (0.0, 0.0, 0.0))

@@ -19,11 +19,11 @@ view.set_bounds([-10, -10, -5], [80, 30, 30])
 view.set_resolution(3)
 view.set_quality(8)
 
-box_1 = box((0, 0, 0), (10, 10, 10))
+box_1 = box(10, position=(5, 5, 5))
 box_1
 
-box_2 = box((20, 0, 0), (30, 10, 10))
+box_2 = box(10, position=(25, 5, 5))
 box_2
 
-box_3 = box((40, 0, 0), (50, 10, 10))
+box_3 = box(10, position=(45, 5, 5))
 box_3

@@ -103,7 +103,8 @@ bool TetThermalProblem::prepare(std::string& error)
     auto mesh = std::make_shared<TetMesh>();
     // (a shape that is symmetric about a plane through the middle of its region is meshed on one side of the plane and mirrored: the mesh of a symmetric problem
     // is then exactly symmetric, and so are the temperature and the design on it -- a lattice cut by the shape cannot be, see meshShapeMirrored)
-    if (!meshShapeMirrored(m_shape, m_lo, m_hi, m_h, findMeshMirrors(m_shape, m_lo, m_hi, m_h), *mesh, error)) return false;
+    if (m_given) *mesh = *m_given;      // (a mesh the user made: the elements are theirs, see setMesh)
+    else if (!meshShapeMirrored(m_shape, m_lo, m_hi, m_h, findMeshMirrors(m_shape, m_lo, m_hi, m_h), *mesh, error)) return false;
     task.set(0.5, "resolving the boundary conditions");
 
     // A node within a small fraction of an element of a region counts as inside it

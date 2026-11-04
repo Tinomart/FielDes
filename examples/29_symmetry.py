@@ -32,13 +32,12 @@
 from fieldes import *
 
 view.set_bounds([-50, -50, -6], [50, 50, 46], auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 # The symmetry: three copies round the axis z, 120 degrees apart, nothing mirrored.
 mirror = symmetry_planes(
     kind='turn',
-    centre=(0, 0, 0),
     axis=(0, 0, 1),
     first=(0, 1, 0),
     copies=3,
@@ -48,37 +47,37 @@ mirror = symmetry_planes(
 mirror
 
 # The table top: its centre is on the axis, so it is its own image.
-top = cylinder(40, 3, (0, 0, 34.5))
+top = cylinder(40, 3, position=(0, 0, 36))
 top
 
 # One leg.  Its path is a spline of five points, drawn with the symmetry off: the leg is swept along it, and the images of the leg bring it along.  The scale of a point
 # (the gold ring) is how thick the leg is there.
-leg_path_p1 = point(14.9, 30.6, 0,
-    position=(var(0), var(0), var(0)),
+leg_path_p1 = point(
+    position=(var(14.9), var(30.6), var(0)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_path_p1
-leg_path_p2 = point(14.8, 23.7, 6,
-    position=(var(0), var(0), var(0)),
+leg_path_p2 = point(
+    position=(var(14.8), var(23.7), var(6)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(0.65), var(0.65), var(0.65)),
 )
 leg_path_p2
-leg_path_p3 = point(17.9, 22.9, 15,
-    position=(var(0), var(0), var(0)),
+leg_path_p3 = point(
+    position=(var(17.9), var(22.9), var(15)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(0.9), var(0.9), var(0.9)),
 )
 leg_path_p3
-leg_path_p4 = point(17.4, 18, 27,
-    position=(var(0), var(0), var(0)),
+leg_path_p4 = point(
+    position=(var(17.4), var(18), var(27)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1.2), var(1.2), var(1.2)),
 )
 leg_path_p4
-leg_path_p5 = point(14.3, 12.5, 35.5,
-    position=(var(0), var(0), var(0)),
+leg_path_p5 = point(
+    position=(var(14.3), var(12.5), var(35.5)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1.3), var(1.3), var(1.3)),
 )
@@ -91,26 +90,26 @@ leg_path
 
 # The profile of the leg: a profile of four spline points, an oval round the foot of the path.  The sweep starts at the profile: the first point of the path is put at the
 # middle of it, so the profile is where the leg stands.
-leg_profile_p1 = point(18.5, 30.6, 0,
-    position=(var(0), var(0), var(0)),
+leg_profile_p1 = point(
+    position=(var(18.5), var(30.6), var(0)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_profile_p1
-leg_profile_p2 = point(14.9, 33.4, 0,
-    position=(var(0), var(0), var(0)),
+leg_profile_p2 = point(
+    position=(var(14.9), var(33.4), var(0)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_profile_p2
-leg_profile_p3 = point(11.3, 30.6, 0,
-    position=(var(0), var(0), var(0)),
+leg_profile_p3 = point(
+    position=(var(11.3), var(30.6), var(0)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_profile_p3
-leg_profile_p4 = point(14.9, 27.8, 0,
-    position=(var(0), var(0), var(0)),
+leg_profile_p4 = point(
+    position=(var(14.9), var(27.8), var(0)),
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )

@@ -18,11 +18,11 @@ from mfgkit import *
 t = Table('h2_keep_region: a fin of 0.6 mm with the upper half kept (keep=): only the lower half is thickened')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-fin = box((0, 0, 0), (0.6, 16, 24))
+fin = box((0.6, 16, 24), position=(0.3, 8, 12))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(fin, constraints=[rule], keep=[box((-1, -1, 12), (2, 17, 26))], max_change=3.0)
+res = manufacturing_optimization(fin, constraints=[rule], keep=[box((3, 18, 14), position=(0.5, 8, 19))], max_change=3.0)
 lo, hi = (-3, -3, -3), (6, 19, 27)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=5)

@@ -19,9 +19,9 @@ from mfgkit import *
 t = Table('u6_nothing_to_fill: three parts with nothing out of reach along z -- a blind pocket from the top, a hole along z, a ledge with air below -- and an undercut along z asked: nothing may change and the tool reports nothing')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-pocket = difference(box((0, 0, 0), (16, 16, 16)), box((4, 4, 6), (12, 12, 17)))
-along = difference(box((22, 0, 0), (38, 16, 16)), cylinder(3.0, 18, (30, 8, -1)))
-ledge = union(box((44, 0, 0), (50, 16, 16)), box((44, 0, 10), (60, 16, 16)))
+pocket = difference(box(16, position=(8, 8, 8)), box((8, 8, 11), position=(8, 8, 11.5)))
+along = difference(box(16, position=(30, 8, 8)), cylinder(3.0, 18, position=(30, 8, -1)))
+ledge = union(box((6, 16, 16), position=(47, 8, 8)), box((16, 16, 6), position=(52, 8, 13)))
 part = union(union(pocket, along), ledge)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(undercut_along=(0, 0, 1))

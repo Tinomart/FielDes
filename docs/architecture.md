@@ -433,7 +433,7 @@ as the script built it (`Shape::built_tree`), not of the optimized one: the opti
 run in the order of operands. A mesh an oracle holds is keyed by the surface, not by the order the mesher wrote it
 in (`meshContentKey`: each triangle from its smallest corner, the triangles sorted). `render_cache_key()` shows the key. When anything about the math
 changes the key is another one: a miss, the usual progressive render, and the new mesh is kept. The folder is
-limited to 4 GB (`FIELDES_RENDER_CACHE_MB`), oldest files first; `Settings → Clear the caches` empties it (and the field cache).
+limited to 2 GB (`FIELDES_RENDER_CACHE_MB`), the least recently used files first out (a mesh that is read back counts as used again); a mesh is tied to the build that made it (the key holds the time of the executable and of the Python library, `fieldesBuildKey`): the first start of another build deletes the meshes of the one before, and 20 s after a start and every six hours the program deletes the meshes that no recently opened file still holds (`fieldesSweepRenderCache`, by `owners.idx`: which file was open when a mesh was kept); `Settings → Clear the caches` empties it (and the field cache).
 The model tree's cache button writes and deletes the opt-out line `x = render_cache(x, False)` under the shape's definition
 (under its `handles()` call) like every other button of the tree (`ScenePanel::toggleCache`; the script
 parser records the line as `cache_off`, an explicit `render_cache(x)` as `cache`).

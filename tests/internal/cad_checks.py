@@ -61,13 +61,13 @@ def run(label, fn):
 
 # ---------------------------------------------------------------- 1. turning
 stage('1. rotate')
-bar = box((0, 0, 0), (10, 20, 30))
+bar = box((10, 20, 30), position=(5, 10, 15))
 r = rotate(bar, (0, 0, 1), 90)
 check('rotate 90 about z: inside where it went', inside(r, (-10, 5, 15)))
 check('rotate 90 about z: not where it was', not inside(r, (5, 5, 15)))
 v = volume(r, (-25, -5, -5), (15, 25, 35), 2.0)
 check('rotate keeps the volume', near(v, 6000.0, 0.02), '{:.0f}'.format(v))
-ball = sphere(2, (10, 0, 0))
+ball = sphere(2, position=(10, 0, 0))
 d = rotate(ball, (1, 1, 0), 180)
 check('rotate 180 about (1,1,0): (10,0,0) goes to (0,10,0)', inside(d, (0, 10, 0)) and not inside(d, (10, 0, 0)))
 c = rotate(ball, (0, 0, 1), 90, center=(10, 10, 0))
@@ -82,7 +82,7 @@ print(took())
 
 # ---------------------------------------------------------------- 2. mirroring
 stage('2. reflect and mirror')
-b = box((2, 0, 0), (4, 5, 6))
+b = box((2, 5, 6), position=(3, 2.5, 3))
 check('reflect in x = 0', inside(reflect(b, (1, 0, 0)), (-3, 2, 3)) and not inside(reflect(b, (1, 0, 0)), (3, 2, 3)))
 m = mirror(b, (1, 0, 0))
 v = volume(m, (-5, -1, -1), (5, 6, 7), 6.0)
@@ -94,15 +94,15 @@ print(took())
 
 # ---------------------------------------------------------------- 3. patterns
 stage('3. linear and circular patterns')
-row = linear_pattern(sphere(2, (0, 0, 0)), 4, (10, 0, 0))
+row = linear_pattern(sphere(2), 4, (10, 0, 0))
 check('linear pattern: four copies', all(inside(row, (10 * k, 0, 0)) for k in range(4)) and not inside(row, (40, 0, 0)) and not inside(row, (5, 0, 0)))
 v = volume(row, (-3, -3, -3), (33, 3, 3), 6.0)
 check('linear pattern: four times the volume', near(v, 4 * 4.0 / 3.0 * math.pi * 8.0, 0.03), '{:.1f}'.format(v))
-ring = circular_pattern(sphere(1, (10, 0, 0)), 6)
+ring = circular_pattern(sphere(1, position=(10, 0, 0)), 6)
 check('circular pattern: six copies 60 degrees apart', all(inside(ring, (10 * math.cos(math.radians(60 * k)), 10 * math.sin(math.radians(60 * k)), 0)) for k in range(6)) and not inside(ring, (0, 10, 0)))
-half = circular_pattern(sphere(1, (10, 0, 0)), 3, angle=180)
+half = circular_pattern(sphere(1, position=(10, 0, 0)), 3, angle=180)
 check('circular pattern over 180 degrees: first and last on the ends', inside(half, (10, 0, 0)) and inside(half, (0, 10, 0)) and inside(half, (-10, 0, 0)) and not inside(half, (0, -10, 0)))
-about = circular_pattern(sphere(1, (0, 0, 5)), 2, axis=(1, 0, 0), center=(0, 0, 0), angle=180)
+about = circular_pattern(sphere(1, position=(0, 0, 5)), 2, axis=(1, 0, 0), center=(0, 0, 0), angle=180)
 check('circular pattern about another axis', inside(about, (0, 0, 5)) and inside(about, (0, 0, -5)))
 try:
     linear_pattern(sphere(1), 0, (1, 0, 0))
@@ -113,7 +113,7 @@ print(took())
 
 # ---------------------------------------------------------------- 4. revolving
 stage('4. revolve')
-flat = rectangle((2, 0), (4, 5))
+flat = rectangle((2, 5), position=(3, 2.5))
 full = revolve(flat)
 check('revolve: a ring', inside(full, (3, 2, 0)) and inside(full, (0, 2, 3)) and inside(full, (-3, 2, 0)) and not inside(full, (0, 2, 0)) and not inside(full, (5, 2, 0)))
 v = volume(full, (-5, -1, -5), (5, 6, 5), 6.0)
@@ -124,16 +124,16 @@ v = volume(quarter, (-5, -1, -5), (5, 6, 5), 6.0)
 check('revolve 90: a quarter of the volume', near(v, math.pi * 15.0, 0.04), '{:.1f}'.format(v))
 v = volume(revolve(flat, angle=270), (-5, -1, -5), (5, 6, 5), 6.0)
 check('revolve 270: three quarters', near(v, math.pi * 45.0, 0.04), '{:.1f}'.format(v))
-side = revolve(rectangle((0, -4), (5, -2)), axis_direction=(1, 0))
+side = revolve(rectangle((5, 2), position=(2.5, -3)), axis_direction=(1, 0))
 v = volume(side, (-1, -5, -5), (6, 5, 5), 6.0)
 check('revolve about the x axis', near(v, math.pi * 60.0, 0.03) and inside(side, (2, 0, 3)), '{:.1f}'.format(v))
-off = revolve(rectangle((12, 0), (14, 3)), axis_point=(10, 0))
+off = revolve(rectangle((2, 3), position=(13, 1.5)), axis_point=(10, 0))
 check('revolve about a line away from the origin', inside(off, (10, 1, 3)) and inside(off, (12.5, 1, 0)) and not inside(off, (0, 1, 0)))
 print(took())
 
 # ---------------------------------------------------------------- 5. cutting by a plane
 stage('5. cut_plane and split')
-block = box((0, 0, 0), (10, 10, 10))
+block = box(10, position=(5, 5, 5))
 top, bottom = split(block, (0, 0, 1), (0, 0, 4))
 check('split: the side the normal points to is the upper', inside(top, (5, 5, 7)) and not inside(top, (5, 5, 2)) and inside(bottom, (5, 5, 2)) and not inside(bottom, (5, 5, 7)))
 vt, vb = volume(top, (0, 0, 0), (10, 10, 10), 4.0), volume(bottom, (0, 0, 0), (10, 10, 10), 4.0)
@@ -146,7 +146,7 @@ print(took())
 
 # ---------------------------------------------------------------- 6. holes
 stage('6. holes')
-plate = box((0, 0, 0), (20, 20, 10))
+plate = box((20, 20, 10), position=(10, 10, 5))
 box_lo, box_hi = (0, 0, 0), (20, 20, 10)
 through = hole(plate, (10, 10, 10), 4)
 v = volume(through, box_lo, box_hi, 4.0)
@@ -202,8 +202,8 @@ print(took())
 
 # ---------------------------------------------------------------- 8. align
 stage('8. align')
-a = box((0, 0, 0), (10, 10, 10))
-b = box((20, 5, 3), (24, 9, 7))
+a = box(10, position=(5, 5, 5))
+b = box(4, position=(22, 7, 5))
 left = align(b, a, 'x', 'min')
 check('align min', inside(left, (2, 7, 5)) and not inside(left, (6, 7, 5)))
 up = align(b, a, 'z', 'above', gap=2)
@@ -216,24 +216,24 @@ print(took())
 stage('9. surface area, section area, overlap, distance')
 s = surface_area(sphere(10))
 check('surface area of a sphere', near(s, 4.0 * math.pi * 100.0, 0.03), '{:.1f} (exact {:.1f})'.format(s, 4.0 * math.pi * 100.0))
-s = surface_area(box((0, 0, 0), (10, 20, 30)))
+s = surface_area(box((10, 20, 30), position=(5, 10, 15)))
 check('surface area of a box', near(s, 2200.0, 0.03), '{:.1f} (exact 2200)'.format(s))
 a0 = section_area(sphere(10), (0, 0, 1), (0, 0, 0))
 check('section area of a sphere through its middle', near(a0, math.pi * 100.0, 0.015), '{:.1f} (exact {:.1f})'.format(a0, math.pi * 100.0))
 a6 = section_area(sphere(10), (0, 0, 1), (0, 0, 6))
 check('section area of a sphere off the middle', near(a6, math.pi * 64.0, 0.02), '{:.1f} (exact {:.1f})'.format(a6, math.pi * 64.0))
-ao = section_area(box((0, 0, 0), (10, 10, 10)), (1, 1, 0), (5, 5, 0))
+ao = section_area(box(10, position=(5, 5, 5)), (1, 1, 0), (5, 5, 0))
 check('section area of a cube by an oblique plane', near(ao, 10.0 * 10.0 * math.sqrt(2.0), 0.02), '{:.1f} (exact {:.1f})'.format(ao, 100.0 * math.sqrt(2.0)))
-lens = interference(sphere(5), sphere(5, (6, 0, 0)))
+lens = interference(sphere(5), sphere(5, position=(6, 0, 0)))
 check('interference of two spheres', near(lens, math.pi * 26.0 * 16.0 / 12.0, 0.03), '{:.1f} (exact {:.1f})'.format(lens, math.pi * 26.0 * 16.0 / 12.0))
-check('interference of bodies that do not meet is 0', interference(sphere(5), sphere(5, (20, 0, 0))) == 0.0)
-g = distance_between(sphere(5), sphere(5, (20, 0, 0)))
+check('interference of bodies that do not meet is 0', interference(sphere(5), sphere(5, position=(20, 0, 0))) == 0.0)
+g = distance_between(sphere(5), sphere(5, position=(20, 0, 0)))
 check('distance between two spheres', abs(g - 10.0) < 0.05, '{:.3f} (exact 10)'.format(g))
-g = distance_between(box((0, 0, 0), (10, 10, 10)), box((15, 3, 3), (20, 8, 8)))
+g = distance_between(box(10, position=(5, 5, 5)), box(5, position=(17.5, 5.5, 5.5)))
 check('distance between two boxes', abs(g - 5.0) < 0.05, '{:.3f} (exact 5)'.format(g))
-g = distance_between(sphere(5), box((8, -20, -20), (12, 20, 20)))
+g = distance_between(sphere(5), box((4, 40, 40), position=(10, 0, 0)))
 check('distance between a sphere and a wall', abs(g - 3.0) < 0.05, '{:.3f} (exact 3)'.format(g))
-check('distance between overlapping bodies is 0', distance_between(sphere(5), sphere(5, (6, 0, 0))) == 0.0)
+check('distance between overlapping bodies is 0', distance_between(sphere(5), sphere(5, position=(6, 0, 0))) == 0.0)
 print(took())
 
 # ---------------------------------------------------------------- 10. what each function makes is a body in the model tree
@@ -246,16 +246,16 @@ import importlib
 C = importlib.import_module('fieldes.stdlib.cad')            # ('import fieldes.stdlib.cad as C' reads the attribute `stdlib` of fieldes, which is the kernel's library of that name)
 
 made = {'capsule': capsule(3, 20), 'tube': tube(8, 5, 12), 'rotate': rotate(bar, (1, 1, 0), 30), 'reflect': reflect(bar, (1, 0, 0)), 'mirror': mirror(bar, (1, 0, 0)),
-        'linear_pattern': linear_pattern(sphere(2), 4, (10, 0, 0)), 'circular_pattern': circular_pattern(sphere(1, (10, 0, 0)), 6), 'revolve': revolve(flat),
+        'linear_pattern': linear_pattern(sphere(2), 4, (10, 0, 0)), 'circular_pattern': circular_pattern(sphere(1, position=(10, 0, 0)), 6), 'revolve': revolve(flat),
         'cut_plane': cut_plane(block, (0, 0, 1), (0, 0, 4)), 'hole': hole(block, (5, 5, 10), 3), 'hole_cutter': hole_cutter((5, 5, 10), 3),
-        'threaded_rod': threaded_rod('M8', 10), 'align': align(bar, block, 'x', 'above')}
+        'threaded_rod': threaded_rod(4, 10), 'threaded_rod_normed': threaded_rod_normed('M8', 10), 'align': align(bar, block, 'x', 'above')}
 for name, body in made.items():
     f = outline.facts_of(body)
     check('{} is a 3D shape in the tree, with a gizmo'.format(name), kind_of(body) == 'solid' and f['type'] == 'solid' and not f['no_gizmo'],
           'kind {} type {} no_gizmo {}'.format(kind_of(body), f['type'], f['no_gizmo']))
 sl = slot(20, 6)
 check('slot is a 2D shape in the tree', kind_of(sl) == 'profile' and outline.facts_of(sl)['type'] == 'profile', 'kind {}'.format(kind_of(sl)))
-for name in ('rotate', 'reflect', 'mirror', 'linear_pattern', 'circular_pattern', 'revolve', 'cut_plane', 'hole', 'hole_cutter', 'threaded_rod', 'capsule', 'tube', 'align'):
+for name in ('rotate', 'reflect', 'mirror', 'linear_pattern', 'circular_pattern', 'revolve', 'cut_plane', 'hole', 'hole_cutter', 'threaded_rod', 'threaded_rod_normed', 'capsule', 'tube', 'align'):
     check('{} says it makes a 3D shape before it has run'.format(name), getattr(getattr(C, name), '_makes', None) == 'solid')
 check('slot says it makes a 2D shape before it has run', getattr(C.slot, '_makes', None) == 'profile')
 print(took())
@@ -268,7 +268,7 @@ check('rotate with a field axis and centre', inside(rotate(ball, (V(0), V(0), V(
 check('reflect with a field plane', inside(reflect(b, (V(1), 0, 0), (V(0), 0, 0)), (-22, 7, 5)) and not inside(reflect(b, (V(1), 0, 0), (V(0), 0, 0)), (22, 7, 5)))
 row2 = linear_pattern(sphere(2), 4, (V(10), 0, 0))
 check('linear pattern with a field step', all(inside(row2, (10 * k, 0, 0)) for k in range(4)) and not inside(row2, (5, 0, 0)))
-half2 = circular_pattern(sphere(1, (10, 0, 0)), 3, angle=V(180))
+half2 = circular_pattern(sphere(1, position=(10, 0, 0)), 3, angle=V(180))
 check('circular pattern with a field angle', inside(half2, (10, 0, 0)) and inside(half2, (0, 10, 0)) and inside(half2, (-10, 0, 0)) and not inside(half2, (0, -10, 0)))
 q2 = revolve(flat, angle=V(90))
 check('revolve with a field angle: the quarter', inside(q2, (1, 2, 2.5)) and not inside(q2, (-1, 2, 2.5)) and not inside(q2, (1, 2, -2.5)) and inside(q2, (3, 2, 0.1)))
@@ -281,12 +281,12 @@ print(took())
 
 # ---------------------------------------------------------------- 12. revolving a profile on either side
 stage('12. revolve: the profile on the left, or across the axis')
-leftp = rectangle((-4, 0), (-2, 5))
+leftp = rectangle((2, 5), position=(-3, 2.5))
 lq = revolve(leftp, angle=90)
 check('a profile on the left turns the same way round the axis (toward -z)', inside(lq, (-1, 2, -2.5)) and not inside(lq, (-1, 2, 2.5)) and not inside(lq, (1, 2, -2.5)) and inside(lq, (-3, 2, -0.1)))
 v = volume(lq, (-5, -1, -5), (5, 6, 5), 6.0)
 check('revolve 90 of a profile on the left: a quarter of the volume', near(v, math.pi * 15.0, 0.04), '{:.1f}'.format(v))
-cross = revolve(rectangle((-4, 0), (4, 5)), angle=90)
+cross = revolve(rectangle((8, 5), position=(0, 2.5)), angle=90)
 check('a profile across the axis: the right turns toward +z, the left toward -z', inside(cross, (2, 2, 1)) and inside(cross, (-2, 2, -1)) and not inside(cross, (-2, 2, 1)) and not inside(cross, (2, 2, -1)))
 v = volume(cross, (-5, -1, -5), (5, 6, 5), 6.0)
 check('revolve 90 of a profile across the axis: half a cylinder', near(v, math.pi * 16.0 * 5.0 / 2.0, 0.05), '{:.1f} (exact {:.1f})'.format(v, math.pi * 40.0))
@@ -303,7 +303,7 @@ for bad in ('M7', 'x'):
         check('screw_spec({!r}) is refused'.format(bad), False)
     except ValueError as e:
         check('screw_spec({!r}) is refused, with the screws there are'.format(bad), 'M6' in str(e), str(e)[:80])
-plate = box((0, 0, 0), (40, 40, 10))
+plate = box((40, 40, 10), position=(20, 20, 5))
 w = hole(plate, (20, 20, 10), screw='M6')
 check('hole for M6: 6.6 across, through', not inside(w, (23.2, 20, 5)) and inside(w, (23.5, 20, 5)) and not inside(w, (20, 20, 0.5)))
 cb = hole(plate, (20, 20, 10), screw='M6', kind='counterbore')
@@ -345,7 +345,7 @@ def helix_phase(body, quarter):
 for body, name, sign in ((th, 'right', 1), (tl, 'left', -1)):
     shift = (helix_phase(body, 1) - helix_phase(body, 0)) % 1.0
     check('a {}-hand thread climbs by a quarter of the pitch in a quarter turn counterclockwise (seen from above)'.format(name), abs(shift - (0.25 if sign > 0 else 0.75)) < 0.05, 'shift {:.3f}'.format(shift))
-rod = threaded_rod('M20', 10)
+rod = threaded_rod(10, 10, pitch=2.5)                         # (the thread of an M20: the radius 10, the pitch 2.5)
 rv = volume(rod, (-11, -11, -1), (11, 11, 11), 4.0)
 root = 20 - 1.2269 * 2.5
 mean_sq = sum((root / 2 + (10 - root / 2) * min(1.0, max(0.0, (0.375 - abs(u / 400.0 - 0.5)) / 0.3125))) ** 2 for u in range(400)) / 400.0
@@ -354,14 +354,14 @@ print(took())
 
 # ---------------------------------------------------------------- 14. a pattern of many copies
 stage('14. patterns of many copies')
-small = sphere(1.5, (0, 0, 0))
+small = sphere(1.5)
 many = linear_pattern(small, 200, (4, 0, 0))
 check('a row of 200 copies: every copy is there', all(inside(many, (4 * k, 0, 0)) for k in (0, 1, 57, 128, 199)))
 check('and between the copies and past the ends there is nothing', not any(inside(many, p) for p in ((2, 0, 0), (-4, 0, 0), (800, 0, 0), (4 * 57 + 2, 0, 0))))
 v = volume(many, (-3, -3, -3), (800, 3, 3), 3.0)
 v_one = volume(small, (-3, -3, -3), (3, 3, 3), 3.0)               # (the samples round each copy are the same: 3 to a mm and a step of 4 mm -- so 200 copies are 200 times one)
 check('and the volume is 200 times the volume of one', near(v, 200 * v_one, 0.01), '{:.0f} (200 times {:.1f})'.format(v, v_one))
-tooth = box((8, -0.2, -1), (11, 0.2, 1))
+tooth = box((3, 0.4, 2), position=(9.5, 0, 0))
 gear = circular_pattern(tooth, 100)
 step = 2.0 * math.pi / 100.0
 check('a ring of 100 teeth: every tooth is there', all(inside(gear, (9.5 * math.cos(k * step), 9.5 * math.sin(k * step), 0)) for k in (0, 1, 33, 50, 99)))
@@ -372,13 +372,13 @@ print(took())
 
 # ---------------------------------------------------------------- 15. distance_between where the bodies come near each other in several places
 stage('15. distance_between: several places')
-plate_a = box((-40, -10, -5), (40, 10, 0))
-near_one = box((0, -5, 1.0), (5, 5, 2.0))
-near_two = box((20, -5, 0.6), (25, 5, 1.6))
+plate_a = box((80, 20, 5), position=(0, 0, -2.5))
+near_one = box((5, 10, 1), position=(2.5, 0, 1.5))
+near_two = box((5, 10, 1), position=(22.5, 0, 1.1))
 two = union(near_one, near_two)
 d = distance_between(plate_a, two, element_size=2.0)
 check('the nearer of two places is the distance', abs(d - 0.6) < 0.05, '{:.3f} (exact 0.6)'.format(d))
-sa, sb = sphere(5, (0, 0, 0)), sphere(3, (12, 0, 0))
+sa, sb = sphere(5), sphere(3, position=(12, 0, 0))
 check('two spheres', abs(distance_between(sa, sb) - 4.0) < 0.05, '{:.3f}'.format(distance_between(sa, sb)))
 print(took())
 
@@ -402,30 +402,34 @@ longer = handles(sl2, [-12, 10, -3, 3])
 check('slot: an end pulled makes it longer and keeps the round end and the width', inside(longer, (-11.5, 0, 0)) and not inside(longer, (-12.5, 0, 0)) and not inside(longer, (-11.8, 2.9, 0)) and inside(longer, (0, 2.9, 0)) and not inside(longer, (0, 3.2, 0)) and not inside(longer, (10.3, 0, 0)))
 wider = handles(sl2, [-10, 10, -3, 5])
 check('slot: a long side pulled makes it wider, keeps the ends at their places and the ends round', inside(wider, (0, 4.5, 0)) and not inside(wider, (0, 5.3, 0)) and not inside(wider, (0, -3.3, 0)) and inside(wider, (-9.8, 1, 0)) and not inside(wider, (-10.2, 1, 0)) and not inside(wider, (-9.9, 4.9, 0)))
-rod = threaded_rod('M8', 10)
-check('threaded rod: three handles, its diameter and the heights of its ends', handle_values(rod) == ['8.0', '0.0', '10.0'] and not getattr(rod, '_handles_ends_only', False), str(handle_values(rod)))
-longrod = handles(rod, [8, 0, 15])
+rod = threaded_rod(4, 10)
+check('threaded rod: three handles, its radius and the heights of its ends', handle_values(rod) == ['4.0', '0.0', '10.0'] and not getattr(rod, '_handles_ends_only', False), str(handle_values(rod)))
+longrod = handles(rod, [4, 0, 15])
 check('threaded rod: the top end pulled makes it longer', inside(longrod, (0, 0, 14)) and not inside(longrod, (0, 0, 16)) and inside(longrod, (0, 0, 1)))
 
 
-def crest_reach(body):
-    ''' How far the thread reaches from the axis, along x: the most over one pitch (1.25) of heights '''
-    best = 0.0
-    for k in range(25):
+def thread_reach(body, pitch):
+    ''' How far the surface of the thread is from the axis, along x: (the least, the most) over one pitch of heights '''
+    least, most = 99.0, 0.0
+    for k in range(40):
         lo, hi = 0.0, 12.0
         for _ in range(30):
             mid = 0.5 * (lo + hi)
-            if inside(body, (mid, 0, 2.0 + 1.25 * k / 25.0)):
+            if inside(body, (mid, 0, 2.0 + pitch * k / 40.0)):
                 lo = mid
             else:
                 hi = mid
-        best = max(best, lo)
-    return best
+        least, most = min(least, lo), max(most, lo)
+    return least, most
 
 
-wide_rod, thin_rod = handles(rod, [10, 0, 10]), handles(rod, [6, 0, 10])
-check('threaded rod: the side pulled makes it wider (and narrower), and the thread keeps its profile', abs(crest_reach(rod) - 4.0) < 0.02 and abs(crest_reach(wide_rod) - 5.0) < 0.02 and abs(crest_reach(thin_rod) - 3.0) < 0.02,
-      '{:.3f} {:.3f} {:.3f} (4, 5, 3)'.format(crest_reach(rod), crest_reach(wide_rod), crest_reach(thin_rod)))
+# (the thread is in proportion to the radius: the pitch is 0.3125 radii -- 1.25 for the radius 4 -- and the thread is 0.6134 pitches deep, so a rod pulled thinner has a thinner thread)
+wide_rod, thin_rod = handles(rod, [5, 0, 10]), handles(rod, [3, 0, 10])
+reaches = [thread_reach(b, 0.3125 * r) for b, r in ((rod, 4.0), (wide_rod, 5.0), (thin_rod, 3.0))]
+check('threaded rod: the side pulled makes it wider (and narrower)', all(abs(m - r) < 0.02 for (_, m), r in zip(reaches, (4.0, 5.0, 3.0))),
+      '{} (crests 4, 5, 3)'.format(', '.join('{:.3f}'.format(m) for _, m in reaches)))
+depths = [(m - l) / m for l, m in reaches]
+check('threaded rod: ... and the thread scales with the radius (as deep a share of it at 3, 4 and 5: 0.6134 x 0.3125 = 0.192)', all(abs(d - 0.1917) < 0.015 for d in depths), ', '.join('{:.3f}'.format(d) for d in depths))
 check('threaded rod: ... and the ends stay where they were', inside(wide_rod, (0, 0, 9.5)) and not inside(wide_rod, (0, 0, 10.5)) and inside(wide_rod, (0, 0, 0.5)) and not inside(wide_rod, (0, 0, -0.5)))
 # The flanks of the thread face up, down and out: the viewport pulls the side of the rod along the radius, wherever it is pressed, by the axis the rod names -- which a placement turns with it
 from fieldes.stdlib.placement import place as place_args
@@ -433,6 +437,13 @@ check('threaded rod: it names its axis (z), the same after its side is pulled', 
 turned_axis = getattr(place_args(rod, rotation=(90, 0, 0)), '_pull_axis', None)
 check('threaded rod: ... turned with it (a quarter turn about x lays the axis along y)', turned_axis is not None and abs(turned_axis[0]) < 1e-9 and abs(abs(turned_axis[1]) - 1.0) < 1e-9 and abs(turned_axis[2]) < 1e-9, str(turned_axis))
 check('threaded rod: ... and not by a move', getattr(place_args(rod, position=(5, 5, 5)), '_pull_axis', None) == (0.0, 0.0, 1.0))
+# The rod of a standard screw (the old thread, with the sizes of the screws): fixed sizes, no handles (the user, 2026-10-28: "threaded rod normed" ... "it does not have the drag handles that the other one has")
+normed = threaded_rod_normed('M8', 10)
+check('threaded rod normed: two handle numbers, its ends (the other one has three: the radius too) -- nothing on its side', len(getattr(normed, '_handle_params', None) or []) == 2 and len(getattr(rod, '_handle_params', None) or []) == 3, str(getattr(normed, '_handle_params', None)))
+nr = thread_reach(normed, 1.25)
+check('threaded rod normed: the crest is at the radius of the screw (4) and the root a profile depth under it (the diameter 1.2269 pitches under the nominal)', abs(nr[1] - 4.0) < 0.02 and abs(nr[0] - (4.0 - 0.5 * 1.2269 * 1.25)) < 0.05, str(nr))
+check('threaded rod normed: a fine pitch makes a finer thread of the same diameter', abs(thread_reach(threaded_rod_normed('M8', 10, pitch=1.0), 1.0)[1] - 4.0) < 0.02)
+check('threaded rod normed: the ends are where the length says', inside(normed, (0, 0, 9.5)) and not inside(normed, (0, 0, 10.5)) and inside(normed, (0, 0, 0.5)) and not inside(normed, (0, 0, -0.5)))
 print(took())
 
 # ---------------------------------------------------------------- 17. a half space square to an axis is a body, and is drawn up to the boundary of the region
@@ -441,7 +452,7 @@ from fieldes.kinds import kind_of
 from fieldes.ffi import lib, libfive_region_t, libfive_interval_t
 from fieldes.stdlib.fields import render_mesh
 for axis, norm, point in (('z', (0, 0, 1), (0, 0, 3.37)), ('x', (1, 0, 0), (3.37, 0, 0)), ('y', (0, -1, 0), (0, 2.5, 0))):
-    plane = half_space(norm, point)
+    plane = half_space(norm, position=point)
     check('half_space square to {} is a 3D shape (a field that does not depend on z is not a 2D shape)'.format(axis), kind_of(plane) == 'solid', str(kind_of(plane)))
     mesh = render_mesh(plane, libfive_region_t(*[libfive_interval_t(-20.0, 20.0) for _ in range(3)]), 2)
     m = mesh.contents if mesh else None

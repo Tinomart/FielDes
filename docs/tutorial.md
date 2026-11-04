@@ -63,16 +63,17 @@ The tour's model (**Help → Guided tour**) starts with
 from fieldes import *
 
 view.set_bounds([-35, -25, -8], [35, 25, 30], auto_scale=True)    # the region the viewport meshes
-view.set_resolution(6)                           # samples per mm
+view.set_resolution(30)                          # ten samples across the longest side of a model for every unit: 300
 view.set_quality(8)
 ```
 
-and builds a plate with a hole. Change `box((-30, -20, 0), (30, 20, var(6)))` — make the plate 12 mm thick — and the
+and builds a plate with a hole. Change `box((60, 40, var(6)), position=(0, 0, var(6) / 2))` — make the plate 12 mm thick — and the
 viewport updates a moment after you stop typing. The **last expression** of a script is what is shown; give other things names
 (`plate = ...`) and they appear in the tree, where the eye shows or hides each. (A bare name on a line of its own, `plate`,
 shows it too.)
 
-**Resolution** is the one setting to know: more samples per mm = a finer picture and a slower one. Start low; raise it for
+**Resolution** is the one setting to know: ten samples across the longest side of a model for every unit of it (a hundred at 10), for every model whatever its
+size -- a huge cylinder and a small one next to it get the same number of triangles. More = a finer picture and a slower one. Start low; raise it for
 a look at the detail. `Esc` cancels a render that is taking too long.
 
 ## 2. Drag, and the script follows
@@ -154,7 +155,7 @@ This is the part of FielDes that is not like other modellers. Anywhere the scrip
 thickness, a spacing — you can write a **field** instead. In the welcome script:
 
 ```python
-anchor = point(20, 10, 6)                                     # a point: a model, and a value wherever a coordinate goes
+anchor = point(position=(20, 10, 6))                                     # a point: a model, and a value wherever a coordinate goes
 swell  = ramp(distance_to_point(anchor), (0, 45), (3.0, 0.5))   # 3 mm at the anchor, falling to 0.5 mm 45 mm away
 swollen = offset(drilled, swell)
 ```
@@ -186,7 +187,7 @@ is there in *every* script, like `sphere()` or `lattice()`, with its call tip, c
 # blocks/my_blocks.py
 def perforate(body, hole_radius=2.0, spacing=10.0):
     ''' Drills a grid of round holes right through a body, along z '''
-    holes = repeat(cylinder(hole_radius, 100000, (0, 0, -50000)), (spacing, spacing, 0))
+    holes = repeat(cylinder(hole_radius, 100000, position=(0, 0, 0)), (spacing, spacing, 0))
     return difference(body, holes)
 ```
 

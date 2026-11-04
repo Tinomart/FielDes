@@ -1,5 +1,7 @@
 from fieldes import *
 view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
+view.set_resolution(10)
+view.set_quality(8)
 
 # START HERE: MANUFACTURING.
 #

@@ -123,6 +123,7 @@ A right-click on a body adds entries to the menu, below *Select Surface*: *Point
 | **Point at the corner** | `corner_1 = corner_at(part, (x, y, z))` | a point, exactly where three faces of the body meet, the corner nearest the click |
 | **Point on the edge** | `edge_point_1 = edge_point_at(part, (x, y, z))` | a point of the edge nearest the click -- any edge, a circle too (the rim of a cylinder) |
 | **Line along the edge** | `edge_1 = edge_at(part, (x, y, z))` | the straight edge nearest the click as a `polyline` of two points, from its corner to its corner (offered only for an edge that is a straight line) |
+| **Lines along connected edges** | `edge_1 = edge_at(part, (x, y, z))`, `edge_2 = edge_at(part, (x, y, z))`, ... one for each edge | every straight edge that is joined to the edge nearest the click through its corners, in every direction (a cube gives its twelve): each is the line of Line along the edge, made at the middle of its edge, so each follows the body and fillet and chamfer take them; offered beside Line along the edge. An edge that is not a straight line is not followed (`fieldes.stdlib.features.connected_edges` does the search) |
 
 Like `select_surface`, they are made from the body's **field** alone -- its value and its gradient, which is the surface normal --, and no mesh of the body is made or read: the surface
 round the click is sampled and its normals are sorted into faces; two faces that meet at a sharp angle make an edge, three make a corner, and the place is where the planes of the faces

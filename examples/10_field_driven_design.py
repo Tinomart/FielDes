@@ -13,12 +13,12 @@ parts = import_model("step/PivotBearingSupportBracket.STEP")
 bracket, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts), auto_scale=True)
-view.set_resolution(4)
+view.set_resolution(20)
 view.set_quality(8)
 
-plates = union(box((-76, 5, -61), (-45, 36, 29)),
-               box((45, 5, -61), (76, 36, 29)))
-lugs = box((-60, -90, -61), (60, -60, 29))
+plates = union(box((31, 31, 90), position=(-60.5, 20.5, -16)),
+               box((31, 31, 90), position=(60.5, 20.5, -16)))
+lugs = box((120, 30, 90), position=(0, -75, -16))
 
 # 1) analysis: bolted at the plates, pulled at the lugs
 support = fixed(plates)
@@ -38,5 +38,5 @@ colored(graded, density, label="lattice density (from stress)")
 
 # Other ways to drive it:
 #   density = ramp(result.displacement, (0, result.max_displacement), (0.5, 0.15))
-#   opt = topology_optimization(result, constraints=[minimize('compliance'), 'volume_fraction <= 0.4'])
+#   opt = topology_optimization(result, conditions=[minimize(result.compliance), keep_below(result.volume_fraction, 0.4)])
 #   graded = lattice(bracket, cell_periodic("octet"), cell_size=8, density=ramp(opt.density, (0, 1), (0.1, 0.5)), skin=1.5)

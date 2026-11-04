@@ -1,7 +1,7 @@
 '''
 Points and surfaces: models of their own kind, and how every kind is drawn.
 
-    p = point(10, 0, 5)                    a point: drawn as a dot (the middle point of a gizmo); click it and its gizmo shows, and moves it
+    p = point(position=(10, 0, 5))                    a point: drawn as a dot (the middle point of a gizmo); click it and its gizmo shows, and moves it
     s = plane((0, 0, 8), (0, 0, 1))        a surface: an open sheet, the zero set of a field, with no body behind it
     wavy = wave_surface(2, 10)             z = 2 sin(2 pi x / 10)
 
@@ -129,11 +129,16 @@ class Point(Shape):
         self.xyz = (_coord(x), _coord(y), _coord(z))
         self._kind = 'point'                    # (an instance attribute: it goes with the point through the placement and the like)
         self._smooth = None if smooth is None else bool(smooth)      # (what it is in a profile: a spline point or a corner; None: what the profile says)
+        if influence is None and isinstance(radius, Shape):
+            # (a point whose radius is a var() and that says no influence of its own has the radius var as its influence too: the number that the wheel and the ring of its gizmo change IS the radius, in mm, not a
+            # factor on a radius that is somewhere else -- the user, 2026-11-03, "The influence value of the sphere should reflect the actual radius in mm, for precise control".  See curves.Control)
+            influence = radius
         self._radius = radius                   # (what it is in a profile: a round corner of this radius -- a number or a var() -- or None: what the profile says)
         self._influence = influence             # (how far the point reaches -- a number or a var() -- or None: it does not say.  The radius of the field round it: distance_to_point, radial_field)
         self._point_pos = _position_of(self.xyz)    # (where the viewport draws its dot: the middle point of a gizmo, always there)
         res, lo, hi = _view()
-        radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
+        # (the ball is a shape of its own size, and the resolution is normed by the size of a shape: it is as fine as any other, whatever the size of the region -- no floor of its own)
+        radius = max(hi[i] - lo[i] for i in range(3)) / 120.0
         ball = self._ball(radius)               # (held: its tree is freed with it)
         super().__init__(lib.libfive_tree_copy(ball.ptr))
         if all(isinstance(c, float) for c in self.xyz):
@@ -175,20 +180,30 @@ class Point(Shape):
 
 
 class Surface(Shape):
-    ''' An open surface: the zero set of a field, with no body behind it (negative on one side, positive on the other) '''
+    ''' An open surface: infinitely thin, with no inside and no outside.  Its field IS the surface -- one field, the distance to the sheet, zero on it and nowhere else: `|f|` for a sheet that goes on, and
+        `sqrt(f^2 + e^2)` for a finite one, where `e` is how far a place is beyond the end of the sheet (zero up to the end).  A finite sheet ends because the field stops being zero there '''
     _kind = 'surface'
 
-    def __init__(self, field):
+    def __init__(self, field, limit=None, bounds=None):
         field = Shape.wrap(field)
-        super().__init__(lib.libfive_tree_copy(field.ptr))
+        beyond = Shape.wrap(limit).max(0) if limit is not None else Shape.wrap(0.0)
+        # (a hair under the square root -- 1e-6 mm of distance -- so that the field has a gradient where the surface is pulled: the square root of zero has none)
+        unsigned = (field.square() + beyond.square() + 1e-12).sqrt()
+        super().__init__(lib.libfive_tree_copy(unsigned.ptr))          # (`unsigned` is held in a name: a pointer read off a temporary is of a tree that is already freed)
         self._kind = 'surface'                  # (an instance attribute: it goes with the surface through the placement and the like)
+        self._unsigned = True                   # (the mesher draws the zero set of a field that is not negative anywhere)
+        # (the side the surface FACES -- the f it was made of, positive on one side -- is not its field: it is only for what lays something on a side of it, `lattice_surface_conform`)
+        self.facing = field
+        if limit is not None:
+            self.limit = Shape.wrap(limit)           # (how far a place is past the end of the sheet, negative on it: what a pull of its edge is made of)
+        if bounds is not None:
+            self._bounds = bounds
 
     def _display(self):
-        # The field itself: the mesher finds where it is zero, and that is the sheet -- one layer of triangles, no thickness
         return _as(self, self)
 
 
-def point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None, influence=None):
+def point(x=0.0, y=0.0, z=0.0, *, smooth=None, radius=None, influence=None):
     ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
         `influence` is how far the point reaches, in mm -- a number or a var(): the RADIUS of the field round it, when a point is given to `distance_to_point` or `radial_field`
         (the distance from the sphere, or the tube, of that radius: negative inside it, 0 on it, positive outside).  A point that does not say its influence is the point alone,
@@ -240,28 +255,87 @@ def surface(field):
     return Surface(field)
 
 
-def plane(point=(0, 0, 0), normal=(0, 0, 1)):
-    ''' A plane through `point`, positive on the side `normal` points to: a surface '''
+def plane(point=(0, 0, 0), normal=(0, 0, 1), width=40.0, height=None):
+    ''' A flat rectangle, `width` by `height` mm (a square when there is no height), round `point`, in the plane `normal` is perpendicular to: a surface with limits, as thin as any surface.
+        Its handles are on its outside: each edge changes the size across it '''
+    import math
     from fieldes.stdlib.fields import distance_to_plane
-    return Surface(distance_to_plane(point, normal))
+    if height is None:
+        height = width
+    n = [float(v) for v in normal]
+    length = math.sqrt(sum(v * v for v in n)) or 1.0
+    n = [v / length for v in n]
+    helper = (1.0, 0.0, 0.0) if abs(n[0]) < 0.9 else (0.0, 1.0, 0.0)
+    # (the width runs along the world's x where the plane allows it -- along x for a plane across z -- and the height across it, in the plane)
+    dot = sum(helper[i] * n[i] for i in range(3))
+    u = [helper[i] - n[i] * dot for i in range(3)]
+    lu = math.sqrt(sum(v * v for v in u)) or 1.0
+    u = [v / lu for v in u]
+    w = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]]
+    c = [float(v) for v in point]
+    def along(d):
+        return (Shape.X() - c[0]) * d[0] + (Shape.Y() - c[1]) * d[1] + (Shape.Z() - c[2]) * d[2]
+    limit = (along(u).abs() - width / 2).max(along(w).abs() - height / 2)
+    box = None
+    try:
+        half_w, half_h = abs(float(width)) / 2, abs(float(height)) / 2
+        reach = [abs(u[i]) * half_w + abs(w[i]) * half_h for i in range(3)]
+        box = (tuple(c[i] - reach[i] for i in range(3)), tuple(c[i] + reach[i] for i in range(3)))
+    except (TypeError, ValueError):
+        pass
+    out = Surface(distance_to_plane(point, normal), limit, box)
+    from fieldes.stdlib.shapes import _parametric
+    return _parametric(out, [width, height], lambda v: plane(point, normal, v[0], v[1]))
 
 
 def sphere_surface(radius=10.0, center=(0, 0, 0)):
     ''' The surface of a sphere (without its inside): a surface, negative inside '''
     from fieldes.stdlib.fields import distance_to_point
-    return Surface(distance_to_point(center, 0.0) - radius)             # (the plain distance: the radius is the sphere's own, not the influence of a centre that is a point)
+    box = None
+    try:
+        c, r = [float(v) for v in center], abs(float(radius))
+        box = (tuple(v - r for v in c), tuple(v + r for v in c))
+    except (TypeError, ValueError):
+        pass
+    return Surface(distance_to_point(center, 0.0) - radius, None, box)             # (the plain distance: the radius is the sphere's own, not the influence of a centre that is a point)
 
 
-def cylinder_surface(radius=5.0, axis='z', center=(0, 0, 0)):
-    ''' The surface of an infinite cylinder along an axis: a surface, negative inside '''
+def cylinder_surface(radius=5.0, axis='z', center=(0, 0, 0), length=40.0):
+    ''' The surface of a cylinder along an axis, `length` mm long round the centre: a surface with limits, without its inside '''
     from fieldes.stdlib.fields import _radial_distance
-    return Surface(_radial_distance(center, axis) - radius)             # (the plain distance: the radius is the cylinder's own, not the influence of a centre that is a point)
+    along = {'x': Shape.X(), 'y': Shape.Y(), 'z': Shape.Z()}[axis] - {'x': center[0], 'y': center[1], 'z': center[2]}[axis]
+    limit = along.abs() - length / 2
+    box = None
+    try:
+        r, half = abs(float(radius)), float(length) / 2
+        c = [float(v) for v in center]
+        reach = {'x': (half, r, r), 'y': (r, half, r), 'z': (r, r, half)}[axis]
+        box = (tuple(c[i] - reach[i] for i in range(3)), tuple(c[i] + reach[i] for i in range(3)))
+    except (TypeError, ValueError):
+        pass
+    out = Surface(_radial_distance(center, axis) - radius, limit, box)
+    from fieldes.stdlib.shapes import _parametric
+    return _parametric(out, [radius, length], lambda v: cylinder_surface(v[0], axis, center, v[1]))           # (the plain distance: the radius is the cylinder's own, not the influence of a centre that is a point)
 
 
-def wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0):
-    ''' A wavy sheet z = height + amplitude sin(2 pi s / period) along an axis (s = x or y): a surface, positive above it '''
-    from fieldes.stdlib.fields import wave
-    return Surface(Shape.Z() - (height + wave(axis, period, amplitude)))
+def wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0, width=40.0, length=None):
+    ''' A wavy sheet z = height + amplitude sin(2 pi s / period) along an axis (s = x or y), a rectangle `width` mm along x by `length` mm along y (a square when there is no length) round the middle:
+        a surface with limits, as thin as any surface.  Its handles are on its outside: each pair of edges changes the width or the length '''
+    from fieldes.stdlib.fields import _sine as wave
+    if length is None:
+        length = width
+    limit = (Shape.X().abs() - width / 2).max(Shape.Y().abs() - length / 2)
+    box = None
+    try:
+        a, h, sx, sy = abs(float(amplitude)), float(height), abs(float(width)) / 2, abs(float(length)) / 2
+        box = ((-sx, -sy, h - a), (sx, sy, h + a))
+    except (TypeError, ValueError):
+        pass
+    out = Surface(Shape.Z() - (height + wave(axis, period, amplitude)), limit, box)
+    # (what the handles change: the edges the width and the length -- never a thickness, a surface has none.  The amplitude and the period are not handles: a pull of the sheet near a node of the wave sent the
+    # amplitude to tens of mm and tore the mesh into spikes -- the user, 2026-11-04: "It is just too unstable ... Remove the handle control of amplitude and frequency")
+    from fieldes.stdlib.shapes import _parametric
+    return _parametric(out, [width, length], lambda v: wave_surface(amplitude, period, axis, height, v[0], v[1]))
 
 
 def displayed(shape):

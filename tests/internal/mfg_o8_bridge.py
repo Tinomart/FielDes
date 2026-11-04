@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('o8_bridge: a flat roof across a 30 mm gap, a longest bridge of 20 mm asked: it is reported, not repaired')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = union(union(box((0, 0, 0), (5, 10, 20)), box((35, 0, 0), (40, 10, 20))), box((0, 0, 20), (40, 10, 23)))
+part = union(union(box((5, 10, 20), position=(2.5, 5, 10)), box((5, 10, 20), position=(37.5, 5, 10))), box((40, 10, 3), position=(20, 5, 21.5)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(max_bridge=20.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

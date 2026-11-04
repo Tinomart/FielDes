@@ -203,8 +203,12 @@ public:
         std::vector<std::pair<libfive::Tree::Id, int>> vars;
         QVector3D direction;
         QVector3D planeNormal;
+        std::vector<float> scales;          // (parallel to vars; empty = every number changes by the move itself.  The end face: a number changes by the move along the normal, which has 1 / normal[axis] of it on the axis)
     };
     bool prismWallAt(const QVector3D& press, PrismWall& out) const;
+    /*  The end face of a prism that a press is on, for pulling its length (see prismEndAt): the number of that end -- the var() that handles(extrusion, [a, b]) wrote --, the direction it moves along (the
+     *  normal of the plane of the profile) and what a move along that direction is on the axis of the number  */
+    bool prismEndAt(const QVector3D& press, PrismWall& out, bool needNumber = true) const;
     /*
      *  A SWEEP -- `path_extrude(profile, curve)` of a profile of points along a curve of points -- is drawn the same way: ring by ring, from the numbers the points of the profile and
      *  of the path have now (the thickness of a path point, its rotation, the twist), placed by the numbers of the shape's gizmo.  Nothing is meshed, so a point that is dragged is
@@ -215,10 +219,23 @@ public:
     /*  The profile of the sweep is the outline of a primitive (a circle, a rectangle, ...) rather than a profile: its corners are in the plane z = 0, its axes x and y (no plane is
      *  worked out of them).  In every other way it is a profile to the sweep: the sweep starts at it  */
     void setSweepFree(bool free) { m_sweep_free = free; }
+    // The mesh that a sweep or a prism is drawn from, as the vertices and triangles that libfive_mesh_from_arrays makes the native distance field of its triangles from (false when this is neither): see Shape::nativeMeshArrays
+    bool nativeMeshArrays(const std::map<libfive::Tree::Id, float>& v, std::vector<float>& xyz, std::vector<uint32_t>& tri) const;
     /*  Numbers of the script that must still be what they were for the sweep to be drawn from its outline (a gizmo's turn about x or y of the profile, its move along z: a profile
      *  that leaves the plane z = 0 is not the outline): (a var, its value)  */
     void setSweepGuard(std::vector<std::pair<libfive::Tree::Id, float>> guard) { m_sweep_guard = std::move(guard); }
     bool hasSweep() const { return !m_sweep_path.empty() && !m_sweep_profile.empty(); }
+    /*
+     *  A BODY MADE OF POINTS -- `morph_polyhedron`, `morph_body` -- is drawn from the numbers of its points the same way: its surface is made of patches over the cage of its points, written once by the
+     *  library as the control points of the patches (expressions of the numbers, three trees each) and, for every vertex of the drawn surface, the control points it is a sum of and their weights
+     *  (`recipeStart[v]` to `recipeStart[v + 1]` of `recipeControl` and `recipeWeight`), with the triangles between the vertices.  The control points are evaluated once each at every step of a
+     *  drag, so the number of vertices costs a sum of a few numbers each and no evaluation: nothing is meshed from the field, which is only made when something else needs it (a union with the body)
+     */
+    void setMorph(std::vector<libfive::Tree> controls, std::vector<uint32_t> recipeStart, std::vector<uint32_t> recipeControl, std::vector<double> recipeWeight, std::vector<uint32_t> triangles);
+    bool hasMorph() const { return m_morph_controls.size() >= 9 && m_morph_recipe_start.size() >= 4 && !m_morph_triangles.empty(); }
+    /*  The vertices of the surface as the numbers of the script are now (false when one of them is not a number)  */
+    bool morphNow(const std::map<libfive::Tree::Id, float>& v, std::vector<Eigen::Vector3f>& out) const;
+    bool morphDirect(const std::map<libfive::Tree::Id, float>& v, std::vector<Eigen::Vector3d>& at) const;       // (the numbers of the control points, worked out directly -- see morphNow; the caller holds m_morph_mutex)
     /*  The one number (var) an expression of the script's numbers is made of, or null when it has none or several: what moves a point along an axis  */
     static libfive::Tree::Id soleVarOf(const libfive::Tree& expression);
     bool hasControls() const { return !m_controls.empty(); }
@@ -242,6 +259,8 @@ public:
     bool tangentAt(int i, QVector3D& out) const;
     /*  Which control of this shape a point is (by the numbers that move it), or -1  */
     int controlOf(const Shape* point) const;
+    bool morphUses(const Shape* point) const;             // (a body of points -- morph_polyhedron, morph_body --: whether a point is one of the points it is made of)
+    int sweepControlOf(const Shape* point) const;          // (a sweep is placed by the points of its profile and its path: which of them a point is, or -1)
     /*  The control whose three coordinates are plain numbers and are where `p` is, or -1: how a point that has no gizmo (no numbers of its own) is found  */
     int controlAt(const QVector3D& p) const;
     /*  The control the piece of the line numbered `piece` (as outlines() lists them) is after  */
@@ -274,6 +293,12 @@ public:
     /*  A shape whose outline is a place to press (a profile, a curve): a press on it pulls a point out of it, one that is drawn blue  */
     void setEditable(bool on) { m_editable = on; }
     bool isEditable() const { return m_editable; }
+    /*  A body made of points (morph_polyhedron, morph_body): a press on its surface and a drag puts a point there and goes on dragging it, as a press on the outline of a profile does  */
+    void setPointBody(bool on) { m_pointBody = on; }
+    bool isPointBody() const { return m_pointBody; }
+    // A line that stands for an edge that was not found (python: `_lost`, see features._lost_line): it is drawn in the warning colour
+    void setLost(bool on) { m_lost = on; }
+    bool isLost() const { return m_lost; }
 
     /*  How the dot of a point is drawn: 0 as any point, 1 a corner of a profile or a curve (a square), 2 a spline point (a circle with a ring)  */
     void setPointStyle(int s) { m_point_style = s; }
@@ -420,10 +445,37 @@ public:
     void setResolutionOverride(float res) { m_res_override = res > 0 ? res : 0.0f; }
     float resolutionOverride() const { return m_res_override; }
 
+    /*  The size of the smallest feature of its surface, in mm: what the script says of it (`_feature_size`: the pitch of a thread -- fieldes.stdlib.cad.threaded_rod).  0: it says none.  A level
+     *  of the mesher whose cells are not a fraction of it draws the feature as the spikes of a grid it does not fit, and the first level of a drag is such a level: see finestFeature, autoResolution
+     *  and defaultDivFor  */
+    void setFeatureSize(float size) { m_feature = size > 0 ? size : 0.0f; }
+    float featureSize() const { return m_feature; }
+    double finestFeature() const;
+
     /*  The box the script says the shape fills (its `_bounds`: told by the primitives, which know it from their numbers, and carried through handles() and the placement arguments, widened by
      *  the numbers that were pulled).  It sizes the shape, for its resolution, when the quick search for its box (measureExtent) runs out of its time -- a shape made with
      *  var()s, a primitive that has been given handles, always does -- see autoResolution  */
     void setScriptBox(QVector3D lo, QVector3D hi);
+    // (the box the script says the shape fills, when it says one: a finite surface knows how far the region must reach to hold it)
+    // (a field that is not negative anywhere -- a surface's -- is drawn by its zero set: see unsignedMesh)
+    void setUnsigned(bool on) { m_unsigned = on; }
+    bool m_unsigned = false;
+    // The field a surface was made from, signed (negative on one side of the sheet and positive on the other): it says which layer of the thin shell a vertex is on (unsignedMesh)
+    void setFacing(const libfive::Tree& t) { m_facing = t; }
+    libfive::Tree m_facing = libfive::Tree::invalid();
+    // The signed distance past the end of a finite sheet (negative on it, zero at its edge): a pull of the edge is made of it, a pull of the inside of the sheet of `m_facing`; the field of a
+    // surface itself is never negative, and has no direction to pull in (the user, 2026-11-04: "its drag handles dont work")
+    void setLimit(const libfive::Tree& t) { m_limit = t; }
+    void setPullBand(float b) { m_pullBand = b; }
+    const libfive::Tree& pullField() const { return (m_unsigned && m_pullEdge && m_limit.is_valid()) ? m_limit : ((m_unsigned && m_facing.is_valid()) ? m_facing : tree); }
+    libfive::Tree m_limit = libfive::Tree::invalid();
+    bool m_pullEdge = false;
+    float m_pullBand = 0.0f;
+    std::unique_ptr<libfive::Mesh> unsignedMesh(const libfive::Region<3>& region);
+    std::unique_ptr<libfive::Mesh> unsignedMeshWith(const libfive::Region<3>& region, const libfive::Tree& T, const libfive::Tree& F, const libfive::BRepSettings& settings);
+    std::unique_ptr<libfive::Mesh> renderInOwnFrame(const libfive::Region<3>& region);
+    bool ownFrame(QMatrix4x4& M) const;
+    bool scriptBox(QVector3D& lo, QVector3D& hi) const { if (!m_script_box_valid) return false; lo = m_script_lo; hi = m_script_hi; return true; }
 
     /*  A part that is the exact distance to triangles of its own (a tessellated STEP part: fieldes tessellate()) is drawn from
      *  those triangles, not meshed from its field: a wall as thin as you like is there at any resolution, and nothing is
@@ -491,6 +543,7 @@ public:
         // that Shift and the ring drag.  Null where the point says none
         libfive::Tree::Id influence = nullptr;
         bool splinePoint = false;       // (a line or a profile has it as a spline point: see curves.Control)
+        double influenceMax = 0.0;      // (the largest influence the point can show -- a sphere point's radius stops at half the shortest edge --, 0 where there is no limit)
         // The gizmo of the image of a model (fieldes.stdlib.symmetry.symmetry_image): its numbers are the original's, and `map` takes a place of the original to the
         // image's: the gizmo is drawn there, and what is dragged moves the original by what the image's move is when it is taken back
         bool mapped = false;
@@ -507,8 +560,8 @@ public:
     void setGizmoMode(Gizmo::Mode m) { m_gizmo.mode = m; }
     /*  When the gizmo of a profile, a polyline or a spline is shown (the mode of its gizmo button, which has no numbers: the outline's gizmo is the shared one of its points,
         see View::groupGizmo).  NEVER until the button says otherwise  */
-    void setOutlineMode(Gizmo::Mode m) { m_outlineMode = m; }
-    Gizmo::Mode outlineMode() const { return m_outlineMode; }
+    void setOutlineMode(Gizmo::Mode m) { m_outlineMode = m; m_outlineModeSet = true; }
+    Gizmo::Mode outlineMode() const { return (!m_outlineModeSet && hasMorph()) ? Gizmo::CLICK : m_outlineMode; }      // (a body of points has the shared gizmo of its points while it is selected, like any shape, until the button says otherwise: the user, 2026-11-02, "THE MORPH BODY ALSO DOES STILL NOT PROVIDE A GIZMO")
     /*  An outline that is an IMAGE of another -- a placed copy (`instance(x)`, then its own gizmo), an image in a symmetry: the line of the outline it is an image of, which is what editing it
         edits (-1: it is not an image, or its original is not shown), where a place of the original is taken to the image (`editMap`: original -> this), and whether the image runs the
         other way round (a mirror image: its points are in the opposite order).  A point put on the outline of an image is put on the original -- at the place the press has there --, and
@@ -549,6 +602,15 @@ public:
     /*  Has a number that moves it (`position=(var, ...)`), in whatever mode, and is not locked: the shared
      *  gizmo of a multi-selection can move it, whatever its own gizmo mode is  */
     bool hasMoveVars() const;
+    /*  The parts an operation is made of that are placed by numbers of a gizmo (fieldes.made_from, `_carried`; the user, 2026-11-03, H93: "the operation and the underlying parts should always
+        stay on top of each other ... only a one way link is necessary"): an operation has no position that is only its own -- it is where its parts put it -- so its gizmo is theirs, shown or hidden:
+        what moves, turns or scales the operation changes their numbers.  The gizmo of each part (about, move, rotate, scale), the operation carrying them (it has no numbers of its own to be
+        placed by, and some of the numbers of the parts are in its field), and where the parts stand  */
+    void setCarried(const std::vector<Gizmo>& c) { m_carried = c; }
+    const std::vector<Gizmo>& carried() const { return m_carried; }
+    bool carriesParts() const;
+    QVector3D carriedPivot() const;
+    QVector3D carriedPivotOf(const Gizmo& g) const;
     /*  The numbers now (constants and unknown ones as 0; a scale as 1)  */
     QVector3D gizmoMove() const;
     QVector3D gizmoRotate() const;
@@ -580,6 +642,8 @@ public:
     /*  An image of a model in a symmetry: the images of one statement (`x_images = symmetry_images(x, mirror)`) are shapes of their own on one line of the script, and one selection  */
     void setSymmetryImage(bool v) { m_symmetryImage = v; }
     bool isSymmetryImage() const { return m_symmetryImage; }
+    /*  Whether the shape is made of the number `id` (a var() of the scene): the symmetry plane that a body of points is an image through is found by it (see View::beginGizmoDrag)  */
+    bool dependsOnVar(libfive::Tree::Id id) const { return usesVar(id); }
     /*  The symmetry an image is made in (the tree of the symmetry model, `_symmetry_source`; null when the shape is no image): what binds a body to a symmetry.  The planes of a symmetry that is not in use
         are drawn for as long as a body is bound to them, and for no other reason -- the symmetry that is only selected is not  */
     void setSymmetrySource(libfive::Tree::Id of) { m_symmetrySourceId = of; }
@@ -600,7 +664,7 @@ public:
     /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */
     std::map<libfive::Tree::Id, float> dragWeights() const;
     /*  Where the part turns after the move: the pivot the gizmo sits at  */
-    QVector3D gizmoPivot() const { const QVector3D p = m_gizmo.about + gizmoMove(); return m_gizmo.present && m_gizmo.mapped ? m_gizmo.map.map(p) : p; }
+    QVector3D gizmoPivot() const { if (!m_gizmo.present && !m_carried.empty()) return carriedPivot(); const QVector3D p = m_gizmo.about + gizmoMove(); return m_gizmo.present && m_gizmo.mapped ? m_gizmo.map.map(p) : p; }
     /*  The gizmo is an image's (the numbers of the original); the turns and mirror images of the way it was made (without the shift), whether it turns the way round (+1, -1),
         and the part's own axes as the image has them (the original's, taken through the symmetry)  */
     bool gizmoMapped() const { return m_gizmo.present && m_gizmo.mapped; }
@@ -704,6 +768,8 @@ public:
     bool hasElements() const;
     bool showElements() const { return m_show_elements; }
     void setShowElements(bool b);
+    void setCellsOnly(bool b);                   // (a mesh: its cells are drawn and nothing else, and they cannot be switched off)
+    bool cellsOnly() const { return m_cells_only; }
     QString elementText() const { return m_grid.text; }
     // What the card says when a result has no elements to show, and why (more tetrahedra than are drawn)
     void setElementNote(const QString& note) { m_elementNote = note; }
@@ -790,7 +856,7 @@ public:
      *
      *  Returns true if variable values have changed.
      */
-    bool updateFrom(const Shape* other);
+    bool updateFrom(Shape* other);          // (`other` is the shape of the new run that this one stands for: it is discarded after this, and a point takes its numbers by swapping them)
 
     /*
      *  Updates variables in the Evaluator, scheduling a new
@@ -826,6 +892,15 @@ public:
     /*
      *  Returns another pointer to the solution map
      */
+    /*  A shape that is not going to be used -- a new one that an old one stands for -- gives up the maps of the numbers of the script that it holds (all 3321 of them, in three maps, for each of the 1107 points
+     *  of a mesh), to be freed on another thread: freed by its destructor on the window's thread they were 1.3 ms a shape, 1.4 s of every release of a dragged point (H90, the event statistics of the stall
+     *  test of 2026-11-03: 1107 deferred deletes of Shapes in one stall)  */
+    void giveUpNumbers(std::vector<std::map<libfive::Tree::Id, float>>& into)
+    {
+        into.push_back(std::move(vars));
+        into.push_back(std::move(m_script_vars));
+        into.push_back(std::move(cache_vars));
+    }
     const std::map<libfive::Tree::Id, float>& getVars() const
     { return vars; }
 
@@ -907,7 +982,7 @@ protected:
 
     void startRender(RenderSettings s);
     BoundedMesh renderMesh(RenderSettings s);
-    static std::unique_ptr<libfive::Mesh> prismMesh(const std::vector<libfive::pointshapes::Control>& cs, bool smoothDefault, double a, double b);
+    static std::unique_ptr<libfive::Mesh> prismMesh(const std::vector<libfive::pointshapes::Control>& cs, bool smoothDefault, double a, double b, int steps = 14);
 
     bool grabbed=false;
     bool hover=false;
@@ -921,10 +996,13 @@ protected:
     double run_frame[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};    // (what the render in the thread uses)
     bool run_has_frame = false;
     bool m_editable = false;
+    bool m_pointBody = false;
+    bool m_lost = false;
     int m_point_style = 0;
     std::vector<ControlPoint> m_controls;
     bool m_controls_default = false, m_controls_closed = false, m_controls_face = false;
     Gizmo::Mode m_outlineMode = Gizmo::NEVER;
+    bool m_outlineModeSet = false;
     int m_editLine = -1;
     QMatrix4x4 m_editMap;
     bool m_editReversed = false;
@@ -946,6 +1024,19 @@ protected:
     libfive::Tree m_sweep_scale[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
     bool sweepNow(const std::map<libfive::Tree::Id, float>& v, SweepNumbers& out) const;
     static std::unique_ptr<libfive::Mesh> sweepMesh(const SweepNumbers& in);
+    std::vector<libfive::Tree> m_morph_controls;          // (three trees to a control point: x, y, z)
+    std::vector<uint32_t> m_morph_recipe_start;           // (vertex v is the sum over [start[v], start[v + 1]) of weight x control point; one more than there are vertices)
+    std::vector<uint32_t> m_morph_recipe_control;
+    std::vector<double> m_morph_recipe_weight;
+    std::vector<uint32_t> m_morph_triangles;              // (three vertex numbers to a triangle)
+    // The numbers of the control points are read with ONE evaluator that is kept between the steps of a drag (see morphNow): a tree of its own for each of them was built and zeroed again at every step,
+    // 425 to 620 ms for a body of eight spline points (the user, 2026-11-02: "Dragging points still just lags everything and does not work in real time")
+    mutable std::mutex m_morph_mutex;
+    mutable std::shared_ptr<void> m_morph_eval;           // (a libfive::ArrayEvaluator, made on the first read after the controls were set)
+    mutable std::map<libfive::Tree::Id, float> m_morph_last;
+    mutable std::shared_ptr<void> m_morph_plan;           // (the list of plain operations that the control points are made of, see morphDirect: made on the first read after the controls were set)
+    mutable bool m_morph_plan_failed = false;             // (the controls hold an operation that the direct reading does not do: the evaluator above reads them)
+    static std::unique_ptr<libfive::Mesh> morphMesh(const std::vector<Eigen::Vector3f>& vertices, const std::vector<uint32_t>& triangles);
     std::vector<ControlPoint> m_prism_points;
     bool m_prism_default = false;
     libfive::Tree m_prism_a = libfive::Tree::invalid(), m_prism_b = libfive::Tree::invalid();
@@ -1070,6 +1161,7 @@ protected:
     QVector3D hint_lo, hint_hi;
     float hint_res=0, hint_side=0, hint_scene_res=0;
     float m_res_override = 0;                   // (see setResolutionOverride)
+    float m_feature = 0;                        // (see setFeatureSize)
     // ...where the part is now (its gizmo moves and turns it): what the
     // render in progress uses
     QVector3D run_hint_lo, run_hint_hi;
@@ -1108,7 +1200,11 @@ protected:
     /*  Why no box was found (for the timing log): the first condition that refuses the search, else that it ran out of time  */
     std::string extentWhy(const Settings& s);
     double autoResolution(const Settings& s) const;
+    /*  autoResolution before the size of the smallest feature (setFeatureSize) is looked at: the scene's resolution, or the shape's own, scaled by the shape's size in the region  */
+    double scaledResolution(const Settings& s) const;
     int defaultDivFor(const Settings& s);
+    /*  The level defaultDivFor chooses from the size of the shape, before the size of its smallest feature caps it  */
+    int sizedDivFor(const Settings& s);
     /*  The box of the mesh the shape has (what it looked like a moment ago): false before it has one, or before it has been drawn once (the box is read when it is)  */
     bool meshSize(QVector3D& lo, QVector3D& hi) const;
     /*  The level a render starts at is chosen by the first render of a shape, before its size is known (and the search for it may never find it: a shape made with var()s is
@@ -1130,6 +1226,11 @@ protected:
     /*  The box above is the script's (setScriptBox), not a search's, and the shape has been given other numbers since the script said it (a surface being pulled): it is not the
         shape's size now, and so it must not make the shape finer than it was meshed (autoResolution)  */
     bool m_ext_stale = false;
+public:
+    void setScriptOwnLength(double L) { m_script_own_L = L; }
+private:
+    double m_script_own_L = 0;      // (what the script says: the longest side of the box the part had before it was placed -- used when the search for the own-frame box finds none)
+    double m_ext_own_L = 0;         // (a part placed turned: the longest side of the box it has in its own frame, in world units -- what its resolution is normed by, so that turning it changes nothing; 0 = none measured)
     bool m_script_box_valid = false;
     QVector3D m_script_lo, m_script_hi;
     std::map<libfive::Tree::Id, float> m_script_vars;       // (the numbers the shape had when the script said the box)
@@ -1158,6 +1259,7 @@ protected:
     libfive::BRepAlgorithm m_last_alg = libfive::BRepAlgorithm::DUAL_CONTOURING;
 
     Gizmo m_gizmo;
+    std::vector<Gizmo> m_carried;               // (the gizmos of the parts an operation is made of: see carried)
     std::set<libfive::Tree::Id> m_frozenVars;
     QVector3D m_pullAxis;
     std::shared_ptr<const std::set<libfive::Tree::Id>> m_sceneGizmoVars;
@@ -1252,6 +1354,7 @@ protected:
     ElementGrid m_grid;
     QString m_elementNote;
     bool m_show_elements=false;
+    bool m_cells_only = false;
     bool m_sec_enabled=false, m_sec_whole=false;
     QVector4D m_sec_plane;
     bool elem_dirty=true;

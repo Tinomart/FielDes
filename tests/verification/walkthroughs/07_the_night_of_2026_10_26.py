@@ -42,9 +42,9 @@ view.set_resolution(3)
 view.set_quality(8)
 
 # A -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-plate = box((-20, -20, -5), (20, 20, 0))
+plate = box((40, 40, 5), position=(0, 0, -2.5))
 plate
-bracket = box((30, -5, -5), (40, 5, 10))
+bracket = box((10, 10, 15), position=(35, 0, 2.5))
 bracket = custom_resolution(bracket, 8)
 bracket
 top_face = select_surface(plate, seed=(0, 0, 0), angle=10)
@@ -52,20 +52,20 @@ foot_face = select_surface(bracket, seed=(35, 0, -5), angle=10)
 side_face = select_surface(bracket, seed=(40, 0, 2), angle=10)
 foot = corner_at(bracket, (30, -5, -5))
 side_corner = corner_at(bracket, (40, 5, -5))
-hole = point(-15, -10, 0)
-hole_2 = point(0, 10, 0)
+hole = point(position=(-15, -10, 0))
+hole_2 = point(position=(0, 10, 0))
 # what S writes for these two snaps, on two copies of the bracket (the bracket's own call is only given position= and rotation=; nothing else is made)
-bracket_on_foot = box((30, -5, -5), (40, 5, 10), position=(var(-45), var(-5), var(5)), rotation=(var(0), var(0), var(0)))
+bracket_on_foot = box((10, 10, 15), position=(var(-10), var(-5), var(7.5)), rotation=(var(0), var(0), var(0)))
 bracket_on_foot
-bracket_on_side = box((30, -5, -5), (40, 5, 10), position=(var(-27.5), var(5), var(2.5)), rotation=(var(0), var(-90), var(0)))
+bracket_on_side = box((10, 10, 15), position=(var(7.5), var(5), var(5)), rotation=(var(0), var(-90), var(0)))
 bracket_on_side
 
 # B -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-block = box((0, 60, 0), (20, 80, 20))
+block = box(20, position=(10, 70, 10))
 block
-peg = cylinder(6, 14, (40, 60, 0))
+peg = cylinder(6, 14, position=(40, 60, 0))
 peg
-ball = sphere(8, (40, 90, 10))
+ball = sphere(8, position=(40, 90, 10))
 ball
 corner = corner_at(block, (20, 80, 20))
 corner
@@ -73,39 +73,39 @@ edge = edge_at(block, (20, 69.8047, 20))
 edge
 rim = edge_point_at(peg, (45.869, 58.759, 14))
 rim
-a = point(-30, 80, 0)
-b = point(-20, 90, 10)
-c = point(-10, 80, 20)
+a = point(position=(-30, 80, 0))
+b = point(position=(-20, 90, 10))
+c = point(position=(-10, 80, 20))
 curve_1 = spline([a, b, c])
 curve_1
 
 # C -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-tower = cone(10, 25, (0, 130, 0))
+tower = cone(10, 25, position=(0, 130, 0))
 tower = custom_resolution(tower, 8)
 tower
 
 # D -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 steel = Material('steel', 200e3, 0.30, 7.85e-9, 250, 0.050, 12e-6)
-beam = box((0, -60, 0), (100, -50, 10))
-wall = box((-6, -66, -6), (0, -44, 16))
-tip = box((99, -62, -2), (101, -48, 12))
+beam = box((100, 10, 10), position=(50, -55, 5))
+wall = box((6, 22, 22), position=(-3, -55, 5))
+tip = box((2, 14, 14), position=(100, -55, 5))
 hold = fixed(wall, body=beam)
 settle = fixed(tip, body=beam, displacement=(0, inf, -1.0))
 result = static_analysis(beam, supports=[hold, settle], loads=[], material=steel, element_size=4)
 result
 
 # E -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-part = box((0, -120, 0), (40, -100, 10))
+part = box((40, 20, 10), position=(20, -110, 5))
 part
-backing = box((-4, -122, -2), (0, -98, 12))
+backing = box((4, 24, 14), position=(-2, -110, 5))
 backing
 support = fixed(backing, body=part)
 support
 
 # F -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-drum = cylinder(10, 20, (0, 190, 10))
+drum = cylinder(10, 20, position=(0, 190, 10))
 drum
-funnel = cone(15, 30, (40, 190, 0))
+funnel = cone(15, 30, position=(40, 190, 0))
 funnel
 drum_bottom = select_surface(drum, seed=(3, 192, 10), angle=10)
 funnel_base = select_surface(funnel, seed=(42, 191, 0), angle=10)
@@ -115,9 +115,9 @@ funnel_middle = circle_center_at(funnel, (55, 190, 0))
 funnel_middle
 face_dot = face_center(select_surface(drum, seed=(0, 190, 30), angle=10))
 face_dot
-under = cone(15, 30, (40, 190, 0), position=(var(-40), var(0), var(-20)), rotation=(var(0), var(180), var(0)))
+under = cone(15, 30, position=(var(0), var(190), var(-20)), rotation=(var(0), var(180), var(0)))
 under
-soft = rounded_box((70, 170, 0), (110, 210, 40), 0.25)
+soft = rounded_box(40, 0.25, position=(90, 190, 20))
 soft
 soft_corner = corner_at(soft, (108, 172, 38), rounded=True)
 soft_corner

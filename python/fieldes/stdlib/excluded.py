@@ -2,7 +2,7 @@
 exclude(): a region of a shape that stays exactly as it is
 
     part = import_model('bracket.step')[0][0]
-    part = exclude(part, sphere(12, (0, 0, 6)))        # inside the sphere the part is locked
+    part = exclude(part, sphere(12, position=(0, 0, 6)))        # inside the sphere the part is locked
     light = shell(part, 2)                              # ... and nothing done to it afterwards touches that
 
 exclude() cuts the shape into two fields that are always united again:
@@ -378,7 +378,7 @@ def exclude(shape, *regions, source=None, quality=64, threshold=1.0):
         is Combining > exclude, with the shape first and the regions after it.)
 
             part = import_model('bracket.step')[0][0]
-            part = exclude(part, sphere(12, (0, 0, 6)), box((0, 0, 0), (5, 5, 5)))
+            part = exclude(part, sphere(12, position=(0, 0, 6)), box((5, 5, 5), position=(2.5, 2.5, 2.5)))
             light = shell(part, 2)           # shelled everywhere but inside the sphere and the box
 
         A region is any shape -- a sphere, a box, a part, a part offset by some distance, a union of those: the

@@ -57,7 +57,7 @@ view.set_quality(8)
 
 r = var(4)
 ball = sphere(r)
-hole = cylinder(1.5, 30, (0, 0, -15))
+hole = cylinder(1.5, 30, position=(0, 0, 0))
 difference(ball, hole)
 ```
 
@@ -82,7 +82,7 @@ operation to make it one of its inputs. See [The interface](interface.md#the-mod
 Anywhere a number goes, a field can go:
 
 ```python
-anchor = point(10, 4, 0)
+anchor = point(position=(10, 4, 0))
 swell  = ramp(distance_to_point(anchor), (0, 20), (2.0, 0.3))     # 2 mm at the anchor, 0.3 mm 20 mm away
 offset(sphere(6), swell)
 ```

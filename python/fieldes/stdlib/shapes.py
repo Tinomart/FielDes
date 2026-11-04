@@ -581,3 +581,147 @@ def array_polar_z(shape, n, center=(0, 0)):
         tvec2(*[a.ptr for a in args[2]])))
 
 array_polar = array_polar_z
+
+
+# ------------------------------------------------------------------------------------------------------------------------ THE PRIMITIVES
+# What a script calls -- `SIZED`, put in the place of the functions above by fieldes.stdlib.placement.install.  Every shape is defined by its SIZE ALONE and made in its own frame -- a box
+# centred on the origin, a cylinder, a cone or a pyramid standing on the middle of its base with the axis along z, a sphere and a torus round the origin, a 2D shape in the plane z = 0 round
+# the origin -- and it has ONE position, `position=(x, y, z)`, which is GLOBAL: where that origin is in the world.  `rotation` and `scale` are about it.  (The user, 2026-11-03: "EVERYTHING HAS
+# ONE GLOBLA POSITION. GLOBAL. AND ONE. NO EXCEPTION.")  The functions above are what these are made with -- the same shapes by the numbers of their places -- and the library and the handles
+# go on using them.
+
+SIZED = {}
+
+
+def _primitive(name):
+    ''' Registers the function it decorates as the primitive `name` of a script (see SIZED) '''
+    def register(function):
+        function.__name__ = function.__qualname__ = name
+        SIZED[name] = function
+        return function
+    return register
+
+
+def _corners(size, n, what):
+    ''' The two opposite corners of the box of a primitive made in its own frame -- centred on the origin -- from its `size` (a number: the same all ways, or `n` numbers): the low
+        one and the high one, each a tuple of `n` numbers (or expressions of var()s) '''
+    if isinstance(size, Shape) or _number(size):
+        size = (size,) * n
+    size = tuple(size)
+    if len(size) != n:
+        raise ValueError('%s: size is %d numbers (or one for all), not %d' % (what, n, len(size)))
+    low = tuple((-0.5 * float(s)) if _number(s) else (Shape.wrap(s) * -0.5) for s in size)
+    high = tuple((0.5 * float(s)) if _number(s) else (Shape.wrap(s) * 0.5) for s in size)
+    return low, high
+
+
+@_primitive('circle')
+def _sized_circle(radius):
+    """ A 2D circle of the given radius.  Its `position` is its centre.
+    """
+    return circle(radius, (0, 0))
+
+
+@_primitive('ring')
+def _sized_ring(outer, inner):
+    """ A 2D ring: what lies between two circles of the outer and the inner radius round the same centre.  Its `position` is the centre.
+    """
+    return ring(outer, inner, (0, 0))
+
+
+@_primitive('polygon')
+def _sized_polygon(radius, sides):
+    """ A regular polygon of `sides` sides with the center-to-vertex distance `radius`.  Its `position` is its centre.  Its handles pull a side each -- a side moves parallel to itself, the
+        others stay -- and the gizmo's pivot is where the polygon was made, so a side pulled moves that side only, at any scale
+    """
+    return polygon(radius, sides, (0, 0))
+
+
+@_primitive('rectangle')
+def _sized_rectangle(size):
+    """ A rectangle of the given size -- (width, height), or one number for a square.  Its `position` is its middle (a true distance outside it: an offset of it is a rounded rectangle).
+        Its four numbers are its four sides, so the handles of a rectangle pull one side each
+    """
+    low, high = _corners(size, 2, 'rectangle')
+    return rectangle(low, high)
+
+
+@_primitive('rounded_rectangle')
+def _sized_rounded_rectangle(size, r):
+    """ A rectangle of the given size -- (width, height), or one number for a square -- with rounded corners of radius r (a true distance outside it).  Its `position` is its middle.  The
+        corners are tangent to the sides whatever the numbers are: its handles pull a side each (the radius with them)
+    """
+    low, high = _corners(size, 2, 'rounded_rectangle')
+    return rounded_rectangle(low, high, r)
+
+
+@_primitive('box')
+def _sized_box(size):
+    """ A box of the given size -- (x, y, z), or one number for a cube.  Its `position` is its middle (a true distance outside it: an offset of it has rounded edges)
+    """
+    low, high = _corners(size, 3, 'box')
+    return box(low, high)
+
+
+@_primitive('rounded_box')
+def _sized_rounded_box(size, r):
+    """ A box of the given size -- (x, y, z), or one number for a cube -- with rounded edges.  Its `position` is its middle.  The radius `r` is a fraction, 0 to 1, of half the shortest side
+        of the box (r = 0.4 on a box 15 mm thick rounds its edges with a radius of 3 mm; 1 makes the shortest side a half circle).  Its handles pull a side each -- a side moves, the others
+        and the rounding stay -- and the gizmo's pivot is where the box was made, so a side pulled moves that side only, at any scale
+    """
+    low, high = _corners(size, 3, 'rounded_box')
+    return rounded_box(low, high, r)
+
+
+@_primitive('sphere')
+def _sized_sphere(radius):
+    """ A sphere of the given radius.  Its `position` is its centre.
+    """
+    return sphere(radius, (0, 0, 0))
+
+
+@_primitive('half_space')
+def _sized_half_space(normal):
+    """ The solid on one side of a plane, with no end: everything the `normal` points away from.  The plane goes through its `position`.  It is no shape to look at on its own, and it is not
+        in the menus: it is what `intersection(body, half_space(...))` and `difference` cut a body by, and a region -- of the `zones` of a mesh, of a support or a load -- that is everything on
+        one side of a plane.  To cut a body by a plane from the menus use Operations > Combining > cut_plane
+    """
+    return half_space(normal, (0, 0, 0))
+
+
+@_primitive('cylinder')
+def _sized_cylinder(radius, height):
+    """ A cylinder of the given radius and height along z.  Its `position` is the middle of the cylinder, half the height below it and half above (turn it with `rotation` to make it lie another way).
+    """
+    # (the user, 2026-11-04, H145: "I have no idea why the origin of the cylinder is at the bottom. It should obviously be at the center")
+    return cylinder(radius, height, (0, 0, -0.5 * height))
+
+
+@_primitive('cone')
+def _sized_cone(radius, height):
+    """ A cone of the given base radius and height standing along z on its base.  Its `position` is the middle of the base, the apex stands `height` above it.  It has two faces, the base and
+        the side: its handles pull the base (it moves up or down) and the side (the cone grows or shrinks at the same slope, round its base), and the axis stays where it is.  The apex is
+        rounded by half a percent of the base radius: a perfect apex is a point the surface comes to from every side at once, and a mesh comes out ragged there at any resolution
+    """
+    return cone(radius, height, (0, 0, 0))
+
+
+@_primitive('pyramid')
+def _sized_pyramid(size, height):
+    """ A pyramid on a rectangular base of the given size -- (width, depth), or one number for a square -- standing on it.  Its `position` is the middle of the base and its tip stands
+        `height` above it.  It has five faces -- the base and four slanted ones -- and its handles pull one each, parallel to itself (the slopes stay what they were made with)
+    """
+    low, high = _corners(size, 2, 'pyramid')
+    return pyramid(low, high, 0, height)
+
+
+@_primitive('torus')
+def _sized_torus(major, minor):
+    """ A torus lying round the z axis: `major` the distance from the axis to the middle of the tube, `minor` the radius of the tube.  Its `position` is its centre.
+    """
+    return torus(major, minor, (0, 0, 0))
+
+
+# (a triangle and a prism are made of their corners, which are LOCAL to the frame they are made in like every other size: `position` says where that frame is)
+SIZED['triangle'] = triangle
+SIZED['prism'] = prism

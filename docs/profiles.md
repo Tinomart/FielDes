@@ -6,10 +6,10 @@ a click on it selects it, not the body beneath. An **extrusion** pulls a 2D shap
 All of them are made of the same points, and all of them are edited in the viewport: the script is the truth, and what you drag, pull and double-click is written into it.
 
 ```python
-a = point(0, 0, 0)
-b = point(40, 0, 0)
-c = point(40, 20, 0, smooth=True)         # a spline point: the outline goes smoothly through it
-d = point(0, 20, 0)
+a = point(position=(0, 0, 0))
+b = point(position=(40, 0, 0))
+c = point(position=(40, 20, 0), smooth=True)         # a spline point: the outline goes smoothly through it
+d = point(position=(0, 20, 0))
 
 plate = profile([a, b, c, d])              # a 2D shape: the face the points enclose
 lines = polyline([a, b, c])               # a 1D shape: straight lines through points
@@ -86,15 +86,15 @@ its row in the tree or of its line in the script, all the same menu: the line wr
 
 ## Round corners
 
-A point of a profile can be a **round corner**: `point(20, 12, 0, radius=4)`. An **exact circular arc** of radius 4, tangent to both edges, takes the place of the corner; the point stays where the two edges would meet,
+A point of a profile can be a **round corner**: `point(position=(20, 12, 0), radius=4)`. An **exact circular arc** of radius 4, tangent to both edges, takes the place of the corner; the point stays where the two edges would meet,
 so it is still the one you drag. It is a corner with a radius -- there is no separate kind to learn -- and `radius=0` is a hard corner again. A spline point has no radius (the curve goes smoothly through it: there is no corner
-to round), and `point(..., smooth=True, radius=4)` says so in an error.
+to round), and `point(position=(..., 0, 0), smooth=True, radius=4)` says so in an error.
 
 ```python
-a = point(0, 0, 0, radius=4)
-b = point(40, 0, 0, radius=4)
-c = point(40, 20, 0, radius=4)
-d = point(0, 20, 0, radius=4)
+a = point(position=(0, 0, 0), radius=4)
+b = point(position=(40, 0, 0), radius=4)
+c = point(position=(40, 20, 0), radius=4)
+d = point(position=(0, 20, 0), radius=4)
 slot = profile([a, b, c, d])                 # a rectangle with round corners
 disc = profile([a, b, c, d], radius=10)      # ...with corners that ask for more than the sides allow: a stadium (the long sides keep their length)
 ```
@@ -120,7 +120,7 @@ A point has the gizmo of any model, and two of its handles mean something to the
   **A point of a profile has one rotation ring, in the plane of the profile, and only a spline point has it**: it turns the direction about the plane's normal, and a corner does not leave in a direction, so its ring is not shown.
   A point of a line in space has the three rings of any gizmo. In a `path_extrude` the rotation of a point **twists** the profile about the path there (between points the twist runs smoothly).
 - **The gold ring of a point** (the uniform handle of Blender's scale gizmo): drag it outward to grow, inward to shrink, and the factor shows beside it. A point has two numbers that the ring can drag, both uniform: its **influence**
-  (`point(..., influence=r)`) and its **scale** (the three numbers of its `scale=`, moved together). The **influence** is how strongly a spline leaves the point -- `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
+  (`point(position=(..., 0, 0), influence=r)`) and its **scale** (the three numbers of its `scale=`, moved together). The **influence** is how strongly a spline leaves the point -- `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
   it as straight as a corner) --, the factor of the radius of a **round corner** (see above), and the radius of the field round the point. The **scale** is how thick a `path_extrude` makes the tube at the point, tapering smoothly between points:
   a point with scale 2 makes the tube twice as thick there. **The ring drags the influence on every point -- except a spline point, where it drags the scale; Shift and the ring drag the other number**, so the shape of a spline and the
   thickness of its tube are two numbers that no longer move each other (they used to be one).
@@ -136,7 +136,7 @@ In the model tree the call has its `a` and `b` as dim rows: click one to change 
 (see *Auto scale* in [the interface](interface.md)).
 
 **Dragging an extrusion, whatever 2D shape it is made of.** The two **end faces** -- the faces parallel to the 2D shape -- are the length of the extrusion: select the extrusion, press one of them and pull, and `a` (the face on the
-shape's side) or `b` (the far face) follows the mouse; `handles(extrude_1, [a, b])` is written once you let go. That holds for a circle, a rectangle, a rounded rectangle, a triangle, a polygon, a ring and a profile of points alike.
+shape's side) or `b` (the far face) follows the mouse; `handles(extrude_1, [a, b])` is written once you let go. That holds for a circle, a rectangle, a rounded rectangle, a triangle, a polygon and a ring. **Not yet for a profile of points** (measured 2026-11-04): the handles line is written and the press finds the face, but the pull changes nothing -- the field of that extrusion is the mesh of its points, with no number for `a` or `b` in it (see KNOWN_ISSUES.md).
 The **walls** are the sides of the 2D shape, and are pulled as the 2D shape's sides are: the wall of a circle or a rectangle changes its radius or its side, the wall of a profile moves the two points of the outline it is
 between, together, in the plane of the profile (the points' own gizmo numbers change, the profile and the extrusion follow). A press on the 2D shape itself -- drawn over its extrusion -- always pulls the 2D shape, not the extrusion.
 **`Ctrl+E`** extrudes the selected 2D shape; with a 2D shape **and a curve** selected it makes `path_extrude(shape, curve)` instead.
@@ -157,7 +157,7 @@ every other shape: look at smaller and smaller pieces of space and drop what is 
   hundred edges cost about what the few near the point cost. An outline that crosses itself cannot be cut and uses the winding of the outline round the point instead (slower, the same answer).
 - A **line** is the unsigned distance to it: the least of the distances to its straight pieces.
 - `path_extrude` carries the profile along the line in pieces (the line is cut into short straight pieces, 14 to a curved segment) with mitered joints, turning the profile with the line without twisting about it;
-  the ends are cut square. The profile's own origin travels along the path -- the origin for a circle or a rectangle, **the middle of the box of its outline for a profile** (the path runs through the middle of what is swept, whichever of its points is first; the thickness of a point scales the profile about that middle).
+  the ends are cut square -- unless the end point of the line is a spline point: then the end is **rounded off**, in a dome as deep as half the thinner side of the profile (times the size and the influence of that point; a corner or a round corner at the end keeps the flat cutoff). The profile's own origin travels along the path -- the origin for a circle or a rectangle, **the middle of the box of its outline for a profile** (the path runs through the middle of what is swept, whichever of its points is first; the thickness of a point scales the profile about that middle).
   **A profile is where the sweep starts**: the line says how the sweep travels, not where from. The whole sweep is moved so that the first point of the line is the middle of the profile, and **the first ring is the profile itself, in its
   own plane, at whatever angle the line leaves it** (the sweep is then slanted, like an extrusion pushed sideways, and the end is the same profile carried to the end of the line; a profile whose plane lies along the line has nothing to sweep and is
   turned across it), so editing the profile is editing the base of what it is swept into. A line that already starts at the middle of the profile is not moved. (A circle or a rectangle has no place of its own, so it is carried along the line where the line is.)
@@ -169,7 +169,7 @@ What you see while you drag a point is not the field: the viewport draws the out
 `extrude` of a profile of points follows it too**: it is a *prism* -- the outline pulled along its normal -- and the viewport makes it from the numbers of the points (and of `a` and `b`) at every frame, the way it makes the face, with no
 script run and no field meshed: drag a point and the solid follows it, and nothing is calculated when you let go. It stays a prism while its numbers are what it was made with (its gizmo has not placed it, no face of it has been pulled);
 with another number, or an outline that crosses itself, its field is meshed as any shape's is. **A sweep (`path_extrude`) of a profile along a line of points is drawn the same way**: the viewport carries the outline along
-the path, a ring at every piece, in the frame the field of the sweep has (turned by the rotation of the points, scaled by their scale, cut square at the ends or by the plane that bisects a corner), and closes the ends with the face of the profile.
+the path, a ring at every piece, in the frame the field of the sweep has (turned by the rotation of the points, scaled by their scale, cut square at the ends -- or rounded off in a dome where the end point of the line is a spline point -- or by the plane that bisects a corner), and closes the ends with the face of the profile (the dome, where there is one).
 Nothing of the field is meshed -- and its tree is not even optimised, compiled or searched until something reads it (a difference, an offset, an analysis) -- so changing a number of a point of the profile, of the path, of the twist -- by dragging,
 or by typing in the script -- shows the new sweep at once (a smooth profile of 15 points swept along a path of 3 points: the script runs in half a second and the sweep is on the screen 0.1 s later; preparing the field of the same sweep took 6 s and
 a search through it 15 s of a window that did not answer, and meshing it at resolution 1 takes minutes). **A sweep of a primitive -- a `circle`, a `rectangle`, a `rounded_rectangle`, a `triangle`, a `polygon` -- is drawn the same way**, and starts at the 2D shape as a sweep of a profile does: its outline (a circle is 72 short sides, a rounded corner 12 to a quarter) is carried along the path, also when the shape has the `handles(...)` and the placement arguments (`position=`, `rotation=`, `scale=`) the right-click menu puts into its call (the numbers of a circle or a rectangle, and a placement that moves, turns about z or scales it in its plane, are followed too). A profile that is anything else (an `offset` of a circle, a union), a sweep that has a colour field, a channel or a result, and what is made *of*

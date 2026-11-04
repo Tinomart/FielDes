@@ -21,9 +21,9 @@ t = Table("a2b_round_holes: round holes 0.3, 0.5 and 1.0 mm across in a small pl
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 diameters = [0.3, 0.5, 1.0]
-plate = box((0, 0, 0), (14, 8, 5))
+plate = box((14, 8, 5), position=(7, 4, 2.5))
 for k, d in enumerate(diameters):
-    plate = difference(plate, cylinder(d / 2.0, 7, (3 + 4 * k, 4, -1)))        # a round hole straight through
+    plate = difference(plate, cylinder(d / 2.0, 7, position=(3 + 4 * k, 4, -1)))        # a round hole straight through
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_gap=0.4)
 lo, hi = (-2, -2, -2), (16, 10, 7)

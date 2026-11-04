@@ -546,6 +546,7 @@ def _import_mesh(path, units='mm', file_units=None, rev=None):
     if not ptr:
         raise RuntimeError('import_model({!r}): {}'.format(path, message))
     shape = Shape(ptr)
+    shape._mesh_source = (path, units, file_units)           # (what editable_polyhedron makes a body of points from: see fieldes.stdlib.mesh_edit)
 
     b = info.bounds
     lo = (b.X.lower, b.Y.lower, b.Z.lower)

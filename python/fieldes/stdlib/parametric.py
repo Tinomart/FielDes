@@ -5,13 +5,16 @@ parametric_optimization: the best numbers for the var()s of a model, over an ana
 
     width = var(20)
     height = var(12)
-    beam = box((0, 0, 0), (100, width, height))
-    wall = fixed(box((-1, -1, -1), (1, 25, 25)))
-    pull = force(box((99, -1, -1), (101, 25, 25)), (0, 0, -200))
+    beam = box((100, width, height), position=(50, width / 2, height / 2))
+    wall = fixed(box((2, 26, 26), position=(0, 12, 12)))
+    pull = force(box((2, 26, 26), position=(100, 12, 12)), (0, 0, -200))
     stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium)
 
+    mass_1 = stress.mass
+    max_von_mises_1 = stress.max_von_mises
+    max_displacement_1 = stress.max_displacement
     best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)],
-                                   constraints=[minimize('mass'), 'max_von_mises <= 90', 'max_displacement <= 0.5'])
+                                   conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), keep_below(max_displacement_1, 0.5)])
 
 The analysis is solved again with each set of numbers the search tries -- the model is made again from the numbers, the mesh, the
 solve, every measure of the result -- and the numbers that give the best design stay in the var()s: the model, and everything after
@@ -20,13 +23,10 @@ search over surrogates of the objective and of every constraint that puts a desi
 one is an ordinary analysis that is kept by its content, so a run again (or another search over the same designs) finds what it
 tried in the cache.  Everything it tried is listed in the result.
 
-What it can be asked for -- everything is in the list `constraints=`, as in topology_optimization -- is a measure of the analysis' result:
-the name of one of its numbers ('mass', 'max_von_mises', 'max_displacement', 'compliance', 'safety_factor', 'volume', 'max_temperature',
-'pressure_drop', 'frequencies[0]' ...), an expression of them ('mass + 0.01 * compliance'), or a function of the result
-(`lambda r: r.max_von_mises / r.mass`).  A goal is minimize(x) or maximize(x), at most one.  A constraint is a comparison of measures in a
-text ('max_von_mises <= 90', 'frequencies[0] >= 80', an exact value 'frequencies[0] == 100', a range '80 <= frequencies[0] <= 120'), or a
-function of the result that gives how much it is broken (0 or less when it is kept).  Without a goal the search only looks for a design that
-keeps the constraints.
+What it can be asked for -- everything is in the list `conditions=`, as in topology_optimization -- is made of the results of the analysis: a result (mass_1, max_von_mises_1,
+max_displacement_1, compliance_1, safety_factor_1, volume_1, max_temperature_1, pressure_drop_1, frequency_1 ...) or a formula of them (mass_1 + 0.01 * compliance_1).  A goal is
+minimize(x) or maximize(x), at most one.  What the best design keeps is keep_below(x, limit), keep_above(x, limit), keep_between(x, lower, upper) or one comparison written
+whole, optimization_condition(x <= limit).  Without a goal the search only looks for a design that keeps the conditions.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -43,7 +43,6 @@ from fieldes.ffi import lib
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
 from fieldes.stdlib.fea import FeaError, FieldResult
-from fieldes.stdlib.optimization_measures import Goal
 
 __all__ = ['parametric_optimization', 'ParametricResult']
 
@@ -134,9 +133,17 @@ def _evaluator(node, text):
                     return base[index.value]
                 except (IndexError, TypeError, KeyError):
                     raise ParametricError("'{}': the result has no entry {} of that".format(text, index.value)) from None
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ('ux', 'uy', 'uz', 'displacement', 'temperature') and not n.keywords and len(n.args) == 3:
+            # (a result read at a place: result.at(x, y, z) writes uz(100.0, 0.0, 0.0); the field of the result is asked at that place)
+            place = [_number_of(ev(a, result), text) for a in n.args]
+            try:
+                field = getattr(result, n.func.id)
+            except AttributeError:
+                raise ParametricError(_available(result, n.func.id, text)) from None
+            return float(field(*place))
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _FUNCTIONS and not n.keywords:
             return _FUNCTIONS[n.func.id](*[_number_of(ev(a, result), text) for a in n.args])
-        raise ParametricError("'{}': only the numbers of the result, numbers, + - * / **, [index], abs, min, max, sqrt, log and exp can be written there".format(text))
+        raise ParametricError("'{}': only the numbers of the result, numbers, + - * / **, [index], abs, min, max, sqrt, log, exp and ux, uy, uz, displacement, temperature at a place (x, y, z) can be written there".format(text))
     return lambda result: _number_of(ev(node, result), text)
 
 
@@ -159,12 +166,9 @@ def _available(result, name, text):
 
 
 def _measure(spec, what):
-    ''' (a function of the result that gives the number, the text that says it) of a measure given as an expression or a function '''
-    if callable(spec):
-        return (lambda result: _number_of(spec(result), what)), getattr(spec, '__name__', what)
+    ''' (a function of the result that gives the number, the text that says it) of a measure given as the text of a formula of results '''
     if not isinstance(spec, str):
-        raise ParametricError('{}: a measure is the name of a number of the result, an expression of them, or a function of the result '
-                              '(not {!r})'.format(what, spec))
+        raise ParametricError('{}: a measure is the text of a formula of the results of the analysis (not {!r})'.format(what, spec))
     try:
         tree = ast.parse(spec.strip(), mode='eval')
     except SyntaxError:
@@ -202,19 +206,15 @@ def _is_number(node):
 
 
 def _constraints_of(spec):
-    ''' The constraints a comparison in a text (or a function of the result) makes: a range, 80 <= frequencies[0] <= 120, is one for each step '''
-    if callable(spec):
-        text = getattr(spec, '__name__', 'constraint')
-        return [_Constraint(text, lambda result: _number_of(spec(result), text), None, '<=')]
+    ''' The constraints a comparison in a text makes: a range, 80 <= frequencies[0] <= 120, is one for each step '''
     if not isinstance(spec, str):
-        raise ParametricError('constraints=: each is a comparison in a text (\'max_von_mises <= 90\') or a function of the result that is 0 or less '
-                              'when it is kept (not {!r})'.format(spec))
+        raise ParametricError('conditions=: each item is an optimization condition (not {!r})'.format(spec))
     try:
         tree = ast.parse(spec.strip(), mode='eval').body
     except SyntaxError:
-        raise ParametricError("constraints=: '{}' is not a comparison".format(spec)) from None
+        raise ParametricError("conditions=: '{}' is not a comparison".format(spec)) from None
     if not (isinstance(tree, ast.Compare) and all(type(o) in _COMPARISONS for o in tree.ops)):
-        raise ParametricError("constraints=: '{}' is not a comparison of measures with <, <=, >, >= or == (80 <= frequencies[0] <= 120 is a range)".format(spec))
+        raise ParametricError("conditions=: '{}' is not a comparison of measures with <, <=, >, >= or == (80 <= frequencies[0] <= 120 is a range)".format(spec))
     nodes = [tree.left] + list(tree.comparators)
     out = []
     for k, op in enumerate(tree.ops):
@@ -635,19 +635,32 @@ class ParametricResult(FieldResult):
         return '\n'.join(lines)
 
 
-def parametric_optimization(analysis, variables, constraints=(), max_evaluations=None, tolerance=0.002, apply=False):
+def _conditions_as_items(conditions):
+    ''' The `conditions=` of parametric_optimization as a list: a single condition is a list of one.  Only optimization conditions (analysis_results.py) are read -- made from the results of the
+        analysis, which is what ties them to it (PC1, the user, 2026-11-02: "You did make parametric optimization use optimization conditions as well, right?") '''
+    from fieldes.stdlib.analysis_results import OptimizationCondition
+    if isinstance(conditions, OptimizationCondition):
+        conditions = [conditions]
+    items = list(conditions or ())
+    for c in items:
+        if not isinstance(c, OptimizationCondition):
+            raise ParametricError('conditions=: each item is an optimization condition made from a result of the analysis -- keep_below(max_von_mises_1, 90), keep_above, keep_between, '
+                                  'minimize(mass_1), maximize, or optimization_condition(max_von_mises_1 <= 90); right-click a result in the model tree to make them. '
+                                  'A text such as \'max_von_mises <= 90\' or a function is not one (%r)' % (c,))
+    return items
+
+
+def parametric_optimization(analysis, variables, conditions=(), max_evaluations=None, tolerance=0.002, apply=False):
     ''' The best numbers for the var()s of a model, over an analysis: the designs the search tries are solved with `analysis` again, each with
         other numbers for the variables, and the numbers of the best one stay in the var()s.
 
         analysis      the result of an analysis of this script (static_analysis, modal_analysis, thermal_analysis, fluid_analysis ...), made of the
                       var()s
         variables     what is changed: (var, low, high) -- the var() and the range it is searched in -- or a list of them
-        constraints   what the design is for, a list -- as in topology_optimization.  The comparisons the best design keeps, in a text
-                      ('max_von_mises <= 90', 'frequencies[0] >= 80', an exact value 'frequencies[0] == 100', a range '80 <= frequencies[0] <= 120'),
-                      or functions of the result that are 0 or less when kept.  And at most one goal: minimize(x) makes x as small as it can be,
-                      maximize(x) as large -- x a measure of the result: the name of one of its numbers ('mass', 'max_von_mises', ...), an expression
-                      of them ('mass + 0.01 * compliance'), or a function of the result.  Without a goal the search stops at the first design that
-                      keeps the comparisons
+        conditions    what the design is for, a list of optimization conditions made from results of `analysis` -- as in topology_optimization: what the best design keeps
+                      (keep_below, keep_above, keep_between, or one comparison written whole, optimization_condition(max_von_mises_1 <= 90)) and at most one goal,
+                      minimize(x) or maximize(x), x a result of the analysis or a formula of them (mass_1 + 0.01 * compliance_1).  Without a goal the search stops at the first
+                      design that keeps the conditions
         max_evaluations  how many designs it tries at most (default 20 + 10 for each variable)
         tolerance     it stops when the designs it is looking at are this close, of the ranges (default 0.2 %)
         apply         True writes the best numbers into the var()s of the text when the run is over (otherwise they hold for this run only)
@@ -657,21 +670,22 @@ def parametric_optimization(analysis, variables, constraints=(), max_evaluations
     t0 = time.time()
     recipe = _recipe_of(analysis)
     host = _host()
-    if isinstance(constraints, (str, Goal)) or callable(constraints):
-        constraints = [constraints]
-    items = list(constraints or ())
-    goals = [g for g in items if isinstance(g, Goal)]
+    items = _conditions_as_items(conditions)
+    for c in items:
+        if tuple(c.analyses) != (analysis,):
+            raise ParametricError('conditions=: %r is made from the results of another analysis than the one that is optimized -- make the results from the analysis given to parametric_optimization' % (c,))
+    goals = [g for g in items if g.is_goal]
     if len(goals) > 1:
-        raise ParametricError("constraints=: only one thing can be made best at a time -- write a trade-off as one formula: minimize('mass + 0.01 * compliance')")
-    goal_word = goals[0].kind if goals else 'satisfy'
+        raise ParametricError('conditions=: only one thing can be made best at a time -- write a trade-off as one formula: minimize(mass_1 + 0.01 * compliance_1)')
+    goal_word = goals[0].how if goals else 'satisfy'
     sign = -1.0 if goal_word == 'maximize' else 1.0
     if goals:
-        objective_fn, objective_text = _measure(goals[0].spec, goal_word)
+        objective_fn, objective_text = _measure(goals[0].text, goal_word)
     else:
         objective_fn, objective_text = (lambda result: 0.0), ''
-    limits = [c for spec in items if not isinstance(spec, Goal) for c in _constraints_of(spec)]
+    limits = [c for spec in items if not spec.is_goal for c in _constraints_of(spec.text)]
     if not items:
-        raise ParametricError("parametric_optimization: say what the design is for -- constraints=[minimize('mass'), 'max_von_mises <= 90', ...]")
+        raise ParametricError("parametric_optimization: say what the design is for -- conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), ...]")
     vars_ = _variables(variables, host)
     d = len(vars_)
     budget = int(max_evaluations) if max_evaluations else 20 + 10 * d
@@ -750,5 +764,5 @@ def parametric_optimization(analysis, variables, constraints=(), max_evaluations
 
 # It is given the result of an analysis (a simulation), and writes `variables=` and `constraints=` as placeholders: the ranges and what the design is for are the user's
 from fieldes.kinds import takes as _declare
-parametric_optimization._takes = _declare({'simulation'}, [{'simulation'}])
-parametric_optimization._required = ('variables', 'constraints')
+parametric_optimization._takes = _declare({'simulation', 'conditions'}, [{'simulation'}])       # (and the optimization conditions that are selected with it: nobody types them)
+parametric_optimization._required = ('variables', 'conditions')

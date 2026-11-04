@@ -20,9 +20,9 @@ from mfgkit import *
 t = Table('w6_walls_and_gap_together: two walls 0.5 mm thick with a gap of 0.3 mm between them (6 mm long, 4 high, on a base), for a 0.8 mm wall rule and a 0.4 mm gap rule together, drawn at 14 cells to the millimetre (the gap is 4 cells): the walls grow into the gap that was narrow already -- the result must keep both rules or the tool must say which it cannot and where')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-wall_a = box((0, 0, 0), (0.5, 6, 4))
-wall_b = box((0.8, 0, 0), (1.3, 6, 4))
-base = box((-1.5, -1.5, -1), (2.8, 7.5, 0))                     # (a floor under them, so that they are one part)
+wall_a = box((0.5, 6, 4), position=(0.25, 3, 2))
+wall_b = box((0.5, 6, 4), position=(1.05, 3, 2))
+base = box((4.3, 9, 1), position=(0.65, 3, -0.5))                     # (a floor under them, so that they are one part)
 part = union(union(wall_a, wall_b), base)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = fff_constraint(nozzle=0.4)

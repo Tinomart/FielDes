@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('d6_draft_beyond_the_budget: a block 10 x 10 x 200 for a draft of 2 degrees (the growth at the foot would be 7 mm, 140 % of the part) with the default budget: the tool refuses, says why with the numbers, and the part comes out exactly as it was')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = box((0, 0, 0), (10, 10, 200))
+part = box((10, 10, 200), position=(5, 5, 100))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(draft=2.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

@@ -22,15 +22,15 @@ view.set_bounds([-5, -55, -5], [95, 45, 45], auto_scale=True)
 view.set_resolution(3)
 view.set_quality(8)
 
-ledge = union(box((0, 0, 0), (10, 40, 40)), box((10, 0, 20), (30, 40, 25)))
-block = box((50, 0, 0), (90, 20, 30))
-hole = rotate_x(cylinder(5, 30, (70, 15, -25)), math.pi / 2)
+ledge = union(box((10, 40, 40), position=(5, 20, 20)), box((20, 40, 5), position=(20, 20, 22.5)))
+block = box((40, 20, 30), position=(70, 10, 15))
+hole = rotate_x(cylinder(5, 30, position=(70, 15, -25)), math.pi / 2)
 part = union(ledge, difference(block, hole))
 
 print('BY HAND: gusset +5083 mm^3 (a straight prism would be 8000), teardrop -%.1f mm^3' % ((1 - math.pi / 4) * 25 * 20))
 
-on_the_ledge = manufacturing_constraint(overhang=45, overhang_fix='fill', region=box((-1, -1, -1), (31, 41, 41)))
-over_the_hole = manufacturing_constraint(overhang=45, overhang_fix='cut', region=box((49, -1, -1), (91, 21, 31)))
+on_the_ledge = manufacturing_constraint(overhang=45, overhang_fix='fill', region=box((32, 42, 42), position=(15, 20, 20)))
+over_the_hole = manufacturing_constraint(overhang=45, overhang_fix='cut', region=box((42, 22, 32), position=(70, 10, 15)))
 better = manufacturing_optimization(part, constraints=[on_the_ledge, over_the_hole], max_support_height=25, max_change=0.6)
 original = move(part, (0, -50, 0))
 original

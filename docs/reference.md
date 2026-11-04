@@ -18,98 +18,98 @@ Every shape has ONE primitive, with that shape and nothing else: `box`, `cylinde
 a shape that stands another way is turned with rotate_x / rotate_y / rotate_z, one that sits somewhere else is moved with move).
 The 3D shapes stand along z, the 2D shapes lie in the plane z = 0.
 
-### `array_polar(shape, n, center=(0, 0))`
+### `array_polar(shape, n, center=(0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Iterates a shape about an optional center position
 
-### `array_polar_z(shape, n, center=(0, 0))`
+### `array_polar_z(shape, n, center=(0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Iterates a shape about an optional center position
 
-### `array_x(shape, nx, dx)`
+### `array_x(shape, nx, dx, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Iterates a part in a 1D array
 
-### `array_xy(shape, nx, ny, delta)`
+### `array_xy(shape, nx, ny, delta, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Iterates a part in a 2D array
 
-### `array_xyz(shape, nx, ny, nz, delta)`
+### `array_xyz(shape, nx, ny, nz, delta, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Iterates a part in a 3D array
 
-### `box(a, b)`
+### `box(size, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A box between two opposite corners (a true distance outside it: an offset of it has rounded edges)
+A box of the given size -- (x, y, z), or one number for a cube.  Its `position` is its middle (a true distance outside it: an offset of it has rounded edges)
 
-### `circle(r, center=(0, 0))`
+### `circle(radius, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A 2D circle with the given radius and optional center
+A 2D circle of the given radius.  Its `position` is its centre.
 
-### `cone(radius, height, base=(0, 0, 0))`
+### `cone(radius, height, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A cone with the given base radius and height, standing along z on the (optional) base position: the base is a disc of that radius at the base height and the apex stands
-`height` above its centre.  It has two faces, the base and the side: its handles pull the base (it moves up or down) and the side (the cone grows or shrinks at the same slope, round
-its base), and the axis stays where it is.  The apex is rounded by half a percent of the base radius: a perfect apex is a point the surface comes to from every side at once, and a
-mesh comes out ragged there at any resolution
+A cone of the given base radius and height standing along z on its base.  Its `position` is the middle of the base, the apex stands `height` above it.  It has two faces, the base and
+the side: its handles pull the base (it moves up or down) and the side (the cone grows or shrinks at the same slope, round its base), and the axis stays where it is.  The apex is
+rounded by half a percent of the base radius: a perfect apex is a point the surface comes to from every side at once, and a mesh comes out ragged there at any resolution
 
-### `cylinder(r, h, base=(0, 0, 0))`
+### `cylinder(radius, height, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A cylinder with the given radius and height, standing along z on the (optional) base position
+A cylinder of the given radius and height along z.  Its `position` is the middle of the cylinder, half the height below it and half above (turn it with `rotation` to make it lie another way).
 
 ### `emptiness()`
 
 A value which is empty everywhere
 
-### `half_space(norm, point=(0, 0, 0))`
+### `half_space(normal, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-The solid on one side of a plane, with no end: everything the normal `norm` points away from, the plane through `point` its only face (the field is the distance along `norm` from
-the plane, negative inside -- a true distance when `norm` is a unit vector).  It is no shape to look at on its own, and it is not in the menus: it is what `intersection(body, half_space(...))`
-and `difference` cut a body by, and a region -- of the `zones` of a mesh, of a support or a load -- that is everything on one side of a plane.  To cut a body by a plane from the menus use
-Operations > Combining > cut_plane
+The solid on one side of a plane, with no end: everything the `normal` points away from.  The plane goes through its `position`.  It is no shape to look at on its own, and it is not
+in the menus: it is what `intersection(body, half_space(...))` and `difference` cut a body by, and a region -- of the `zones` of a mesh, of a support or a load -- that is everything on
+one side of a plane.  To cut a body by a plane from the menus use Operations > Combining > cut_plane
 
-### `polygon(r, n, center=(0, 0))`
+### `polygon(radius, sides, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A polygon with center-to-vertex distance r and n sides.  Its handles pull a side each -- a side moves parallel to itself, the others stay -- and the gizmo's pivot is where the polygon was made, so a side pulled moves that side only, at any scale
+A regular polygon of `sides` sides with the center-to-vertex distance `radius`.  Its `position` is its centre.  Its handles pull a side each -- a side moves parallel to itself, the
+others stay -- and the gizmo's pivot is where the polygon was made, so a side pulled moves that side only, at any scale
 
-### `prism(a, b, c, z0, z1)`
+### `prism(a, b, c, z0, z1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A triangular prism: the triangle of the three corners a, b, c (x, y) between the heights z0 and z1.  Its handles pull a face each -- the three sides and the two ends -- parallel to itself,
 and the gizmo's pivot is where the prism was made, so a face pulled moves that face only, at any scale
 
-### `pyramid(a, b, zmin, height)`
+### `pyramid(size, height, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A pyramid defined by its base rectangle (the corners a and b), lower Z value, and height: its tip stands above the middle of the base.  It has five faces -- the base and four
-slanted ones -- and its handles pull one each, parallel to itself (the slopes stay what they were made with)
+A pyramid on a rectangular base of the given size -- (width, depth), or one number for a square -- standing on it.  Its `position` is the middle of the base and its tip stands
+`height` above it.  It has five faces -- the base and four slanted ones -- and its handles pull one each, parallel to itself (the slopes stay what they were made with)
 
-### `rectangle(a, b)`
+### `rectangle(size, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A rectangle between the corners a (the low one) and b (the high one) (a true distance outside it: an offset of it is a rounded rectangle).  Its four numbers are
-its four sides, so the handles of a rectangle pull one side each
+A rectangle of the given size -- (width, height), or one number for a square.  Its `position` is its middle (a true distance outside it: an offset of it is a rounded rectangle).
+Its four numbers are its four sides, so the handles of a rectangle pull one side each
 
-### `ring(ro, ri, center=(0, 0))`
+### `ring(outer, inner, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A 2D ring with the given outer/inner radii and optional center
+A 2D ring: what lies between two circles of the outer and the inner radius round the same centre.  Its `position` is the centre.
 
-### `rounded_box(a, b, r)`
+### `rounded_box(size, r, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-Rounded box with the given bounds.  The radius `r` is a fraction, 0 to 1, of half the shortest side of the box (r = 0.4 on a box 15 mm thick rounds its edges with a radius of 3 mm; 1 makes the
-shortest side a half circle).  Its handles pull a side each -- a side moves, the others and the rounding stay -- and the gizmo's pivot is where the box was made, so a side pulled moves that side only, at any scale
+A box of the given size -- (x, y, z), or one number for a cube -- with rounded edges.  Its `position` is its middle.  The radius `r` is a fraction, 0 to 1, of half the shortest side
+of the box (r = 0.4 on a box 15 mm thick rounds its edges with a radius of 3 mm; 1 makes the shortest side a half circle).  Its handles pull a side each -- a side moves, the others
+and the rounding stay -- and the gizmo's pivot is where the box was made, so a side pulled moves that side only, at any scale
 
-### `rounded_rectangle(a, b, r)`
+### `rounded_rectangle(size, r, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A rectangle with rounded corners of radius r, between the corners a (the low one) and b (the high one) (a true distance outside it).  The corners are tangent to the
-sides whatever the numbers are: its handles pull a side each (the radius with them)
+A rectangle of the given size -- (width, height), or one number for a square -- with rounded corners of radius r (a true distance outside it).  Its `position` is its middle.  The
+corners are tangent to the sides whatever the numbers are: its handles pull a side each (the radius with them)
 
-### `sphere(radius, center=(0, 0, 0))`
+### `sphere(radius, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A sphere with the given radius and (optional) center
+A sphere of the given radius.  Its `position` is its centre.
 
-### `torus(ro, ri, center=(0, 0, 0))`
+### `torus(major, minor, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A torus lying round the z axis, with the given outer radius, inner radius, and (optional) center
+A torus lying round the z axis: `major` the distance from the axis to the middle of the tube, `minor` the radius of the tube.  Its `position` is its centre.
 
-### `triangle(a, b, c)`
+### `triangle(a, b, c, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A 2D triangle between three corners.  Its handles pull a side each: a side moves parallel to itself, and the gizmo's pivot is where the triangle was made, so a side pulled moves that side only, at any scale
 
@@ -122,54 +122,54 @@ project; the generator is not part of FielDes, so this file is now maintained by
 
 This is fieldes.stdlib.csg
 
-### `blend(a, b, m)`
+### `blend(a, b, m, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Blends two shapes by the given amount using exponents,
 with the blend term adjusted to produce results approximately
 resembling blend_rough for values between 0 and 1.
 
-### `blend_difference(a, b, m, o=0)`
+### `blend_difference(a, b, m, o=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Blends the subtraction of b, with optional offset o,
 from a, with smoothness m
 
-### `blend_expt(a, b, m)`
+### `blend_expt(a, b, m, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Blends two shapes by the given amount using exponents
 
-### `blend_expt_unit(a, b, m)`
+### `blend_expt_unit(a, b, m, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Blends two shapes by the given amount using exponents,
 with the blend term adjusted to produce results approximately
 resembling blend_rough for values between 0 and 1.
 
-### `blend_rough(a, b, m)`
+### `blend_rough(a, b, m, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Blends two shapes by the given amount, using a fast-but-rough
 CSG approximation that may not preserve gradients
 
-### `clearance(a, b, offset)`
+### `clearance(a, b, offset, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Expands shape b by the given offset then subtracts it from shape a
 
-### `difference(a, b, *rest)`
+### `difference(a, b, *rest, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Subtracts any number of shapes from the first argument
 
-### `intersection(a, *args)`
+### `intersection(a, *args, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Returns the intersection of two shapes
 
-### `inverse(a)`
+### `inverse(a, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Returns a shape that's the inverse of the input shape
 
-### `loft(a, b, zmin, zmax)`
+### `loft(a, b, zmin, zmax, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Produces a blended loft between a (at zmin) and b (at zmax)
 a and b should be 2D shapes (i.e. invariant along the z axis)
 
-### `loft_between(a, b, lower, upper)`
+### `loft_between(a, b, lower, upper, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Produces a blended loft between a (at lower.z) and b (at upper.z),
 with XY coordinates remapped to slide between lower.xy and upper.xy.
@@ -180,16 +180,16 @@ a and b should be 2D shapes (i.e. invariant along the z axis)
 Morphs between two shapes.
 m = 0 produces a, m = 1 produces b
 
-### `offset(a, o)`
+### `offset(a, o, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Expand or contract a given shape by an offset
 Positive offsets expand the shape; negative offsets shrink it
 
-### `shell(a, offset)`
+### `shell(a, offset, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Returns a shell of a shape with the given offset
 
-### `union(a, *args, radius=0)`
+### `union(a, *args, radius=0, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The union of any number of shapes.  radius (mm, default 0: a sharp union) blends the surfaces where they meet
 with a smooth transition of that radius, so parts that do not quite fit together are joined by a fillet --
@@ -205,162 +205,162 @@ project; the generator is not part of FielDes, so this file is now maintained by
 
 This is fieldes.stdlib.transforms
 
-### `attract(shape, locus, radius, exaggerate=1)`
+### `attract(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Attracts the shape away from a point based upon a radius r,
 with optional exaggeration
 
-### `attract_x(shape, locus, radius, exaggerate=1)`
+### `attract_x(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Attracts the shape away from a YZ plane based upon a radius r,
 with optional exaggeration
 
-### `attract_xy(shape, locus, radius, exaggerate=1)`
+### `attract_xy(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Attracts the shape away from line parallel to the Z axis,
 with a particular radius and optional exaggeration
 
-### `attract_xz(shape, locus, radius, exaggerate=1)`
+### `attract_xz(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Attracts the shape away from line parallel to the Y axis,
 with a particular radius and optional exaggeration
 
-### `attract_y(shape, locus, radius, exaggerate=1)`
+### `attract_y(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Attracts the shape away from a XZ plane based upon a radius r,
 with optional exaggeration
 
-### `attract_yz(shape, locus, radius, exaggerate=1)`
+### `attract_yz(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Attracts the shape away from line parallel to the X axis,
 with a particular radius and optional exaggeration
 
-### `attract_z(shape, locus, radius, exaggerate=1)`
+### `attract_z(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Attracts the shape away from a XY plane based upon a radius r,
 with optional exaggeration
 
-### `move(shape, v)`
+### `move(shape, v, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Moves the given shape in 2D or 3D space
 
-### `reflect_x(t, x0=0)`
+### `reflect_x(t, x0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Reflects a shape about the x origin or an optional offset
 
-### `reflect_xy(t)`
+### `reflect_xy(t, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Reflects a shape about the plane X=Y
 
-### `reflect_xz(t)`
+### `reflect_xz(t, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Reflects a shape about the plane X=Z
 
-### `reflect_y(t, y0=0)`
+### `reflect_y(t, y0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Reflects a shape about the y origin or an optional offset
 
-### `reflect_yz(t)`
+### `reflect_yz(t, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Reflects a shape about the plane Y=Z
 
-### `reflect_z(t, z0=0)`
+### `reflect_z(t, z0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Reflects a shape about the z origin or an optional offset
 
-### `repel(shape, locus, radius, exaggerate=1)`
+### `repel(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repels the shape away from a point based upon a radius r,
 with optional exaggeration
 
-### `repel_x(shape, locus, radius, exaggerate=1)`
+### `repel_x(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repels the shape away from a YZ plane based upon a radius r,
 with optional exaggeration
 
-### `repel_xy(shape, locus, radius, exaggerate=1)`
+### `repel_xy(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repels the shape away from line parallel to the Z axis,
 with a particular radius and optional exaggeration
 
-### `repel_xz(shape, locus, radius, exaggerate=1)`
+### `repel_xz(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repels the shape away from line parallel to the Y axis,
 with a particular radius and optional exaggeration
 
-### `repel_y(shape, locus, radius, exaggerate=1)`
+### `repel_y(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repels the shape away from a XZ plane based upon a radius r,
 with optional exaggeration
 
-### `repel_yz(shape, locus, radius, exaggerate=1)`
+### `repel_yz(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repels the shape away from line parallel to the X axis,
 with a particular radius and optional exaggeration
 
-### `repel_z(shape, locus, radius, exaggerate=1)`
+### `repel_z(shape, locus, radius, exaggerate=1, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repels the shape away from a XY plane based upon a radius r,
 with optional exaggeration
 
-### `revolve_y(shape, x0=0)`
+### `revolve_y(shape, x0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Revolves a 2D (XY) shape about a line parallel to the Y axis with the
 given x value
 
-### `rotate(t, angle, center=(0, 0, 0))`
+### `rotate(shape, axis=(0, 0, 1), angle=0.0, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
+
+The body turned by `angle` degrees about the line through `center` with the direction `axis` (the right-hand rule: the thumb along the axis, the fingers the
+way it turns).  rotate_x, rotate_y and rotate_z are this about an axis of the coordinates, in radians.  Each number may be a var()
+
+### `rotate_x(t, angle, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Rotate the given shape by an angle in radians
 The center of rotation is [0 0 0] or specified by the optional argument
 
-### `rotate_x(t, angle, center=(0, 0, 0))`
+### `rotate_y(t, angle, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Rotate the given shape by an angle in radians
 The center of rotation is [0 0 0] or specified by the optional argument
 
-### `rotate_y(t, angle, center=(0, 0, 0))`
+### `rotate_z(t, angle, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Rotate the given shape by an angle in radians
 The center of rotation is [0 0 0] or specified by the optional argument
 
-### `rotate_z(t, angle, center=(0, 0, 0))`
-
-Rotate the given shape by an angle in radians
-The center of rotation is [0 0 0] or specified by the optional argument
-
-### `scale_x(t, sx, x0=0)`
+### `scale_x(t, sx, x0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Scales a shape by sx on the x axis about 0 or an optional offset
 
-### `scale_xyz(t, s, center=(0, 0, 0))`
+### `scale_xyz(t, s, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Scales a shape on all three axes, about 0 or an optional offset
 
-### `scale_y(t, sy, y0=0)`
+### `scale_y(t, sy, y0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Scales a shape by sx on the x axis about 0 or an optional offset
 
-### `scale_z(t, sz, z0=0)`
+### `scale_z(t, sz, z0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Scales a shape by sx on the x axis about 0 or an optional offset
 
-### `shear_x_y(t, base, height, offset, base_offset=0)`
+### `shear_x_y(t, base, height, offset, base_offset=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Shears a shape on the x axis as a function of y
 offset = base-offset at base.y
 offset = offset = base.y + h
 
-### `symmetric_x(t)`
+### `symmetric_x(t, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Clips the given shape at the x origin, then duplicates the remaining
 shape reflected on the other side of the origin
 
-### `symmetric_y(t)`
+### `symmetric_y(t, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Clips the given shape at the y origin, then duplicates the remaining
 shape reflected on the other side of the origin
 
-### `symmetric_z(t)`
+### `symmetric_z(t, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Clips the given shape at the z origin, then duplicates the remaining
 shape reflected on the other side of the origin
@@ -377,30 +377,30 @@ Tapers a shape in the xy plane as a function of z
 width = base-scale at base
 width = scale at base + [0 0 height]
 
-### `twirl_axis_x(shape, amount, radius, center=(0, 0, 0))`
+### `twirl_axis_x(shape, amount, radius, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Twirls the shape in the x axis about the line extending from the
 (optional) center point
 
-### `twirl_axis_y(shape, amount, radius, center=(0, 0, 0))`
+### `twirl_axis_y(shape, amount, radius, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Twirls the shape in the y axis about the line extending from the
 (optional) center point
 
-### `twirl_axis_z(shape, amount, radius, center=(0, 0, 0))`
+### `twirl_axis_z(shape, amount, radius, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Twirls the shape in the z axis about the line extending from the
 (optional) center point
 
-### `twirl_x(shape, amount, radius, center=(0, 0, 0))`
+### `twirl_x(shape, amount, radius, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Twirls the shape in the x axis about the (optional) center point
 
-### `twirl_y(shape, amount, radius, center=(0, 0, 0))`
+### `twirl_y(shape, amount, radius, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Twirls the shape in the y axis about the (optional) center point
 
-### `twirl_z(shape, amount, radius, center=(0, 0, 0))`
+### `twirl_z(shape, amount, radius, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Twirls the shape in the z axis about the (optional) center point
 
@@ -408,18 +408,22 @@ Twirls the shape in the z axis about the (optional) center point
 
 Placement: where an object is, how it is turned, how big it is and how see-through.
 
-Every object that is made by a call -- a shape, the result of an operation, a copy, a lattice -- takes four arguments after its own, named and in this order:
+Every object that is made by a call -- a shape, the result of an operation, a copy, a lattice -- takes five arguments after its own, named and in this order (the fifth is written when it is set):
 
-    position   (x, y, z) in mm: how far the object is moved from where its definition puts it (0 is where it is made)
-    rotation   (x, y, z) in degrees: how it is turned about the middle of its box, x first, then y, then z
-    scale      (x, y, z) factors, or one number: how big it is, about the middle of its box
+    position   (x, y, z) in mm: where the object is -- its ONE position, and it is global, in the world.  A shape made by its size alone (box((20, 10, 5)), sphere(5), cylinder(4, 20)) is made at the origin and moved
+               there (not given: it stands at (0, 0, 0); a cone and a pyramid stand on their base); the result of an operation, a copy, a lattice or an import stands where its parts put
+               it, and its position is where the middle of its box is (not given: where it is made)
+    rotation   (x, y, z) in degrees: how it is turned about its origin (not given: its position), x first, then y, then z
+    scale      (x, y, z) factors, or one number: how big it is, about its origin (not given: its position)
     alpha      0 to 1: how solid it is drawn (1 is solid, 0 is a ghost, 5 % solid at the least): the object is the same in every other way
+    origin     (x, y, z) in mm, in the place the object is made (before its position moves it): the point it is turned and scaled about and where its gizmo is.  Not given: its position.  FielDes writes it when the
+               key O makes a point of the scene the origin of the selected model, and writes `position` again to make up for it, so that the model stays where it is
 
 They are ordinary arguments of the call.  FielDes's model tree shows them inside every object, a click on one selects its number in the code, and the gizmo in the
 viewport drags the first three: when the object is selected, FielDes writes them with `var()` numbers (`position=(var(40), var(0), var(0))`) and a drag changes the
 numbers in the text.  None of them is needed: an object without them stands where its definition puts it.
 
-    part = box((0, 0, 0), (20, 10, 5), position=(40, 0, 0), rotation=(0, 0, 30), alpha=0.5)
+    part = box((20, 10, 5), position=(40, 0, 0), rotation=(0, 0, 30), alpha=0.5)
 
 What is not made by a call -- a part taken out of an imported model, a name given to another, a sum -- is placed by `place`, which takes the same arguments:
 
@@ -434,12 +438,12 @@ keeps it and has no placement arguments -- a model it makes is placed with `plac
 
 Gives the functions of PLACEABLE the placement arguments, in `namespace` (what `from fieldes import *` brings in)
 
-### `place(value, position=None, rotation=None, scale=None, alpha=None)`
+### `place(value, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 `value` placed: moved by `position` (x, y, z), turned by `rotation` (x, y, z degrees) and scaled by `scale` (x, y, z factors, or one number), all about the middle
 of its box, and drawn as solid as `alpha` (0 to 1) says.
 
-This is what the placement arguments of every model's call do: `box(a, b, position=(10, 0, 0))` is `place(box(a, b), position=(10, 0, 0))`.  It is written for what is
+This is what the placement arguments of every model's call do: `box((20, 10, 5), position=(10, 0, 0))` is `place(box((20, 10, 5)), position=(10, 0, 0))`.  It is written for what is
 not made by a call -- a part taken out of an imported model, `part = place(part, position=(10, 0, 0))`.  FielDes's gizmo drags the numbers of either:
 write them as `var(...)` (the model tree does that when the model is selected).
 
@@ -460,7 +464,7 @@ project; the generator is not part of FielDes, so this file is now maintained by
 
 This is fieldes.stdlib.text
 
-### `text(txt, pos=(0, 0))`
+### `text(txt, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Returns the given text, rendered in a custom f-rep font
 (with a character height of 1)
@@ -923,7 +927,7 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
-### `instance(shape)`
+### `instance(shape, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A linked copy of `shape`: the very same shape -- its surfaces, sizes, colours and properties are the original's, and change with it -- that can only be
 moved and rotated, with its gizmo (the `position=` and `rotation=` of its call).  It cannot be scaled: its shape is the original's -- and so are the numbers its
@@ -936,7 +940,7 @@ Symmetry: `symmetry_planes(...)`, a model that is a set of mirror planes, and `s
 
     mirror = symmetry_planes()                        # one plane, through the origin, the plane x = 0: a mirror
     mirror = symmetry_planes(position=(var(0), var(0), var(0)), rotation=(var(0), var(0), var(0)))        # moved and turned with its gizmo, like any model
-    leg = cylinder(5, 30, (40, 22, 0))                # the one you edit
+    leg = cylinder(5, 30, position=(40, 22, 15))                # the one you edit
     leg_images = symmetry_images(leg, mirror)         # all its images, one model: the leg as it looks in the mirror, left to right
 
 The leg is the only model with numbers: the images are not models of their own, they are what the symmetry makes of the leg, so a symmetry of two planes at right angles makes three
@@ -1001,7 +1005,7 @@ What a shape was made from is mirrored TOGETHER with it: the profiles, the lines
 models -- there is no statement and no row of the model tree for them -- and the ones of the shape you made stay the only ones with numbers: press a dot of any image's and drag
 it, and it is that point of the original that moves.
 
-### `symmetry_planes(planes=1, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=None, copies=None)`
+### `symmetry_planes(planes=1, kind='axis', axis=(0, 0, 1), first=None, copies=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A symmetry: mirror planes through `centre`.  `kind` is 'axis' (`planes` planes that all contain the axis `axis`, equally spaced: one is a mirror), 'across' (and the plane
 across the axis) or 'cube' (the nine planes of a cube).  `first` is a line in the first plane (across the axis; any when it is left out): with one plane the plane is the one
@@ -1016,7 +1020,7 @@ It is a model: selected in the model tree it has a gizmo -- moved, turned -- and
 
 Points and surfaces: models of their own kind, and how every kind is drawn.
 
-    p = point(10, 0, 5)                    a point: drawn as a dot (the middle point of a gizmo); click it and its gizmo shows, and moves it
+    p = point(position=(10, 0, 5))                    a point: drawn as a dot (the middle point of a gizmo); click it and its gizmo shows, and moves it
     s = plane((0, 0, 8), (0, 0, 1))        a surface: an open sheet, the zero set of a field, with no body behind it
     wavy = wave_surface(2, 10)             z = 2 sin(2 pi x / 10)
 
@@ -1047,7 +1051,7 @@ bounds of what is made of it: nothing of the ball is painted.)
 
 An open surface: the zero set of a field, with no body behind it (negative on one side, positive on the other)
 
-### `cylinder_surface(radius=5.0, axis='z', center=(0, 0, 0))`
+### `cylinder_surface(radius=5.0, axis='z', *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The surface of an infinite cylinder along an axis: a surface, negative inside
 
@@ -1063,29 +1067,30 @@ mirror image, then a move), at `xyz` -- expressions of the numbers of `source`. 
 original and everything that is an image of it change together.  `frozen` are the numbers of the map itself (a gizmo's): a drag of the dot never changes them.  The dots of the
 images of a profile or a line in a symmetry, and of a placed copy of one (see handles.gizmo), are these
 
-### `plane(point=(0, 0, 0), normal=(0, 0, 1))`
+### `plane(normal=(0, 0, 1), width=40.0, height=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A plane through `point`, positive on the side `normal` points to: a surface
 
-### `point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None, influence=None)`
-
-`influence` is how far the point reaches, in mm -- a number or a `var()`: the RADIUS of the field round it, when the point is given to `distance_to_point` or `radial_field` (the distance from the sphere, or the tube, of that radius: negative inside it, 0 on it, positive outside).  A point that does not say its influence is the point alone, and those fields are the plain distance from it.  Select a point and the ring of its gizmo is its influence: `influence=var(...)` is written into the call when it has none (a point that has its position, rotation and scale written already gets it too), and the field viewer of a field made of the point stays open until its icon is clicked, and shows the gizmo of the point while it is open, so the radius is seen as the ring is dragged.  The scale is only for the points of a spline or a path: the ring of such a point is its scale, and Shift and the ring its influence.
+### `point(*, smooth=None, radius=None, influence=None, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
+`influence` is how far the point reaches, in mm -- a number or a var(): the RADIUS of the field round it, when a point is given to `distance_to_point` or `radial_field`
+(the distance from the sphere, or the tube, of that radius: negative inside it, 0 on it, positive outside).  A point that does not say its influence is the point alone,
+and those fields are the plain distance from it.
 In a `profile` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
 its gizmo's rotation gives) and a corner when False; None (the default): what the profile says.  In a `profile` it can also be a ROUND corner, `radius=r`: an exact arc
 of that radius, tangent to both edges, takes the place of the corner (the scale of its gizmo multiplies the radius; a spline point has no radius).  A double click on its
 dot goes from a corner to a spline point to a round corner and back to a corner
 
-### `sphere_surface(radius=10.0, center=(0, 0, 0))`
+### `sphere_surface(radius=10.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The surface of a sphere (without its inside): a surface, negative inside
 
-### `surface(field)`
+### `surface(field, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 An open surface from any field: where the field is 0.  (A body's field as a surface is its skin.)
 
-### `wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0)`
+### `wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0, width=40.0, length=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A wavy sheet z = height + amplitude sin(2 pi s / period) along an axis (s = x or y): a surface, positive above it
 
@@ -1099,9 +1104,9 @@ None when it is drawn where it is
 
 1D shapes: a line or a spline through points.
 
-    a = point(0, 0, 0)
-    b = point(20, 10, 0)
-    c = point(40, 0, 5)
+    a = point(position=(0, 0, 0))
+    b = point(position=(20, 10, 0))
+    c = point(position=(40, 0, 5))
     lines = polyline([a, b, c])                 # straight pieces between the points: a hard corner at each
     smooth = spline([a, b, c])                  # a smooth curve through the points
     loop = spline([a, b, c], closed=True)       # joined from the last point back to the first
@@ -1199,7 +1204,7 @@ from where it looks (a polygon of a hundred edges costs what the few pieces near
 An outline that crosses itself cannot be cut: its side is then the winding of the outline round the point (the sum of the angles each edge is seen
 under: a full turn inside, none outside)
 
-### `polyline(points, closed=False)`
+### `polyline(points, closed=False, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A set of lines: straight pieces through the points, in the order given, a corner at each (a point can say it is a spline point: `point(..., smooth=True)`),
 joined from the last point back to the first when `closed`.  As a field it is the distance to the lines
@@ -1212,7 +1217,7 @@ The distance to the straight pieces between the vertices (x, y, z): the least of
 
 The vector t turned the way the gizmo turns a shape: about x, then y, then z (degrees)
 
-### `spline(points, closed=False)`
+### `spline(points, closed=False, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A smooth curve through the points, in the order given (a point can say it is a corner: `point(..., smooth=False)`), joined from the last point back to the first
 when `closed`.  It leaves each point in the direction the rotation of its gizmo says (no rotation: from the neighbouring points).  As a field it is the
@@ -1237,6 +1242,11 @@ the arc: the chord, which is what the exact field of a face is made on, see `fil
 
 The number a coordinate has now: a number, or a field that is the same everywhere (a var(), an expression of var()s)
 
+### `values_of(items)`
+
+`value_of` for a list: the fields among them are read together -- every node that they share is worked out once (libfive_tree_eval_many) -- and not with an evaluator for each,
+which cost 4 ms and more a time for the control points of a body of points and ten seconds for a body of twenty (H68c, the user, 2026-11-02: dragging a point out of a face lags)
+
 ### `vec(v)`
 
 *(no description yet)*
@@ -1255,17 +1265,17 @@ points: each is pressed, dragged and double clicked, and it is the original's po
 
 A 2D shape from points or from a closed curve: `profile`.
 
-    a = point(0, 0, 0)
-    b = point(40, 0, 0)
-    c = point(40, 20, 0)
-    d = point(0, 20, 0, smooth=True)
+    a = point(position=(0, 0, 0))
+    b = point(position=(40, 0, 0))
+    c = point(position=(40, 20, 0))
+    d = point(position=(0, 20, 0), smooth=True)
     plate = profile([a, b, c, d])                # the face the points enclose; hard edges unless a point says smooth=True
     round = profile([a, b, c, d], smooth=True)   # ...or every point a spline, but where a point says smooth=False
     outline = spline([a, b, c, d], closed=True)
     plate = profile(outline)                     # the same, from a curve
     body = extrude(plate, 0, 5)                 # a solid: the face pulled 5 along its normal
 
-The points are ordinary points (`point(x, y, z)`, dragged with their gizmo): any number of them, joined in the order they are given and closed (the last to
+The points are ordinary points (`point(position=(x, y, z))`, dragged with their gizmo): any number of them, joined in the order they are given and closed (the last to
 the first).  The shape lies in the PLANE through the first three points (the first that is not on a line with the first two); every other point is
 projected onto that plane, so a profile is made whatever the points are.  A tuple of three numbers stands for a point too.
 
@@ -1293,27 +1303,28 @@ A 2D shape made from a surface (see `profile`): the outline of the surface in it
 numbers each, u x v the way the surface faces --, .profile2d the same field in the coordinates of that plane, .flat whether the surface is flat (it is projected
 onto the plane when it is not), .away how far the surface is from the plane at most, .loops the outline as [(polygon, hole)] with the points as (s, t)
 
-### `extrude(shape, a, b)`
+### `extrude(shape, a, b, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A 2D shape pulled into a solid: the part of space between the distances `a` and `b` from its plane, along the plane's normal (the plane is
 z = 0 for the shapes that lie there -- a circle, a rectangle -- so that is zmin and zmax; the plane of a profile is the plane of its points,
 and the normal is the direction u x v of that plane).  `extrude(circle(5), 0, 10)` is a cylinder 10 tall
 
-### `path_extrude(profile, path, twist=0)`
+### `path_extrude(profile, path, twist=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A 2D shape swept along a curve: the `profile` -- its own axes across the curve (x and y for a shape in the plane z = 0, the two axes of the plane of a profile) -- carried
 along `path`, turning with it, without twisting about it unless the points of the curve say so.
 THE 2D SHAPE IS WHERE THE SWEEP STARTS: the curve says how it travels, not where from -- the whole sweep is moved so that the first point of the curve is the middle of
 the shape (the middle of the box of its outline), and its first ring is the shape itself, in its own plane at whatever angle the curve leaves it (the sweep is slanted
-when it is oblique; a shape whose plane holds the direction of the curve is turned across it), so that the shape you edit is the base of what it is swept into.  A circle
+when it is oblique; a shape whose plane holds the direction of the curve is turned across it), so that the shape you edit is the base of what it is swept into (the slant runs on from it as a prism and turns into the sections across the curve gradually, over about three times the lean, so that the root has no bevel).  A circle
 or a rectangle is such a shape as a profile is.  The path is DRAWN where the sweep goes -- through the middle of its cross-section, from the middle of the shape, its
 points with it -- whatever its own numbers say; only its shape matters, and the first point of it is the middle of the shape:
 the ROTATION of a point (its gizmo's rotate numbers) twists the profile about the curve there, and the twist runs between the points as a
-smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square.  A curve with corners is swept
+smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square -- unless the end point of the curve is a spline point: then the end is rounded off, in a dome as deep as half the thinner side of the
+ profile (times the size and the influence of that point; a corner or a round corner at the end stays the flat cutoff).  A curve with corners is swept
 with mitered joints.  `path_extrude(circle(2), spline([a, b, c]))` is a bent tube; `extrude` is the straight case.  `path` may be a list of points:
 the spline through them
 
-### `profile(source, smooth=False, radius=0)`
+### `profile(source, smooth=False, radius=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The 2D shape the points of `source` enclose -- a list of points, or a curve -- as a closed outline through them in the order given, in the plane
 through the first three of them (the others are projected onto it).  `smooth` is what a point is that does not say (point(..., smooth=True) or
@@ -1426,12 +1437,12 @@ Angle around an axis through `center`, in radians (-pi..pi)
 distance field instead of points) and falls to 0 at `radius`.
 falloff: 'linear', 'smooth' (smoothstep) or 'gauss'.
 
-### `bend_z(shape, radius, center=(0, 0))`
+### `bend_z(shape, radius, center=(0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Bends a shape lying along +x around the z axis: x becomes arc length
 on a circle of the given radius
 
-### `body_from_field(field, level=0.0)`
+### `body_from_field(field, level=0.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A BODY from a field: what is inside where the field is below `level` (0 by default), its surface where the field
 equals `level` -- the other way of field_from_body().  The result is drawn and is a part like any other (it can be
@@ -1444,7 +1455,15 @@ The value of the body is the field's less `level`, so it is a true distance to i
 one (field_from_body of a body, a distance_to_point ...): the surface is exact, an offset of a body made from a
 field that only roughly measures distance is about right, not exact.  `level` may be a field too.
 
-### `chamfer_union(a, b, size)`
+### `chamfer(edge, *more, size=None, bounds=None, position=None, rotation=None, scale=None, alpha=None, origin=None)`
+
+Chamfers edges of a body: `chamfer(edge, size)` -- the edge you selected (`edge_at(body, (x, y, z))`: a line, or a closed curve for a circular edge; it knows its body), with a flat cut that goes `size`
+along each of the two faces from the edge (a convex edge is cut off, a concave one is filled), exactly that edge and no other: `chamfer(edge_1, edge_2, edge_3, size)` cuts all of them.  The body may be named
+as well, in any place: `chamfer(body, edge, size)`.
+Each piece of the edge has the cut through the two faces as they are there, so the cut of a circular edge is a cone.  The cut is made from the numbers of the edge as it was when the script last ran: a handle
+of the body that is dragged moves the cut with it when the script runs again, at the end of the drag
+
+### `chamfer_union(a, b, size, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Union with a 45-degree chamfer of the given size where the shapes meet
 
@@ -1473,7 +1492,9 @@ coordinates may be fields: a plane that moves or tilts from place to place)
 
 ### `distance_to_point(p, radius=None)`
 
-Euclidean distance to a point (its coordinates may be fields: a point that is where a field says).  With a `radius` -- or the influence of the point that is given, `point(x, y, z, influence=r)`, which is the radius in mm -- it is the distance from the SPHERE of that radius round the point: negative inside it (-r at the point), 0 on it, positive outside: a sphere's value, as a field.  A point that says no influence, and no radius, is the plain distance from it
+Euclidean distance to a point (its coordinates may be fields: a point that is where a field says).  With a `radius` -- or the influence of the point that is given,
+`point(position=(x, y, z), influence=r)`, which is the radius in mm -- it is the distance from the SPHERE of that radius round the point: negative inside it (-r at the point),
+0 on it, positive outside: a sphere's value, as a field.  A point that says no influence, and no radius, is the plain distance from it
 
 ### `distance_to_points(points)`
 
@@ -1540,13 +1561,15 @@ samples.  points: [(x, y, z), ...] with values [v, ...], or
 (min, max) of a field, sampled on a grid over a box (and only inside
 `body` if given)
 
-### `fillet(shape, radius, bounds=None)`
+### `fillet(edge, *more, radius=None, bounds=None, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-Fills every concave (inside) edge and corner of a shape with a
-fillet of the given radius (a number or a field), and fills what is narrower than the ball: a ball of that radius rolls in the air, and the
-shape is everything it cannot reach.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
-`radius`, and the surface of the result is `radius` from them.  Exact for the inside edge of two flat faces at any angle and for the corner of three
-(the ball's centre is where the planes of the faces meet); a slot narrower than the ball is filled flush with its mouth, not left with the sag of the ball resting on its two edges.
+Rounds edges of a body: `fillet(edge, radius)` -- the edge you selected (`edge_at(body, (x, y, z))`: a line for a straight edge, a closed curve for a circular one, a cylinder's rim; it knows its body), with a
+fillet of the given radius (a number, a `var()` its handle drags, or a field), exactly that edge and no other: `fillet(edge_1, edge_2, edge_3, radius)` rounds all of them.  A convex edge is rounded off and a
+concave one is filled, as the ball of that radius rolls along it (see round_edges and distance_field.py: exact for two flat faces at any angle): made from the body's own field and limited to the room that
+edge's own rounding needs -- a tube round it as wide as the ball touches the two faces from it, which is the radius for a right angle, more for a sharper edge, less for a blunter one --, so it follows the
+body when a handle of the body is dragged and leaves the other edges near it as they are (the tube was four radii wide, and rounded every edge in it).
+The body may be named as well, in any place: `fillet(body, edge, radius)`.
+`fillet(body, radius)` -- with no edge -- fills every concave edge of the body
 
 ### `find_extent(shape, budget=200000, resolution=2.0, half=1000000.0)`
 
@@ -1566,7 +1589,7 @@ The gradient of a shape's field, as three fields (gx, gy, gz)
 The length of a field's gradient: 1 for an exact distance field; far
 from 1 where a field only roughly measures distance
 
-### `intersection_all(shapes, blend=0)`
+### `intersection_all(shapes, blend=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Intersection of many shapes (optionally blended)
 
@@ -1630,15 +1653,15 @@ The smallest of the fields (and numbers) at every point
 
 The smallest of several fields, point by point: minimum(a, b, c) is the union of three bodies.  See maximum().
 
-### `mirror_x(shape, x=0.0)`
+### `mirror_x(shape, x=0.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Mirror-symmetric copy: the half at x > x0 reflected onto the other
 
-### `mirror_y(shape, y=0.0)`
+### `mirror_y(shape, y=0.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Mirror-symmetric copy: the half at y > y0 reflected onto the other
 
-### `mirror_z(shape, z=0.0)`
+### `mirror_z(shape, z=0.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Mirror-symmetric copy: the half at z > z0 reflected onto the other
 
@@ -1678,12 +1701,12 @@ fields (nx, ny, nz); defined everywhere, meaningful near the surface
 
 Maps [lo, hi] to [0, 1] (clamped)
 
-### `offset_by(shape, distance)`
+### `offset_by(shape, distance, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Offsets a shape by a distance -- which may be a field, e.g. grow a
 part by 0.02 mm per MPa of stress: offset_by(part, 0.02 * stress)
 
-### `offset_exact(shape, distance, bounds=None)`
+### `offset_exact(shape, distance, bounds=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A uniform offset of any shape: grows it by `distance` mm everywhere
 (shrinks it for a negative distance), measured along true normals,
@@ -1715,7 +1738,10 @@ fractional power)
 
 ### `radial_field(center, axis='z')`
 
-Distance from the axis through the point `center` (cylindrical radius, mm): a field made of a POINT, as `distance_to_point` is -- right-click a point, and `radial_field` is in its menu.  `center` is a `point(x, y, z)` (its coordinates may be fields), the Point class; a vector -- `(x, y, z)` -- is not a point, and `radial_field` refuses it with a message.  *Primitives > Fields > radial_field* writes the point (a model of its own, with its gizmo) and the field made of it.  The field has no radius of its own: the INFLUENCE of the point, `point(x, y, z, influence=r)`, is the radius, as it is for `distance_to_point` -- the field is then the distance from the TUBE of that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside
+Distance from the axis through the point `center` (cylindrical radius, mm): a field made of a POINT, as `distance_to_point` is -- right-click a point, and radial_field is in its menu.  `center` is
+a `point(position=(x, y, z))` (its coordinates may be fields), the Point class: a vector -- (x, y, z) -- is not a point, and is refused.  The field has no radius of its own:
+the INFLUENCE of the point, `point(position=(x, y, z), influence=r)`, is the radius, as it is for `distance_to_point` -- the field is then the distance from the TUBE of
+that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside.  A point that says no influence gives the plain distance from the axis
 
 ### `ramp(field, input_range, output_range, clamped=True)`
 
@@ -1734,18 +1760,18 @@ The library's mesh of a shape over a region (a libfive_region_t) at `res` sample
 pointer libfive_tree_render_mesh gives (free it with libfive_mesh_delete), or None. A shape with
 var()s is meshed with the numbers they have in the script.
 
-### `repeat(shape, spacing, center=(0, 0, 0))`
+### `repeat(shape, spacing, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repeats a shape infinitely on a grid.  spacing: a number or (sx, sy,
 sz), each a number or a field (the repeat is closer here and wider there); 0 along an axis leaves that axis alone.  The shape should fit
 inside one grid cell centred on `center`.
 
-### `repeat_polar(shape, count, center=(0, 0), axis='z')`
+### `repeat_polar(shape, count, center=(0, 0), axis='z', *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Repeats a shape `count` times around the z axis; the shape should
 lie in the wedge around the +x direction
 
-### `round_edges(shape, radius, bounds=None)`
+### `round_edges(shape, radius, bounds=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Rounds every convex (outside) edge and corner of a shape with the
 given radius (a number or a field), and removes what is thinner than the ball: a ball of that radius rolls in the material, and the shape is everything
@@ -1758,20 +1784,20 @@ it reaches.  It is made from the shape's own field (see exact_distance and dista
 Values on an n x n x n grid of cell centres over a box (a flat list,
 x fastest) together with the points
 
-### `shell_centered(shape, thickness)`
+### `shell_centered(shape, thickness, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A shell straddling the surface (half inside, half outside)
 
-### `shell_exact(shape, thickness, side='inside', bounds=None)`
+### `shell_exact(shape, thickness, side='inside', bounds=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A hollow shell of uniform thickness (true distance), side = 'inside',
 'outside' or 'center'.  The thickness is a number or a field.
 
-### `shell_inside(shape, thickness)`
+### `shell_inside(shape, thickness, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A hollow shell: the part of `shape` within `thickness` of its surface
 
-### `shell_outside(shape, thickness)`
+### `shell_outside(shape, thickness, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A skin grown outwards from the surface by `thickness`
 
@@ -1798,15 +1824,15 @@ is drawn, and the cost is that of the field times the copies.  The body's field 
 distance (the primitives and what is made of them are; a part imported from STEP is replaced by its exact
 distance, as offset() does), because a field that rises faster smooths by as much more.
 
-### `smooth_difference(a, b, radius)`
+### `smooth_difference(a, b, radius, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 a minus b, with a rounded blend along the cut
 
-### `smooth_intersection(a, b, radius)`
+### `smooth_intersection(a, b, radius, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Intersection with a rounded blend
 
-### `smooth_union(a, b, radius)`
+### `smooth_union(a, b, radius, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Union with a rounded blend of the given radius where the shapes meet (a number, or a field: a blend that
 is round here and sharp there)
@@ -1846,17 +1872,17 @@ places to texture; the texture fades out over `fade` mm (the size, by default) s
 render has to be fine enough to show it -- a resolution of about four samples to the size.  E.g. a rough grip on the top face:
 top = select_surface(part, seed=(0, 0, 10)); gripped = texture(part, 'grit', depth=0.2, size=0.6, region=top)
 
-### `thicken(field, thickness)`
+### `thicken(field, thickness, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A solid wall of the given thickness centred on a field's zero
 surface (e.g. a plane, a TPMS surface, a shape's skin); the
 thickness may be a field
 
-### `twist_z(shape, degrees_per_mm, center=(0, 0))`
+### `twist_z(shape, degrees_per_mm, center=(0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Twists a shape about the z axis; the rate may be a field
 
-### `union_all(shapes, blend=0)`
+### `union_all(shapes, blend=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Union of many shapes (optionally blended)
 
@@ -1873,7 +1899,7 @@ that are too thin (or too thick) to make.  Capped at max_thickness.
 
 ### `wave(axis='x', period=10.0, amplitude=1.0, phase=0.0)`
 
-A sine wave along an axis (or a field): amplitude * sin(2 pi s / period + phase)
+A 3D wave: the height above a wavy sheet, z - amplitude * sin(2 pi s / period + phase), s the coordinate along the axis.  It is zero on the sheet and grows with z, so the section viewer shows the sheet cut by its disc and the colours change as the disc is dragged up and down.  (Given a field instead of an axis name, it is the plain sine of that field, amplitude * sin(2 pi field / period + phase).)
 
 ### `x_field()`
 
@@ -2021,18 +2047,18 @@ Coefficient orders (in coordinates w = (p - origin) / scale):
       helical_curve: u, v across the axis, turning with the height
 All three return scale * f(w): inside where negative.
 
-### `coil_spring(radius, wire_radius, lead, turns, center=(0, 0, 0))`
+### `coil_spring(radius, wire_radius, lead, turns, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A coil spring along z: `turns` turns of round wire (radius
 `wire_radius`) around a coil of radius `radius`, rising `lead` per
 turn, standing on `center`, its ends cut flat.
 
-### `ellipsoid(radii, center=(0, 0, 0))`
+### `ellipsoid(radii, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 An ellipsoid with semi-axes radii = (a, b, c) along x, y, z, numbers or fields
 (distance-like near the surface; exact for a sphere)
 
-### `elliptic_cylinder(a, b, center=(0, 0, 0))`
+### `elliptic_cylinder(a, b, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 An infinite cylinder along z with an elliptic section (semi-axes a, b)
 
@@ -2049,7 +2075,7 @@ A cubic curve g(u, v) = 0 in the plane across the axis (through
 gear or a worm, a thread, a coil.  The form the STEP importer fits to
 such faces; u, v are measured from `offset` in the turned plane.
 
-### `helical_revolve(profile, lead, center=(0, 0, 0))`
+### `helical_revolve(profile, lead, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Like revolving a profile around the z axis (through `center`), but
 advancing `lead` along it per turn (negative: left-handed): a
@@ -2058,7 +2084,7 @@ in the xy plane: x = distance from the axis, y = height; it must fit
 within one lead of height (|y| < lead / 2), since the result repeats
 every lead.  Unbounded along z -- cut it to length.
 
-### `helical_sweep(profile, lead, center=(0, 0, 0))`
+### `helical_sweep(profile, lead, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 `profile` (a shape; its cross-section in the xy plane is what counts)
 screwed along the z axis through `center`: turned by one full turn
@@ -2068,12 +2094,12 @@ springs, whose profile is drawn through the axis: helical_revolve).
 Unbounded along z -- cut it to length, e.g. with extrude.  Kept
 close to a distance by dividing out the twist's stretching.
 
-### `hyperboloid(a, c, center=(0, 0, 0))`
+### `hyperboloid(a, c, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 One-sheet hyperboloid along z: (x^2 + y^2) / a^2 - z^2 / c^2 = 1,
 waist radius a (the inside is the part around the axis)
 
-### `paraboloid(k, center=(0, 0, 0))`
+### `paraboloid(k, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The inside of z = k (x^2 + y^2) (opening up from its vertex at center)
 
@@ -2088,7 +2114,7 @@ coefficients: x^2 y^2 z^2 xy xz yz x y z 1, in w = (p - center) / scale
 A cubic curve g(r, h) = 0 (r: distance from the axis, h: along it,
 from `origin`) spun around the axis
 
-### `wave_block(size, amplitude, period, center=(0, 0, 0))`
+### `wave_block(size, amplitude, period, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A block (size = (sx, sy, sz)) whose top is a wave:
 z_top = sz / 2 + amplitude sin(2 pi x / period) sin(2 pi y / period)
@@ -2120,10 +2146,8 @@ A foam does not repeat, so it is not made of a cell: it is made around POINTS.  
 
 -- a lattice made of points fills the body the points were made in (so it takes no body of its own).
 
-The surface of the body cuts a foam off.  random_points(body, surface=True) puts points ON the surface as well, that are cells of their own: a voronoi_lattice then is closed by the surface, with a net of beams over it that wraps
-round the sharp edges and nothing cut off (a delaunay_lattice joins them along the surface); random_points(body, frame=True) gives the lattice a full beam along every sharp edge of the body, found from the body itself
-(the outline of each flat face; a smooth fillet is no sharp edge), whatever the lattice is; and clip=True (the default) lets the body cut the lattice, the frame with it, clip=False leaves it whole.
-point_cloud(points, body=None) is a set of points of your own, for the same lattices.  surface_lattice(body, cell_size) is a net on its own: a random lattice of one layer, that does not repeat, over the surface of any body.
+The surface of the body cuts a foam off.  random_points(body, surface=True) puts points ON the surface as well, and the foam then has a clean net of beams all over it;
+surface_lattice(body, cell_size) is such a net on its own: a random lattice of one layer, that does not repeat, over the surface of any body.
 
 The one-call version:
 
@@ -2305,8 +2329,8 @@ check       warn when the cell does not tile: what the geometry does on a face o
             it does on the opposite face (a rod that leaves through one face must come in through the other,
             a sphere on a corner must be on all eight)
 
-    cell = cell_custom(box((0, 0, 0), (10, 10, 10)),
-                       union(sphere(3, (5, 5, 5)), cylinder(1.0, 20, (5, 5, -5))))
+    cell = cell_custom(box((10, 10, 10), position=(5, 5, 5)),
+                       union(sphere(3, position=(5, 5, 5)), cylinder(1.0, 20, position=(5, 5, 5))))
     lattice(part, cell)                                    # cells of 10 mm, as modelled
     lattice(part, cell, cell_size=6)                       # the cell scaled to 6 mm
     lattice(part, cell, cell_map=cylindrical(cells_around=12))
@@ -2367,15 +2391,15 @@ Cells that wrap around an axis: radial, around, and along the axis.
 Give the number of cells around (cells_around=) or the radius at
 which cells are cell_size wide (radius=).
 
-### `delaunay_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None)`
+### `delaunay_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None, clip=True, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A stochastic truss: beams along the Delaunay edges between a set of points (every point joined to its neighbours), filling the
-body the points were made in.  The arguments are those of voronoi_lattice(): the points, the beams' size, the skin ...
+body the points were made in.  The arguments are those of voronoi_lattice(): the points, the beams' size, the skin, clip ...
 
     points = random_points(part, spacing=8)
     truss = delaunay_lattice(points, thickness=1.0)
 
-### `fill(body, lattice_field, skin=0.0, region='volume', depth=None, blend=0.0)`
+### `fill(body, lattice_field, skin=0.0, region='volume', depth=None, blend=0.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Trims a lattice to a body.
 skin: a solid skin of this thickness (mm) on the body's surface
@@ -2383,14 +2407,14 @@ region='volume' fills the whole body; region='shell' only the
     outer `depth` mm (a conformal lattice layer under the skin)
 blend: rounds the joints between lattice and skin
 
-### `graph_lattice(nodes, beams, radius=0.5, blend=0.0)`
+### `graph_lattice(nodes, beams, radius=0.5, blend=0.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Round beams along the edges of any graph: nodes [(x, y, z), ...],
 beams [(i, j), ...] (node indices).  radius: a number, one per node,
 or a field (evaluated at the nodes; each beam tapers linearly
 between its ends).  blend rounds the joints.
 
-### `lattice(body, cell=None, cell_size=None, thickness=None, radius=None, density=None, style='sheet', offset=None, skin=0.0, region='volume', depth=None, cell_map=None, node_radius=None, blend=0.0, skin_blend=0.0, wall=None, axis='z')`
+### `lattice(body, cell=None, cell_size=None, thickness=None, radius=None, density=None, style='sheet', offset=None, skin=0.0, region='volume', depth=None, cell_map=None, node_radius=None, blend=0.0, skin_blend=0.0, wall=None, axis='z', *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A body filled with a lattice, in one call.
 
@@ -2422,23 +2446,34 @@ The thickness (sheet TPMS), offset (network TPMS), wall (planar) or
 radius (struts) that gives a lattice of this cell the requested relative density
 (0..1), found by bisection on a sampled unit cell
 
-### `planar_lattice(cell, cell_size=10.0, wall=0.8, axis='z', cell_map=None)`
+### `planar_lattice(cell, cell_size=10.0, wall=0.8, axis='z', cell_map=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A 2.5D pattern of walls, extruded along an axis: a honeycomb
 (cell_periodic('hexagon'); cell_size = flat-to-flat width), or a
 triangle, square or kagome grid.  wall is the wall thickness (mm,
 may be a field).
 
+### `point_cloud(points, body=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
+
+Points of your own, exactly where you put them -- nothing random.  A foam or a truss is made around them as around random_points(): voronoi_lattice(cloud), delaunay_lattice(cloud).
+
+points   the points: places (x, y, z), or the points of the model tree (point(position=(x, y, z)): its dot is dragged by its gizmo, to put it exactly where it is wanted).  A lattice needs at least five
+body     the body that clips the lattice (and that it fills): any body.  Without one, the bounding box of the points
+
+    cloud = point_cloud([(0, 0, 0), (10, 0, 0), (0, 10, 0), (10, 10, 0), (5, 5, 8), (5, 5, -8)])
+    foam = voronoi_lattice(cloud)
+
 ### `points_graph(points, style='delaunay')`
 
 The Delaunay (or Voronoi) graph of your own points
 
-### `random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None, surface=False)`
+### `random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None, surface=False, frame=False, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Points in a body -- with the say over how random they are.  A foam is made around them: voronoi_lattice(points).
 
 body          where the points are made: inside it, and a layer of one `spacing` outside, so that the cells at its surface are
-              closed.  Without a body, give bounds=((x0, y0, z0), (x1, y1, z1))
+              closed (with surface=True there is no layer outside: the boundary is the surface).  Without a body, give
+              bounds=((x0, y0, z0), (x1, y1, z1))
 spacing       how far a point is from its nearest neighbour, on average (mm): the points are made so that they come out that far
               apart whatever the randomness (points.stats() says how far they really are)
 randomness    0 to 1: how much the points are moved off a regular grid -- 0 is a regular body-centred grid (every cell the same),
@@ -2449,10 +2484,11 @@ max_distance  no point is farther than this from its nearest neighbour (mm): a p
               neighbour.  Default: none.  It cannot be less than min_distance.  (min_distance and max_distance are the range the
               distances to the nearest neighbour are in: the closer together they are, the more regular the points)
 seed          another number is another pattern (the same number is the same points again)
-surface       True adds a set of points ON the surface of the body, about `spacing` apart (the nodes of a random net on the surface, as surface_lattice() makes it),
-              so that a lattice made of the points has a clean net of beams all over the surface of the body, and not beams that the surface cuts off:
-              delaunay_lattice() has its beams along the surface between them, voronoi_lattice() a net of beams one beam radius inside the surface.  The other
-              points keep their distance to them.  Needs a body
+surface       True puts a set of points ON the surface of the body, about `spacing` apart, that are cells of their own, and the foam is closed by the surface: nothing is cut off, and the surface is a net of
+              beams that wraps round the sharp edges -- no beam runs along an edge (that is what frame is for).  The points follow the surface and nothing else: none is pulled onto an edge or a corner.  Needs a body
+frame         True gives the lattice made of the points a frame: a full beam along every sharp edge of the body, found from the body itself (the outline of each of its flat faces; a smooth fillet is no sharp
+              edge).  The points and the cells stay as they are -- the plain foam, or the foam of surface -- and the body cuts them, the frame with them (clip); with clip=False the foam is as wild
+              as it is without a frame, and the frame is whole: its beams lie on the edges, half of each stands out of the body.  Needs a body
 
 Returns a PointSet, which FielDes draws in the viewport (each point as the dot of a gizmo): len(points), points.stats() (the
 distances the points really have), points.body (the body they were made in), and
@@ -2474,7 +2510,7 @@ Cells in shells around a point: radial, around (longitude) and pole
 to pole (latitude).  Give cells_around= or radius= (where the cells
 should be cell_size wide).  Cells shrink towards the poles.
 
-### `strut_lattice(cell, cell_size=10.0, radius=None, node_radius=None, blend=0.0, cell_map=None, thickness=None)`
+### `strut_lattice(cell, cell_size=10.0, radius=None, node_radius=None, blend=0.0, cell_map=None, thickness=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 An infinite strut (beam) lattice: round beams of `thickness` mm (their diameter;
 or `radius` mm, which is half of it: give one of the two, default radius 0.8)
@@ -2492,7 +2528,7 @@ A graph on a body's surface: points about cell_size apart joined into
 triangles (pattern='triangle') or the dual cells (pattern='voronoi',
 mostly hexagons)
 
-### `surface_lattice(body, cell_size=8.0, pattern='voronoi', thickness=None, radius=None, seed=1, blend=0.0, bounds=None)`
+### `surface_lattice(body, cell_size=8.0, pattern='voronoi', thickness=None, radius=None, seed=1, blend=0.0, bounds=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A lattice that does not repeat, over the surface of a body: a random net of round beams, one layer thick, the axes of the beams lying ON the surface.
 
@@ -2508,7 +2544,7 @@ bounds     ((x0, y0, z0), (x1, y1, z1)): where to look for the surface, when Fie
 
 Half of each beam is outside the body: intersect the net with the body to have it inside.
 
-### `tpms(cell, cell_size=10.0, thickness=1.0, style='sheet', offset=0.0, cell_map=None, invert=False, fast=False)`
+### `tpms(cell, cell_size=10.0, thickness=1.0, style='sheet', offset=0.0, cell_map=None, invert=False, fast=False, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 An infinite TPMS lattice (a field; trim it with fill() or use
 lattice()).
@@ -2536,18 +2572,22 @@ apart, joined by the edges of their Voronoi cells (style='voronoi',
 a foam) or by their Delaunay edges (style='delaunay', a stochastic
 truss).  relax: iterations that make the cells more even.
 
-### `voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None)`
+### `voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None, clip=True, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A foam: the edges of the Voronoi cells around a set of points, as round beams, filling the body the points were made in.
+A foam: the edges of the Voronoi cells around a set of points, as round beams, filling the body the points were made in.  With points made with surface=True (random_points(body, surface=True)) the points on the surface are cells of their own, the foam is closed by the surface and the surface is a net of beams that wraps round the sharp
+edges; with frame=True every sharp edge of the body is a full beam, added to the foam whatever it is (the points and the cells are not changed by it).  The body cuts the lattice, the frame with it, unless clip=False
+(then it is whole, and the beams on the surface and on the edges stand half out of the body).
 
 points     random_points(body, ...) -- how far apart they are, how random, the nearest and the farthest two may be -- or a list of
            (x, y, z), which does not know a body: then say it with body=
 thickness  the diameter of the beams, mm: a number, or a field.  radius= is the same thing, half of it.  Default: 16 % of the
            spacing of the points
 density    instead of the beams' size: the share of the body that is material (0..1), calibrated
-skin       the thickness of a solid skin on the surface of the body (0: none)
+skin       the thickness of a solid skin on the surface of the body (0: none; a skin is joined to the foam cut by the body)
 blend      rounds the joints; skin_blend rounds the joints with the skin
 body       the body to fill -- only for a list of points.  Points from random_points() fill the body they were made in
+clip       True (the default) cuts the whole lattice by the body, so that nothing of it stands outside it: a beam that the body cuts ends flat, and the frame and the net on the surface are cut with it;
+           False leaves the lattice whole, its beams ending where the points make them end (the beams on the surface and on the edges stand half out of the body)
 
     points = random_points(part, spacing=8, randomness=0.7, min_distance=5, max_distance=11)
     foam = voronoi_lattice(points, thickness=1.0)
@@ -2582,7 +2622,7 @@ along it -- the "conformal" lattice of nTop.
     # an open surface of no thickness -- a field that is zero on it (negative below, positive above) -- with a patch
     # of it: one layer of cells on its positive side, cut off at the edge of the patch
     wave = Shape.Z() - 8 * (0.12 * Shape.X()).sin()
-    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box((-30, -20, -14), (30, 20, 14)),
+    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box((60, 40, 28)),
                                     side='outside', cell_thickness=6)
 
     # a periodic surface instead of struts: a gyroid skin that follows the part, 6 mm periods, 1 mm walls
@@ -2683,7 +2723,7 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
-### `lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretch_cell=True, cell_size=5.0, radius=None, layers=None, side=None, blend=0.0, direction=None, bounds=None, thickness=None, style='sheet', offset=0.0, invert=False, skin=0.0, within=None, grid_offset=0)`
+### `lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretch_cell=True, cell_size=5.0, radius=None, layers=None, side=None, blend=0.0, direction=None, bounds=None, thickness=None, style='sheet', offset=0.0, invert=False, skin=0.0, within=None, grid_offset=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A lattice that follows a surface (see the module): its cells lie on it, as big as asked all along it, each
 with a face towards the surface normal -- filling the body the surface bounds (side='inside', the default) or
@@ -2809,7 +2849,8 @@ shape's field (see the module): a surface.
 
 seed        a point on (or near) the surface: (x, y, z)
 angle       degrees: with mode='flat' how far from the way the seed's surface faces it may face, with
-            mode='smooth' how much it may turn within 10 mm of the surface (how tightly it may bend)
+            mode='smooth' how much it may turn within 10 mm of the surface (how tightly it may bend); 90 puts no limit on the bend -- the side of a cone,
+            a cylinder, a sphere, of any size, is all one surface -- and stops only at a crease (a turn of 89 degrees or more between neighbours)
 mode        'flat' (a face, flat or gently curved) or 'smooth' (round faces: a bend tighter than `angle` per 10 mm
             stops it, and so does a sharp edge)
 radius     mm: stop this far from the seed (default: no limit)
@@ -2887,31 +2928,51 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 ### `circle_center_at(shape, near, scale=None, bounds=None, influence=None)`
 
 The centre of the circular edge of `shape` nearest `near`: a point on the axis of a cylinder's rim, of a hole's edge, of the base of a cone.  The circle is read from the
-edge itself at several places round it, so it is the circle that the edge is, not one fitted to a mesh.  Raises ValueError when the edge nearest `near` is not a circle
-(a straight edge, an oval, a corner).  See the module and `corner_at`.
+edge itself at several places round it, so it is the circle that the edge is, not one fitted to a mesh.  Raises ValueError when there is no circular edge round `near` within a
+`scale` that was given; with none, the neighbourhood is widened (a pulled face carries its edge away) and the point stays at `near` when there is still none.  See the module and `corner_at`.
+
+### `connected_edges(values, near, scale, size, limit=400, seconds=20.0)`
+
+H97 (the user, 2026-11-03: "A line along connected edges operation.  It is the same thing as the current line along the edge ... except that it doesnt stop at any node that splits into multiple
+edges and creates edges in all possible directions, meaning every edge connected to the edge that would be created is also created"): every straight edge that is joined to the edge nearest
+`near`, through its corners and the corners of those, in every direction: [(p0, p1), ...], the picked edge first.  `values(points)` is the field at many points, `scale` the neighbourhood that is
+looked in (as for `find_feature`), `size` the size of the body.  An empty list when there is no straight edge near `near`.  It stops after `limit` edges or `seconds` -- what was found by then
+is returned: a body with very many edges does not make the call run for ever.  An edge that is not a straight line (a circle, a curve along a surface) is not followed
 
 ### `corner_at(shape, near, scale=None, bounds=None, rounded=False, influence=None)`
 
 The corner of `shape` nearest `near`: a point, where three faces of the surface meet at sharp angles.
 
 near    a place on or near the surface (x, y, z) -- where the corner is looked for
-influence  how far the point reaches, in mm -- a number or a `var()`: the radius of a field made of it (`radial_field`, `distance_to_point`), as for `point(x, y, z, influence=r)`.  Select the point and the ring of its gizmo drags it (the point is locked to its body, so the ring is all its gizmo has); the same for `edge_point_at` and `circle_center_at`
-scale   how far round `near` is looked, in mm (default: 3 % of the body)
+influence  how far the point reaches, in mm -- a number or a var(): the radius of a field made of it, as for `point(position=(x, y, z), influence=r)`; its gizmo has a ring that drags it
+scale   how far round `near` is looked, in mm (default: 3 % of the body, and wider, up to 0.4 of it, when there is no corner so near -- a face that was pulled by its handle has
+        carried the corner away from the place written, and the corner is found where it went)
 bounds  ((x0, y0, z0), (x1, y1, z1)) of the shape, if it cannot be found
 rounded True: a corner that the rounding of three edges replaced is found too -- the point where the planes of the flat faces round it meet
 
-Raises ValueError when there is no corner round `near`.  See the module.
+Raises ValueError when there is no corner round `near` within the `scale` that was given; with no `scale` there is no error: the point stays at `near`.
+The corner follows its body (a move, a turn, a new origin) and the faces it is made of: a face that is pulled by its handle takes it along, as the three faces are remembered
+from the run before and found again where they are now -- and in real time while the handle is dragged, by how the corner moves with each number of the script (see `_live_terms`).
+See the module.
 
 ### `edge_at(shape, near, scale=None, bounds=None)`
 
-The straight edge of `shape` nearest `near`: a polyline of two points, from the corner at one end of the edge to the corner at the other.  Raises ValueError
-when there is no edge round `near`, or when it curves (a circle is not a line: `edge_point_at` gives a point of it).  See the module and `corner_at`.
+The edge of `shape` nearest `near`: for a straight edge a polyline of two points, from the corner at one end of the edge to the corner at the other; for a circle (the rim of a cylinder or a
+hole, the base of a cone) a closed curve that says its circle; for any other edge a curve through places that are followed along the surface where the two faces meet (the way the frame of a
+lattice follows the creases of a body), closed when it comes round to where it began and open when it ends at a corner.  The line follows its body and the two faces of the edge, as the corner
+of `corner_at` follows its three: a face that is pulled by its handle takes it along.
+In the window a lost edge does not stay: about a second after the edit that lost it is done (never while a mouse button is down) the model tree removes the edge from the script, with the routine that deletes a model -- what was made of it has `...` where it was, so the script has no error --, and a message says so (it has "Don't show this again", and Settings > Tell me when an edge is removed turns it on again); Undo brings the edge back.  An edge that something else of the script still uses is not removed.  What follows is what the library itself does, for a script that is run without the window. An edge counts as lost by an edit when the same statement found its edge earlier in this session; the place the call writes is not part of that memory, because the program rewrites it while the edge follows a drag (the user, 2026-11-04: the edge was lost by dragging the handles and stayed in the script).
+An edge that is not found -- the body was changed or dragged so that no edge is there any more, or the search met a state it could not work in -- never stops the script: the line is a short
+one at the place, and a note in the output says why (the statements after it still run: a new model is made, with its handles).  Only a `scale` that is given says "error", for an edge that is
+not there: ValueError.  See `_edge_at` for the details and the module and `corner_at`
 
 ### `edge_point_at(shape, near, scale=None, bounds=None, rounded=False, influence=None)`
 
 The point of an edge of `shape` nearest `near`: a point on the line where two faces meet at a sharp angle -- any edge, straight or curved (the rim of a
 cylinder too).  Where a corner is nearer, the corner.  With rounded=True an edge that a rounding replaced is found too: the point of the line where the planes of the
-flat faces on both sides meet.  Raises ValueError when there is no edge round `near`.  See the module and `corner_at`.
+flat faces on both sides meet.  Raises ValueError when there is no edge round `near` within a `scale` that was given; with none, the neighbourhood is widened (a pulled face carries
+its edge away) and the point stays at `near` when there is still none.  The point follows its body and the two faces of the edge, as the corner of `corner_at` follows its three.
+See the module and `corner_at`.
 
 ### `face_center(face)`
 
@@ -2936,8 +2997,8 @@ Static finite element analysis (linear elasticity) of FielDes shapes.
     from fieldes import *
 
     bracket = ...                                        # any Shape, in mm
-    base = fixed(box((0, 0, 0), (5, 40, 20)))            # clamp the left end
-    push = force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))   # 200 N down
+    base = fixed(box((5, 40, 20), position=(2.5, 20, 10)))            # clamp the left end
+    push = force(box((5, 40, 20), position=(97.5, 20, 10)), (0, 0, -200))   # 200 N down
     result = static_analysis(bracket, supports=[base], loads=[push], material=aluminium, element_size=1.0)
     base, push                                           # each is drawn on the part the analysis was given: held (blue), pushed (red)
     result                                   # the stress on the deformed part (FielDes: the result card)
@@ -3181,7 +3242,8 @@ unchanged problem is cached.
 
 ### `static_analysis(shape, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet')`
 
-Linear static analysis of `shape` (a Shape, in mm).
+Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_volume) can take the place of `shape`: the analysis then solves on its tetrahedra as they
+are, and `element_size` is not given (see docs/analysis.md, A mesh of your own).
 
 supports   what holds the part: fixed(...) items (at least one), one or a list
 loads      what pushes it: force(...) / gravity(...) / thermal_expansion(...) items, one or a list ([] for none).
@@ -3212,35 +3274,36 @@ material's expansion coefficient per degree above `reference`
 (where it is stress-free).  Held parts are stressed; free ones grow.
 Static analysis only.
 
-### `topology_optimization(analysis, constraints=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
+### `topology_optimization(analysis, conditions=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
 
 Topology optimization: the layout of material, within the part of `analysis`, that is best for what is asked of it.
 
     stress = static_analysis(part, [fixed(base)], [force(lug, (0, 0, -300))], steel)
-    best = topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.3'])
-    lighter = topology_optimization(stress, constraints=[minimize('mass'), 'max_von_mises <= 120', 'max_displacement <= 0.4'])
+    compliance_1 = stress.compliance
+    volume_fraction_1 = stress.volume_fraction
+    best = topology_optimization(stress, conditions=[minimize(compliance_1), keep_below(volume_fraction_1, 0.3)])
+    lighter = topology_optimization(stress, conditions=[minimize(stress.mass), keep_below(stress.max_von_mises, 120),
+                                                        keep_below(stress.max_displacement, 0.4)])
 
 analysis      the result of an analysis of this script -- static_analysis, modal_analysis, thermal_analysis -- or a list of them: the part is the design
               space, and its supports, loads and material are the problem it is designed for.  A list is several load cases (the
               same part under other loads and supports), or a stress case and a vibration case: [stress, vibration].  The result of a
               fluid_analysis is a BODY IN A FLOW: the body is the start of the design, the fluid domain its space, and the numbers
               are drag_force and lift_force (the force of the flow on the body along it and across it, N) and volume_fraction (of
-              the body's own volume) -- `topology_optimization(wing, constraints=[maximize('lift_force / drag_force'),
-              'volume_fraction <= 0.4'])`.  The result of a thermal_analysis (tetrahedral elements) is a HEAT CONDUCTION:
+              the body's own volume) -- `topology_optimization(wing, conditions=[maximize(lift_force_1 / drag_force_1),
+              keep_below(volume_fraction_1, 0.4)])`.  The result of a thermal_analysis (tetrahedral elements) is a HEAT CONDUCTION:
               the part is the design space, the held temperatures, heat inputs and convecting surfaces are the problem, and the numbers
               are max_temperature, min_temperature, max_heat_flux, input_temperature (the temperature the heat comes in at: the
-              heat-weighted mean of the heat inputs), temperature(x, y, z), volume, mass and volume_fraction --
-              `topology_optimization(sink, constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3'])`
-constraints   what the design is for, a list.  Comparisons it keeps: 'volume_fraction <= 0.3', 'max_von_mises <= 90', 'frequencies[0] >= 80',
-              an exact value 'frequencies[0] == 100' (kept to within a thousandth), a range '80 <= frequencies[0] <= 120' -- or a
-              function of the result that is 0 or less when kept.  And at most one goal: minimize(x) makes x as small as it can be,
-              maximize(x) as large -- x a number of the analyses' results ('compliance', 'mass', 'max_von_mises', 'frequencies[0]'
-              ...), a formula of them ('mass + 0.01 * compliance', 'lift_force / drag_force') or a function of the result
-              (`lambda r: r.max_von_mises / r.mass`).  Without a goal the design only has to keep the comparisons.  The numbers of
-              the design that the formulas can read: volume_fraction (the share of the part's volume it uses), volume, mass, and
-              from a static analysis compliance, max_von_mises, max_displacement, safety_factor and ux(x, y, z), uy, uz, displacement
-              (the displacement at a place), from a modal analysis frequencies[i].  With several analyses a number that more than one
-              offers is, in a goal, the SUM of theirs, and a comparison on it is kept in each of them
+              heat-weighted mean of the heat inputs), the temperature at a place (sink.temperature.at(x, y, z)), volume, mass and volume_fraction --
+              `topology_optimization(sink, conditions=[minimize(max_temperature_1), keep_below(volume_fraction_1, 0.3)])`
+conditions    what the design is for, a list of optimization conditions made from results of the analysis (right-click a result in the model tree): what the design keeps --
+              keep_below(max_von_mises_1, 90), keep_above(frequency_1, 80), keep_between(frequency_1, 80, 120), keep_between(volume_fraction_1, 1, 1) for an exact value, or one
+              comparison written whole, optimization_condition(max_von_mises_1 <= 90) -- and at most one goal: minimize(x) makes x as small as it can be, maximize(x) as
+              large -- x a result of an analysis or a formula of them (mass_1, mass_1 + 0.01 * compliance_1, lift_force_1 / drag_force_1).  Without a goal the design only
+              has to keep the conditions.  The numbers of the design that results can be made of: volume_fraction (the share of the part's volume it uses), volume,
+              mass, and from a static analysis compliance, max_von_mises, max_displacement, safety_factor and the displacement at a place (stress.uz.at(x, y, z); ux, uy,
+              uz, displacement), from a modal analysis frequencies[i].  With several analyses a number that more than one offers is, in a goal, the SUM of theirs, and a
+              condition is kept in the analysis its results are of
 keep:         regions (Shapes, or a list) that must stay solid -- e.g. bolt bosses, mounting faces; the material around supports
               and loads always stays
 avoid:        regions that must stay empty
@@ -3346,7 +3409,9 @@ Steady-state thermal analysis (heat conduction) of FielDes shapes.
     thicker = part - 0.2 * result.heat_flux   # results are fields like any other
 
     # the material layout (30 % of the part) that keeps the part coolest, for the conditions of the analysis
-    design = topology_optimization(result, constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3'])
+    max_temperature_1 = result.max_temperature
+    volume_fraction_1 = result.volume_fraction
+    design = topology_optimization(result, conditions=[minimize(max_temperature_1), keep_below(volume_fraction_1, 0.3)])
     design.shape()
 
 Every kind of condition is an input of its own, needed -- written with a placeholder -- and takes one item or a list ([] says there is none).
@@ -3459,14 +3524,14 @@ convections         convection(...) items
 
 Everything else is as in the analysis below.
 
-### `topology_optimization_thermal(analysis, constraints, iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
+### `topology_optimization_thermal(analysis, conditions, iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
 
 topology_optimization() of a thermal analysis: the layout of material, within the part, that is best for what is asked of its temperature.
 The held temperatures, the heat inputs and generations and the convection of the analysis are the problem (the elements that hold a temperature
 or bring heat in stay solid, and material that nothing joins to a held temperature or a convecting surface is taken out); the conductivity of
 an element is the material's times a power of its density (penalty).  The numbers it can be asked for: max_temperature, min_temperature (the
 peaks of the temperature, as p-norms), max_heat_flux, input_temperature (the heat-weighted mean temperature of the heat inputs: the usual
-goal of a heat sink), temperature(x, y, z), volume, mass and volume_fraction; their sensitivities come from one adjoint solve each
+goal of a heat sink), the temperature at a place (sink.temperature.at(x, y, z)), volume, mass and volume_fraction; their sensitivities come from one adjoint solve each
 
 ## Fluid flow analysis
 
@@ -3474,13 +3539,13 @@ Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in
 
     from fieldes import *
 
-    duct = box((0, 0, 0), (80, 40, 4))             # the DOMAIN: the fluid, and the place the body is in
-    post = cylinder(5, 6, (24, 20, -1))                # the BODY the flow goes around
+    duct = box((80, 40, 4), position=(40, 20, 2))             # the DOMAIN: the fluid, and the place the body is in
+    post = cylinder(5, 6, position=(24, 20, 2))                # the BODY the flow goes around
     result = fluid_analysis(
         post,
         duct,
-        inlets=[inlet(box((-1, -1, -1), (0.01, 41, 5)), speed=4)],                             # mm/s, in
-        outlets=[outlet(box((79.99, -1, -1), (81, 41, 5)), pressure=0)],                       # MPa
+        inlets=[inlet(box((1.01, 42, 6), position=(-0.495, 20, 2)), speed=4)],                             # mm/s, in
+        outlets=[outlet(box((1.01, 42, 6), position=(80.495, 20, 2)), pressure=0)],                       # MPa
         boundaries=[],                                                                               # (none: the rest of the surface is wall)
         fluid=water, element_size=1.0)
     result                                               # the flow (FielDes: the fluid coloured by the speed,
@@ -3671,10 +3736,10 @@ the fluid slides along it.  `body=` is the body the wall is of, when the regions
 A symmetry plane or frictionless wall inside `region` (any number of regions, one argument after the other): nothing flows through it,
 the fluid slides along it.  `body=` is the body the wall is of, when the regions are bodies that choose WHERE on it.
 
-### `topology_optimization_flow(analysis, constraints=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
+### `topology_optimization_flow(analysis, conditions=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
 
 topology_optimization() for a body in a flow (see fea.py): `analysis` is the result of fluid_analysis(body, domain, inlets, outlets, boundaries).
-The body is the design it starts from, the fluid domain is its space; the numbers the constraints can read are drag_force and lift_force (the
+The body is the design it starts from, the fluid domain is its space; the numbers the conditions can be made of are drag_force and lift_force (the
 force of the flow on the body along the flow and across it, N), volume_fraction (of the body's own volume) and volume.  The flow of every
 iteration is solved once, with one adjoint solve for each force the constraints read; the density of each tetrahedron is the friction the fluid
 feels there (1 solid, 0 fluid)
@@ -3870,18 +3935,18 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 The body moved along one axis ('x', 'y' or 'z') to line up with another body, by the boxes round them: `mode` 'min' puts their low sides on one plane, 'max' their
 high sides, 'center' their middles, 'above' puts the body on the high side of `to` (with `gap` mm between), and 'below' on the low side
 
-### `capsule(radius, height, base=(0, 0, 0))`
+### `capsule(radius, height, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A cylinder with a hemisphere on each end, standing along z on `base`: `height` is the whole length, so it is at least twice the radius.  A body: the distance to its
 surface is exact.  Its handles are its radius (the side) and the heights of its two ends
 
-### `circular_pattern(shape, count, axis=(0, 0, 1), center=(0, 0, 0), angle=360.0)`
+### `circular_pattern(shape, count, axis=(0, 0, 1), center=(0, 0, 0), angle=360.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 `count` copies of the body round the line through `center` with the direction `axis`, as one body: the union of the copies, which is exact everywhere.  With the whole
 turn (`angle` 360, the default) the copies are evenly spread and the last one is not on the first; with less (a number, or a var(), which always means this), the first
 is where the body is and the last `angle` degrees from it
 
-### `cut_plane(shape, normal=(0, 0, 1), point=(0, 0, 0), keep='above')`
+### `cut_plane(shape, normal=(0, 0, 1), point=(0, 0, 0), keep='above', *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The body cut by the plane through `point` that is square to `normal`: the part on the side that `normal` points to is kept (`keep='above'`), or the part
 on the other side (`keep='below'`)
@@ -3915,23 +3980,23 @@ var() numbers; `direction` is a number.  Use the cutter for a pattern of holes: 
 
 The volume (mm^3) that two bodies have in common, by sampling (about 1 % off for a part that is not thin): 0 when they only touch or do not meet
 
-### `linear_pattern(shape, count, step)`
+### `linear_pattern(shape, count, step, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 `count` copies of the body in a row, the first where the body is and each one `step` (x, y, z) from the one before, as one body: the union of the copies, which is exact
 everywhere.  `step` may be var() numbers
 
-### `mirror(shape, normal=(1, 0, 0), point=(0, 0, 0))`
+### `mirror(shape, normal=(1, 0, 0), point=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The body and its mirror image in the plane through `point` that is square to `normal`, as one body (a part that is made on one side of its plane of symmetry,
 then mirrored).  Where the body crosses the plane the two halves fuse.  A plain operation, a finished body with no link to the original -- a symmetry
 (symmetry_planes) is the live version, whose images follow every edit
 
-### `reflect(shape, normal=(1, 0, 0), point=(0, 0, 0))`
+### `reflect(shape, normal=(1, 0, 0), point=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The mirror image of the body in the plane through `point` that is square to `normal`: the body itself is gone, only its image is left.  (mirror keeps both.)
 It is a plain operation on one body, with no link to it: for an image that follows the original as you edit it, use a symmetry (symmetry_planes, Shift+S)
 
-### `revolve(profile, angle=360.0, axis_point=(0, 0), axis_direction=(0, 1))`
+### `revolve(profile, angle=360.0, axis_point=(0, 0), axis_direction=(0, 1), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The body that a 2D profile makes by turning about a line in its own plane (the plane of x and y: the profile is what a 2D shape is at z = 0).  The line goes through
 `axis_point` (x, y) and has the direction `axis_direction` (x, y); with the default it is the y axis.  `angle` is how far it turns, 360 for a body of revolution; with
@@ -3939,7 +4004,7 @@ less, the part of the profile on the right of the axis (seen along its direction
 the left turns the same way round the axis (so toward -z): a profile may lie on either side, or on both.  The angle, the point and the profile's numbers may be var()
 (a var() angle always makes a turn that stops at the angle, 360 included).  revolve_y is this for the whole turn about a line parallel to y
 
-### `rotate(shape, axis=(0, 0, 1), angle=0.0, center=(0, 0, 0))`
+### `rotate(shape, axis=(0, 0, 1), angle=0.0, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 The body turned by `angle` degrees about the line through `center` with the direction `axis` (the right-hand rule: the thumb along the axis, the fingers the
 way it turns).  rotate_x, rotate_y and rotate_z are this about an axis of the coordinates, in radians.  Each number may be a var()
@@ -3956,7 +4021,7 @@ fine thread (M8 with pitch 1): the tap drill and the minor diameter follow it
 The area (mm^2) of the cross section of a body with the plane through `point` that is square to `normal`, counted on a grid of `resolution` cells along the larger side
 of the section: about 0.5 % off for 300
 
-### `slot(length, width, center=(0, 0))`
+### `slot(length, width, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A 2D slot (an obround: a rectangle with a half circle on each short end), `length` long in x and `width` across, about `center` (x, y); `length` is the whole length,
 so it is at least the width.  Extrude it for a slot in a plate.  Its handles are its four sides: an end pulled makes it longer and keeps the round end, a long side pulled makes it
@@ -3971,13 +4036,22 @@ The body cut in two by the plane through `point` that is square to `normal`: (th
 The area of the surface of a body (mm^2), from a mesh of triangles on its surface: with the default size (a fortieth of the body's longest side) a sphere's is
 about 1 % low, and a finer `element_size` (mm) is closer.  A mesh of this kind cuts the corners of curves, so the area is always a little low
 
-### `threaded_rod(screw, length, base=(0, 0, 0), pitch=None, hand='right')`
+### `threaded_rod(radius, length, pitch=None, hand='right', *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A rod with a right-hand ISO thread (`hand='left'` for a left-hand one) along its whole length, standing along z on `base`: the screw (`screw='M8'`, `pitch` for a fine one) is the
-nominal diameter, the thread has the ISO profile (the root at the diameter 1.2269 pitches under the nominal).  It fits the hole of hole(..., kind='tapped', modeled=True) of the
-same screw.  Its handles pull its side (the diameter: the pitch stays, and so does the profile of the thread) and its two ends.  Like a thread, it wants a fine mesh to draw
+A threaded cylinder: a rod of the radius `radius` and the length `length` standing along z on `base`, with a right-hand thread cut into it (`hand='left'` for a left-hand one), as big as a
+cylinder of the same two numbers.  The thread is in proportion to the radius -- it is the proportion of an ISO thread (a radius of 4 has the pitch 1.25 of an M8) unless `pitch` says
+another pitch for this radius -- so a rod pulled thinner has a thinner thread and the shape is the same at any size; the depth of the thread is that of the ISO profile, 1.2269 pitches.
+Its handles pull its side (the radius) and its two ends.  It fits the hole of hole(..., kind='tapped', modeled=True) of the screw of the same radius and pitch (a radius of 4, an M8).  A thread
+wants a fine mesh to draw: the viewport draws it at one that shows the turns
 
-### `tube(outer_radius, inner_radius, height, base=(0, 0, 0))`
+### `threaded_rod_normed(screw, length, pitch=None, hand='right', *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
+
+A rod with a right-hand ISO thread of a standard screw (`hand='left'` for a left-hand one) along its whole length, standing along z on `base`: the screw (`screw='M8'`, `pitch` for a fine
+one) is the nominal diameter and gives the pitch, and the thread has the ISO profile (the root at the diameter 1.2269 pitches under the nominal).  It fits the hole of
+hole(..., kind='tapped', modeled=True) of the same screw.  The sizes are the screw's: no handle pulls them. Its handles are its two ends, the top and the bottom, and nothing on its side (for a thread that is pulled to any size, and scales with it, use threaded_rod).
+Like a thread, it wants a fine mesh to draw
+
+### `tube(outer_radius, inner_radius, height, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 A hollow cylinder (a pipe), standing along z on `base`: `outer_radius` and `inner_radius` are its two radii.  Its handles are its outer wall, its bore and its two ends
 
@@ -3987,9 +4061,9 @@ Your own solvers: write the equations of a problem in Python, and FielDes meshes
 
     from fieldes import *
 
-    plate = box((0, 0, 0), (60, 20, 3))
-    cold = box((-1, -1, -1), (1, 21, 4))                    # where the plate is held at 20 degrees
-    hot = box((59, -1, -1), (61, 21, 4))                    # and where it is at 80
+    plate = box((60, 20, 3), position=(30, 10, 1.5))
+    cold = box((2, 22, 5), position=(0, 10, 1.5))                    # where the plate is held at 20 degrees
+    hot = box((2, 22, 5), position=(60, 10, 1.5))                    # and where it is at 80
 
     result = solve('heat', plate, fixed=[(cold, 20), (hot, 80)], conductivity=0.2)
     result                                                  # displayed: the temperature of the plate, with the elements behind it (the Elements button)
@@ -4215,13 +4289,16 @@ parametric_optimization: the best numbers for the var()s of a model, over an ana
 
     width = var(20)
     height = var(12)
-    beam = box((0, 0, 0), (100, width, height))
-    wall = fixed(box((-1, -1, -1), (1, 25, 25)))
-    pull = force(box((99, -1, -1), (101, 25, 25)), (0, 0, -200))
+    beam = box((100, width, height), position=(50, width / 2, height / 2))
+    wall = fixed(box((2, 26, 26), position=(0, 12, 12)))
+    pull = force(box((2, 26, 26), position=(100, 12, 12)), (0, 0, -200))
     stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium)
 
+    mass_1 = stress.mass
+    max_von_mises_1 = stress.max_von_mises
+    max_displacement_1 = stress.max_displacement
     best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)],
-                                   constraints=[minimize('mass'), 'max_von_mises <= 90', 'max_displacement <= 0.5'])
+                                   conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), keep_below(max_displacement_1, 0.5)])
 
 The analysis is solved again with each set of numbers the search tries -- the model is made again from the numbers, the mesh, the
 solve, every measure of the result -- and the numbers that give the best design stay in the var()s: the model, and everything after
@@ -4230,13 +4307,10 @@ search over surrogates of the objective and of every constraint that puts a desi
 one is an ordinary analysis that is kept by its content, so a run again (or another search over the same designs) finds what it
 tried in the cache.  Everything it tried is listed in the result.
 
-What it can be asked for -- everything is in the list `constraints=`, as in topology_optimization -- is a measure of the analysis' result:
-the name of one of its numbers ('mass', 'max_von_mises', 'max_displacement', 'compliance', 'safety_factor', 'volume', 'max_temperature',
-'pressure_drop', 'frequencies[0]' ...), an expression of them ('mass + 0.01 * compliance'), or a function of the result
-(`lambda r: r.max_von_mises / r.mass`).  A goal is minimize(x) or maximize(x), at most one.  A constraint is a comparison of measures in a
-text ('max_von_mises <= 90', 'frequencies[0] >= 80', an exact value 'frequencies[0] == 100', a range '80 <= frequencies[0] <= 120'), or a
-function of the result that gives how much it is broken (0 or less when it is kept).  Without a goal the search only looks for a design that
-keeps the constraints.
+What it can be asked for -- everything is in the list `conditions=`, as in topology_optimization -- is made of the results of the analysis: a result (mass_1, max_von_mises_1,
+max_displacement_1, compliance_1, safety_factor_1, volume_1, max_temperature_1, pressure_drop_1, frequency_1 ...) or a formula of them (mass_1 + 0.01 * compliance_1).  A goal is
+minimize(x) or maximize(x), at most one.  What the best design keeps is keep_below(x, limit), keep_above(x, limit), keep_between(x, lower, upper) or one comparison written
+whole, optimization_condition(x <= limit).  Without a goal the search only looks for a design that keeps the conditions.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -4267,7 +4341,7 @@ Writes the best numbers into the var()s of the script, in the text, when the run
 
 Every design tried, as text
 
-### `parametric_optimization(analysis, variables, constraints=(), max_evaluations=None, tolerance=0.002, apply=False)`
+### `parametric_optimization(analysis, variables, conditions=(), max_evaluations=None, tolerance=0.002, apply=False)`
 
 The best numbers for the var()s of a model, over an analysis: the designs the search tries are solved with `analysis` again, each with
 other numbers for the variables, and the numbers of the best one stay in the var()s.
@@ -4275,12 +4349,10 @@ other numbers for the variables, and the numbers of the best one stay in the var
 analysis      the result of an analysis of this script (static_analysis, modal_analysis, thermal_analysis, fluid_analysis ...), made of the
               var()s
 variables     what is changed: (var, low, high) -- the var() and the range it is searched in -- or a list of them
-constraints   what the design is for, a list -- as in topology_optimization.  The comparisons the best design keeps, in a text
-              ('max_von_mises <= 90', 'frequencies[0] >= 80', an exact value 'frequencies[0] == 100', a range '80 <= frequencies[0] <= 120'),
-              or functions of the result that are 0 or less when kept.  And at most one goal: minimize(x) makes x as small as it can be,
-              maximize(x) as large -- x a measure of the result: the name of one of its numbers ('mass', 'max_von_mises', ...), an expression
-              of them ('mass + 0.01 * compliance'), or a function of the result.  Without a goal the search stops at the first design that
-              keeps the comparisons
+conditions    what the design is for, a list of optimization conditions made from results of `analysis` -- as in topology_optimization: what the best design keeps
+              (keep_below, keep_above, keep_between, or one comparison written whole, optimization_condition(max_von_mises_1 <= 90)) and at most one goal,
+              minimize(x) or maximize(x), x a result of the analysis or a formula of them (mass_1 + 0.01 * compliance_1).  Without a goal the search stops at the first
+              design that keeps the conditions
 max_evaluations  how many designs it tries at most (default 20 + 10 for each variable)
 tolerance     it stops when the designs it is looking at are this close, of the ranges (default 0.2 %)
 apply         True writes the best numbers into the var()s of the text when the run is over (otherwise they hold for this run only)
@@ -4515,7 +4587,7 @@ Run `manufacturing_analysis` on the result: the shell's own check is not a subst
 exclude(): a region of a shape that stays exactly as it is
 
     part = import_model('bracket.step')[0][0]
-    part = exclude(part, sphere(12, (0, 0, 6)))        # inside the sphere the part is locked
+    part = exclude(part, sphere(12, position=(0, 0, 6)))        # inside the sphere the part is locked
     light = shell(part, 2)                              # ... and nothing done to it afterwards touches that
 
 exclude() cuts the shape into two fields that are always united again:
@@ -4560,7 +4632,7 @@ the shape afterwards.  (See the top of this file for what that means; in the mod
 is Combining > exclude, with the shape first and the regions after it.)
 
     part = import_model('bracket.step')[0][0]
-    part = exclude(part, sphere(12, (0, 0, 6)), box((0, 0, 0), (5, 5, 5)))
+    part = exclude(part, sphere(12, position=(0, 0, 6)), box((5, 5, 5), position=(2.5, 2.5, 2.5)))
     light = shell(part, 2)           # shelled everywhere but inside the sphere and the box
 
 A region is any shape -- a sphere, a box, a part, a part offset by some distance, a union of those: the
@@ -4929,6 +5001,11 @@ Forgets everything the content caches hold
 A decorator: the function's results are remembered by the content of its arguments.
 copy_result: hand out a copy of a mutable result (a dict) each time
 
+### `frozen_vars`
+
+While one key is made, the numbers of the script's var()s are read once, not once for each shape in it: a statement that names 642 points read the 1926 numbers 642 times, 5.4 s (H72).
+Nothing changes them while one key is made
+
 ### `is_local(key)`
 
 Whether a problem key holds a part that only this session can recognise (nothing is kept under it for another)
@@ -4959,7 +5036,7 @@ fields).  Raises Uncacheable for anything else
 
 The render cache: keep what FielDes meshes, so a shape that has not changed is on screen at once.
 
-    part = difference(box((0, 0, 0), (40, 30, 10)), sphere(8))
+    part = difference(box((40, 30, 10), position=(20, 15, 5)), sphere(8))
     part                            # its mesh is kept: nothing to write
     part = render_cache(part, False)    # ... unless you opt out (the model tree's cache button writes this line)
 
@@ -4980,8 +5057,8 @@ A shape is kept when everything it is made of can be recognised from one run to 
 numbers, var()s, imported meshes and parts, lattices, fields.  A shape that is shown with the fields of
 an analysis (a result coloured by stress) is not -- the analysis has caches of its own.
 
-The kept meshes are deleted oldest first when they fill more than 4 GB (the environment variable
-FIELDES_RENDER_CACHE_MB sets that); Settings > Clear the caches deletes them all (and the files of the field cache).
+The kept meshes are deleted least recently used first when they fill more than 2 GB (the environment variable
+FIELDES_RENDER_CACHE_MB sets that); a mesh is tied to the build that made it, a new build deletes those of the one before, and the program removes the meshes that no recently opened file holds; Settings > Clear the caches deletes them all (and the files of the field cache).
 
 Every field a script builds with `name = <expression>` is kept the same way -- by the statement's text, the exact
 content of what it reads, the var() numbers and the code that builds it -- so a lattice laid out on a part is not laid

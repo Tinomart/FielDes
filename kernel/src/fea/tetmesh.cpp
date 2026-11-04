@@ -1318,5 +1318,105 @@ MeshQuality meshQuality(const TetMesh& mesh)
     return q;
 }
 
+bool meshFromArrays(size_t vertexCount, const double* positions, size_t tetCount, const int32_t* tets, TetMesh& out, std::string& error)
+{
+    out = TetMesh();
+    if (vertexCount == 0 || tetCount == 0 || !positions || !tets)
+    {
+        error = "the mesh has no tetrahedra";
+        return false;
+    }
+    out.pos.resize(vertexCount);
+    for (size_t i = 0; i < vertexCount; ++i)
+    {
+        const double x = positions[3 * i], y = positions[3 * i + 1], z = positions[3 * i + 2];
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+        {
+            error = "node " + std::to_string(i) + " of the mesh has a coordinate that is not a number";
+            return false;
+        }
+        out.pos[i] = Vec3(x, y, z);
+    }
+    out.tets.reserve(tetCount);
+    for (size_t e = 0; e < tetCount; ++e)
+    {
+        std::array<int, 4> t;
+        for (size_t a = 0; a < 4; ++a)
+        {
+            const int32_t v = tets[4 * e + a];
+            if (v < 0 || size_t(v) >= vertexCount)
+            {
+                error = "tetrahedron " + std::to_string(e) + " of the mesh names node " + std::to_string(v) + ", and the mesh has " +
+                        std::to_string(vertexCount) + " nodes";
+                return false;
+            }
+            t[a] = v;
+        }
+        const Vec3& p0 = out.pos[size_t(t[0])];
+        const double det = (out.pos[size_t(t[1])] - p0).cross(out.pos[size_t(t[2])] - p0).dot(out.pos[size_t(t[3])] - p0);
+        double reach = 0;
+        for (size_t a = 1; a < 4; ++a) reach = std::max(reach, (out.pos[size_t(t[a])] - p0).norm());
+        if (!(std::abs(det) > 1e-12 * reach * reach * reach))
+        {
+            ++out.degenerate;
+            continue;
+        }
+        if (det < 0) std::swap(t[2], t[3]);
+        out.tets.push_back(t);
+    }
+    if (out.tets.empty())
+    {
+        error = "every tetrahedron of the mesh has no volume";
+        return false;
+    }
+
+    // A face that more than two tetrahedra share is a mesh whose elements cross (or a node in the middle of another element's face): a solver would give an answer
+    // for it, and a wrong one
+    {
+        std::vector<std::array<int, 3>> faces;
+        faces.reserve(out.tets.size() * 4);
+        for (const auto& t : out.tets)
+            for (int l = 0; l < 4; ++l)
+            {
+                std::array<int, 3> f;
+                int m = 0;
+                for (int p = 0; p < 4; ++p) if (p != l) f[size_t(m++)] = t[size_t(p)];
+                std::sort(f.begin(), f.end());
+                faces.push_back(f);
+            }
+        std::sort(faces.begin(), faces.end());
+        size_t shared = 0;
+        for (size_t r = 0; r < faces.size();)
+        {
+            size_t s = r + 1;
+            while (s < faces.size() && faces[s] == faces[r]) ++s;
+            if (s - r > 2) ++shared;
+            r = s;
+        }
+        if (shared)
+        {
+            error = std::to_string(shared) + " faces of the mesh belong to more than two tetrahedra: its elements cross each other";
+            return false;
+        }
+    }
+
+    // The size of an element: the middle edge of a sample of the tetrahedra
+    {
+        std::vector<double> lengths;
+        const size_t step = std::max<size_t>(1, out.tets.size() / 50000);
+        for (size_t e = 0; e < out.tets.size(); e += step)
+        {
+            const auto& t = out.tets[e];
+            for (size_t a = 0; a < 3; ++a)
+                for (size_t b = a + 1; b < 4; ++b)
+                    lengths.push_back((out.pos[size_t(t[a])] - out.pos[size_t(t[b])]).norm());
+        }
+        std::nth_element(lengths.begin(), lengths.begin() + std::ptrdiff_t(lengths.size() / 2), lengths.end());
+        out.h = lengths[lengths.size() / 2];
+    }
+    finalizeMesh(out);
+    return true;
+}
+
 }   // namespace fea
 }   // namespace libfive

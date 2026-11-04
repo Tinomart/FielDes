@@ -1,17 +1,17 @@
 '''
 A 2D shape from points or from a closed curve: `profile`.
 
-    a = point(0, 0, 0)
-    b = point(40, 0, 0)
-    c = point(40, 20, 0)
-    d = point(0, 20, 0, smooth=True)
+    a = point(position=(0, 0, 0))
+    b = point(position=(40, 0, 0))
+    c = point(position=(40, 20, 0))
+    d = point(position=(0, 20, 0), smooth=True)
     plate = profile([a, b, c, d])                # the face the points enclose; hard edges unless a point says smooth=True
     round = profile([a, b, c, d], smooth=True)   # ...or every point a spline, but where a point says smooth=False
     outline = spline([a, b, c, d], closed=True)
     plate = profile(outline)                     # the same, from a curve
     body = extrude(plate, 0, 5)                 # a solid: the face pulled 5 along its normal
 
-The points are ordinary points (`point(x, y, z)`, dragged with their gizmo): any number of them, joined in the order they are given and closed (the last to
+The points are ordinary points (`point(position=(x, y, z))`, dragged with their gizmo): any number of them, joined in the order they are given and closed (the last to
 the first).  The shape lies in the PLANE through the first three points (the first that is not on a line with the first two); every other point is
 projected onto that plane, so a profile is made whatever the points are.  A tuple of three numbers stands for a point too.
 
@@ -34,6 +34,33 @@ import math
 from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib import curves as C
+
+
+def _native(out):
+    ''' THE FIELD OF A PATH EXTRUDE AND OF AN EXTRUDE (H63, the user, 2026-11-02: "UNDERLYING SHOULD ALWAYS BE A FUNCTIONING FIELD THAT CAN BE INTERACTED WITH PROPERLY" and "THAT THE FIELD IS WAY TOO HEAVY AND YOU SHOULD
+        IMPROVE IT ... I ACTUALLY MENTIONED SPECIFICALLY THAT YOU SHOULD IMPROVE THE PATH EXTRUDE AS WELL"): the same shape, whose tree is the exact distance field of the triangles of the mesh that the viewport draws it from, as
+        the field of a body of points is (morph._native_field) -- not the expression of the sweep or of the prism, which took minutes to mesh.  The application makes the mesh from the numbers the script has now (the host function
+        native_field, Interpreter::nativeField); outside the application, or when the shape has no description of a sweep or a prism, the shape is returned as it is.  Everything the shape knows about itself goes with it '''
+    if not (getattr(out, '_sweep_ppos', None) or getattr(out, '_prism_pos', None)):
+        return out
+    try:
+        import _fieldes_host as host
+        make = getattr(host, 'native_field', None)
+    except ImportError:
+        return out
+    if make is None:
+        return out
+    try:
+        handle = make(out)
+    except Exception:
+        return out
+    if not handle:
+        return out
+    native = Shape(handle)
+    for name, value in list(vars(out).items()):
+        if name != 'ptr':
+            setattr(native, name, value)
+    return native
 
 __all__ = ['profile', 'Profile', 'extrude', 'path_extrude']
 
@@ -206,6 +233,13 @@ def _linear(n, off):
     return terms + off if abs(off) > 1e-15 else terms
 
 
+def _dome_scale(past, depth):
+    ''' How much of its size the profile keeps at a distance `past` (a field: 0 or less before the plane of the end of a path) beyond that plane, in a dome of the given depth: sqrt(1 - (s / D)^2), a quarter of
+        an ellipse, 1 up to the plane and 0 at the depth '''
+    t = past.max(0.0) / depth
+    return (t * t * -1.0 + 1.0).max(0.0).sqrt()
+
+
 def extrude(shape, a, b):
     ''' A 2D shape pulled into a solid: the part of space between the distances `a` and `b` from its plane, along the plane's normal (the plane is
         z = 0 for the shapes that lie there -- a circle, a rectangle -- so that is zmin and zmax; the plane of a profile is the plane of its points,
@@ -275,6 +309,11 @@ def extrude(shape, a, b):
         if ends is not None:
             out._handle_params = [float(x) for x in ends]
             out._handle_rebuild = lambda v: extrude(shape, v[0], v[1])
+            # (the numbers of the handles are ONLY the two ends: the sides are pulled by the numbers of the points, which the points' own gizmos wrote -- var()s in the profile are what a profile made
+            # of points always has, so they must not say that the surfaces have numbers to pull them by already: the model tree writes `handles(extrusion, [a, b])` when the extrusion is selected,
+            # as it does for an extrusion of a shape that has handles of its own.  Since the points were given gizmos the extrusion of a profile of points had no handles, and its end faces
+            # could not be dragged -- the user's Design_extrusion.py, 2026-10-28)
+            out._handles_ends_only = True
     # A 2D shape that is made of numbers of its own (a rectangle's four sides, a circle's centre and radius, a polygon's sides) hands them on: the handles of its extrusion are those numbers, and then a and
     # b -- the sides of the 2D shape pulled as they are on the shape itself, and the two end faces for the length --, whatever the shape is, and the extrusion is made again of the shape made again of them
     # (what the kernel found to expose in the extrusion's tree was most of them for most shapes and none of them for a rectangle)
@@ -303,7 +342,7 @@ def extrude(shape, a, b):
             out._handle_params = [float(x) for x in ends]
             out._handle_rebuild = lambda v: extrude(shape, v[0], v[1])
             out._handles_ends_only = True
-    return out
+    return _native(out)
 
 
 def _has_handles_of_its_own(shape):
@@ -355,11 +394,12 @@ def path_extrude(profile, path, twist=0):
         along `path`, turning with it, without twisting about it unless the points of the curve say so.
         THE 2D SHAPE IS WHERE THE SWEEP STARTS: the curve says how it travels, not where from -- the whole sweep is moved so that the first point of the curve is the middle of
         the shape (the middle of the box of its outline), and its first ring is the shape itself, in its own plane at whatever angle the curve leaves it (the sweep is slanted
-        when it is oblique; a shape whose plane holds the direction of the curve is turned across it), so that the shape you edit is the base of what it is swept into.  A circle
+        when it is oblique; a shape whose plane holds the direction of the curve is turned across it), so that the shape you edit is the base of what it is swept into (the slant runs on from it as a prism and turns into the sections across the curve gradually, over about three times the lean, so that the root has no bevel).  A circle
         or a rectangle is such a shape as a profile is.  The path is DRAWN where the sweep goes -- through the middle of its cross-section, from the middle of the shape, its
         points with it -- whatever its own numbers say; only its shape matters, and the first point of it is the middle of the shape:
         the ROTATION of a point (its gizmo's rotate numbers) twists the profile about the curve there, and the twist runs between the points as a
-        smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square.  A curve with corners is swept
+        smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square -- unless the end point of the curve is a spline point: then the end is rounded off, in a dome as deep as half the thinner side of the
+         profile (times the size and the influence of that point; a corner or a round corner at the end stays the flat cutoff).  A curve with corners is swept
         with mitered joints.  `path_extrude(circle(2), spline([a, b, c]))` is a bent tube; `extrude` is the straight case.  `path` may be a list of points:
         the spline through them '''
     if isinstance(path, (list, tuple)):
@@ -367,6 +407,14 @@ def path_extrude(profile, path, twist=0):
         path = spline(path)
     if not isinstance(path, C.Curve):
         raise TypeError('path_extrude(profile, path): the path is a curve (polyline([points]), spline([points])), or a list of points')
+    # The size of a point is how thick the sweep is at it: the spline points of the path of a path extrude are the points that have one (the wheel and the gold ring of their gizmo scale it; every other
+    # point is scaled by its influence alone -- the user, 2026-10-28: "scale is nowhere used anywhere except for the path extrude")
+    for ctrl in getattr(path, '_ctrls', None) or []:
+        try:
+            if ctrl.smooth(bool(getattr(path, 'smooth', False))):
+                ctrl.item._spline_point = True
+        except AttributeError:
+            pass
     V = list(path.vertices)
     owners = list(path._owners)
     n = len(V)
@@ -532,6 +580,18 @@ def path_extrude(profile, path, twist=0):
                 box_ring = [(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)]
         except Exception:
             box_ring = None
+    # The rounded ends (the user, 2026-10-28, RE1: "Spline edges at the ends of path extrusions should have rounded ends" -- "If an end point is a spline point it is rounded off"): an open path whose first or last point is
+    # a spline point ends in a dome in the place of the flat cutoff -- the profile shrunk by sqrt(1 - (s / D)^2) at a distance s past the end plane, D half the thinner side of the box of the profile times its size at the
+    # point and the point's influence.  A corner or a round corner at the end is the flat cutoff.  The mesh of the sweep (sweepMesh in app/src/shape.cpp) is the same shape
+    dome = [None, None]
+    if base_plane is not None and not closed and box_ring and len(ctrls) >= 2:
+        half_thin = 0.5 * min(max(x for x, y in box_ring) - min(x for x, y in box_ring), max(y for x, y in box_ring) - min(y for x, y in box_ring))
+        default_smooth = bool(getattr(path, 'smooth', False))
+        for e, (index, vertex) in enumerate(((0, 0), (len(ctrls) - 1, n - 1))):
+            if ctrls[index].smooth(default_smooth):
+                depth = half_thin * size_at(vertex) * max(0.0, ctrls[index].influence)
+                if depth > 1e-9:
+                    dome[e] = depth
     lo = [1e300] * 3
     hi = [-1e300] * 3
     best = None
@@ -560,7 +620,8 @@ def path_extrude(profile, path, twist=0):
             span = math.sqrt(C.dot(C.sub(V[j], V[k]), C.sub(V[j], V[k]))) + 1e-300
             slope = (s1 - s0) / span
             size = _linear(C.mul(T[k], slope), s0 - C.dot(T[k], V[k]) * slope).max(1e-3)
-        f = _profile_at(profile, a, b, size, centre2d)
+        start_dome = dome[0] if k == 0 else None
+        end_dome = dome[1] if k == pieces - 1 else None
         # the piece ends at the planes that bisect the corners (square at the ends of an open path), a hair past them, so that two pieces overlap there and
         # the joint is inside, not a plane where the field is zero
         mk, mj = tangent_at(k), tangent_at(j)
@@ -574,6 +635,27 @@ def path_extrude(profile, path, twist=0):
                 mj = C.mul(flat, side)
         start = _linear(C.mul(mk, -1.0), C.dot(mk, V[k]) - 1e-3)
         stop = _linear(mj, -C.dot(mj, V[j]) - 1e-3)
+        squeeze = None
+        if start_dome:
+            # (the distance past the plane of the start, along its normal: the profile keeps sqrt(1 - (s / D)^2) of its size in it, and the sweep ends D past the plane)
+            behind = _linear(C.mul(mk, -1.0), C.dot(mk, V[k]))
+            squeeze = _dome_scale(behind, start_dome)
+            start = behind - start_dome
+            for axis in range(3):
+                tip = V[k][axis] - mk[axis] * start_dome
+                lo[axis], hi[axis] = min(lo[axis], tip), max(hi[axis], tip)
+        if end_dome:
+            ahead = _linear(mj, -C.dot(mj, V[j]))
+            end_squeeze = _dome_scale(ahead, end_dome)
+            squeeze = end_squeeze if squeeze is None else squeeze * end_squeeze
+            stop = ahead - end_dome
+            for axis in range(3):
+                tip = V[j][axis] + mj[axis] * end_dome
+                lo[axis], hi[axis] = min(lo[axis], tip), max(hi[axis], tip)
+        if squeeze is not None:
+            size = squeeze if size is None else size * squeeze
+            size = size.max(1e-3)
+        f = _profile_at(profile, a, b, size, centre2d)
         body = f.max(start).max(stop)
         best = body if best is None else best.min(body)
     out = Shape(lib.libfive_tree_copy(best.ptr))
@@ -610,9 +692,12 @@ def path_extrude(profile, path, twist=0):
         out._sweep_qflag, out._sweep_qscale, out._sweep_qdefault = path._ctrl_flag, path._ctrl_scale, path._ctrl_default
         out._sweep_qinfluence = path._ctrl_influence
         out._sweep_qclosed = bool(path.closed)
+        # (whether every point of its profile and its path has a gizmo: then the sweep has no placement of its own, its points' shared gizmo moves it -- see handles._place)
+        out._sweep_linked_points = bool(not getattr(out, '_sweep_free', False) and getattr(path, '_ctrls', None) and getattr(profile, '_ctrls', None) and
+                                        all(getattr(c.item, '_gizmo', None) is not None for c in list(path._ctrls) + list(profile._ctrls)))
         out._sweep_twist = Shape.wrap(twist)
         out._drawn_key = _sweep_key          # (what tells whether two sweeps are the same shape without meshing either: see symmetries.symmetry_images, distinct=True)
-    return out
+    return _native(out)
 
 
 def _sweep_key(s):

@@ -1,14 +1,13 @@
 '''
 Measures: what a topology optimization is asked to make best.
 
-    best = topology_optimization(stress, constraints=[minimize('mass'), 'max_von_mises <= 90', 'max_displacement <= 0.5'])
-    best = topology_optimization([stress, vibration], constraints=[minimize('mass'), 'max_von_mises <= 90', 'frequencies[0] >= 80'])
+    best = topology_optimization(stress, conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), keep_below(max_displacement_1, 0.5)])
+    best = topology_optimization([stress, vibration], conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), keep_above(frequency_1, 80)])
 
-What is asked -- each item of `constraints=` -- is a comparison ('max_von_mises <= 90', 'frequencies[0] == 100', '80 <= frequencies[0] <= 120') or a
-goal: minimize(x) makes x as small as it can be, maximize(x) as large.  A comparison is of formulas of the numbers of the analyses' results
-('mass', 'compliance', 'max_von_mises', 'frequencies[0]' ...: 'mass + 0.01 * compliance'), or a function of the result that is 0 or less when
-the constraint is kept (`lambda r: r.max_von_mises - 90`); the x of a goal is a text, a formula or a function of the result
-(`maximize(lambda r: r.lift_force / r.drag_force)`).  At most one goal; without one the design only has to keep the comparisons.
+What is asked -- each item of `conditions=` -- is an optimization condition (analysis_results.py) made from results of the analyses: one the design keeps (keep_below, keep_above,
+keep_between, or a comparison written whole, optimization_condition(max_von_mises_1 <= 90)) or a goal: minimize(x) makes x as small as it can be, maximize(x) as large, x a result
+or a formula of them (minimize(mass_1 + 0.01 * compliance_1)).  At most one goal; without one the design only has to keep the conditions.  The optimizer reads a condition through
+the text it carries ('max_von_mises <= 90', 'mass + 0.01 * compliance'): a formula of the numbers of the analyses' results ('mass', 'compliance', 'max_von_mises', 'frequencies[0]' ...).
 
 The formula is not evaluated on results: it is read as a tree of the design's MEASURES -- the volume it uses, the compliance, the peak
 stress or displacement, a natural frequency, the displacement at a point -- and the optimizer is given that tree.  The kernel
@@ -16,7 +15,7 @@ calculates every measure with its sensitivity to the density of every element, a
 measures can be optimized.  The same tree, read on the analyses of the optimized part, gives the numbers the result reports.
 
 With several analyses (a list: load cases, or a stress case and a vibration case) a number that more than one offers ('compliance' of
-two load cases) counts in the objective as their SUM, and a constraint on it is kept in EACH of them.
+two load cases) counts in the objective as their SUM, and a condition is kept in the analysis its results are of.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -24,10 +23,12 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import ast
 import math
+import re
 
 from fieldes.stdlib.fea import FeaError
+from fieldes.stdlib import analysis_results as _blocks
 
-__all__ = ['minimize', 'maximize']
+__all__ = []
 
 # The operations of the kernel's program (kernel/include/libfive/fea/topopt.hpp, Program::Code)
 CONST, BASE, ADD, SUB, MUL, DIV, POW, NEG, ABS, MIN, MAX, SQRT, LOG, EXP, END = range(15)
@@ -99,8 +100,7 @@ class Node:
     __index__ = __float__
 
     def _compare(self, other):
-        raise MeasureError('a comparison of measures is written as a text ("max_von_mises <= 90"); a function gives how much a constraint is broken '
-                           '(0 or less when it is kept), e.g. lambda r: r.max_von_mises - 90')
+        raise MeasureError('a comparison of measures is made of results of an analysis: keep_below(max_von_mises_1, 90), or optimization_condition(max_von_mises_1 <= 90)')
 
     __lt__ = __le__ = __gt__ = __ge__ = _compare
 
@@ -221,31 +221,27 @@ class Analysis:
         self.index, self.result, self.kind = index, result, kind
 
 
-# What each kind of analysis offers (names of numbers of its result)
-_OFFERS = {
-    'static': ('compliance', 'max_von_mises', 'max_displacement', 'safety_factor', 'reaction', 'total_load'),
-    'modal': ('frequencies',),
-    'flow': ('drag_force', 'lift_force'),
-    'thermal': ('max_temperature', 'min_temperature', 'max_heat_flux', 'input_temperature'),
-}
-_DESIGN = ('volume', 'mass', 'volume_fraction')
+# What each kind of analysis offers (names of numbers of its result) is the table of analysis_results (register_result_kind): a new kind of result is a row there, not a change here.  The numbers of
+# the design itself (volume, mass, volume_fraction) are in the same table
 
 
 class Resolver:
     ''' What a name in a formula is: a number of the design (the volume it uses ...), or a number of an analysis.  bound=None: for the
         objective -- a number several analyses offer is their sum; bound=i: the number in the analysis i alone (a constraint is made for each) '''
 
-    def __init__(self, analyses, bound=None):
+    def __init__(self, analyses, bound=None, cases=None):
         self.analyses = analyses
         self.bound = bound
+        # (a condition made of the results of several analyses: its names end in __a<k>, the k-th analysis of the condition, which is the analysis number cases[k] here)
+        self.cases = cases
 
     def _scope(self):
         return range(len(self.analyses)) if self.bound is None else [self.bound]
 
     def _available(self):
-        names = list(_DESIGN)
+        names = list(_blocks.design_numbers())
         for a in self.analyses:
-            names += [n for n in _OFFERS[a.kind] if n not in names]
+            names += [n for n in _blocks.offered(a.kind) if n not in names]
         return names
 
     def _first(self):
@@ -254,6 +250,10 @@ class Resolver:
     def name(self, n):
         if n == 'pi':
             return Const(math.pi)
+        scope = self._scope()
+        m = re.fullmatch(r'(.+)__a(\d+)', n)
+        if m and self.cases is not None:
+            n, scope = m.group(1), [self.cases[int(m.group(2))]]
         first = self._first()
         if n == 'volume_fraction':
             return Leaf(('fraction',))
@@ -267,19 +267,17 @@ class Resolver:
             if mass is None:
                 raise MeasureError("'mass': the material has no density that is a number (it is a field), so the part has no mass to read")
             return Leaf(('fraction',)) * float(mass)
-        pick = [i for i in self._scope() if n in _OFFERS[self.analyses[i].kind]]
+        pick = [i for i in scope if n in _blocks.offered(self.analyses[i].kind)]
         if not pick:
-            others = [a for a in self.analyses if n in _OFFERS[a.kind]]
+            others = [a for a in self.analyses if n in _blocks.offered(a.kind)]
             if others:
                 raise _Missing("'%s' is not a number of this analysis" % n)
             raise MeasureError("'%s' is not a number the optimisation can make best (%s). It can be: %s" % (
                 n, 'the analyses given do not have it', ', '.join(self._available())))
-        if n == 'compliance':
-            return _sum([Leaf(('compliance', i)) for i in pick])
-        if n == 'max_von_mises':
-            return _sum([Leaf(('max_von_mises', i)) for i in pick])
-        if n == 'max_displacement':
-            return _sum([Leaf(('max_displacement', i)) for i in pick])
+        # (a plain number of the analysis -- compliance, the peak stress or displacement, a force, a temperature: the rows of the table that say `simple` -- is one measure of its backend per
+        # analysis, summed over them)
+        if _blocks.is_simple(self.analyses[pick[0]].kind, n):
+            return _sum([Leaf((n, i)) for i in pick])
         if n == 'safety_factor':
             terms = []
             for i in pick:
@@ -288,20 +286,18 @@ class Resolver:
                     raise MeasureError("'safety_factor': the material has no yield strength")
                 terms.append(Const(float(y)) / Leaf(('max_von_mises', i)))
             return _sum(terms)
-        if n in ('drag_force', 'lift_force', 'max_temperature', 'min_temperature', 'max_heat_flux', 'input_temperature'):
-            return _sum([Leaf((n, i)) for i in pick])
         if n == 'frequencies':
             return Seq(lambda k: _sum([Leaf(('frequency', i, k)) for i in pick]), 'frequencies')
         if n in ('reaction', 'total_load'):
             return Seq(lambda k: _sum([Const(float(getattr(self.analyses[i].result, n)[k])) for i in pick]), n)
         raise MeasureError("'%s' cannot be read here" % n)
 
-    def point(self, field, args):
+    def point(self, field, args, case=None):
         ''' ux(x, y, z), uy, uz, displacement: the displacement at a point (a static analysis); temperature(x, y, z): the temperature at a point (a thermal analysis) '''
         if len(args) != 3 or not all(isinstance(a, (int, float)) for a in args):
             raise MeasureError("'%s' is read at a place: %s(x, y, z), three numbers" % (field, field))
         kind = 'thermal' if field == 'temperature' else 'static'
-        pick = [i for i in self._scope() if self.analyses[i].kind == kind]
+        pick = [i for i in (self._scope() if case is None else [case]) if self.analyses[i].kind == kind]
         if not pick:
             raise _Missing("'%s' is read in a %s analysis" % (field, kind))
         if kind == 'thermal':
@@ -374,6 +370,10 @@ def _node_of(n, resolver, text):
         bad()
     if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and not n.keywords:
         f = n.func.id
+        case = None
+        m = re.fullmatch(r'(.+)__a(\d+)', f)
+        if m and resolver.cases is not None:
+            f, case = m.group(1), resolver.cases[int(m.group(2))]          # (a condition of several analyses: the place is read in the one its name says)
         if f in _POINT_FIELDS:
             args = []
             for a in n.args:
@@ -381,7 +381,7 @@ def _node_of(n, resolver, text):
                 if not isinstance(v, Const):
                     bad()
                 args.append(v.value)
-            return resolver.point(f, args)
+            return resolver.point(f, args, case)
         if f in _FUNCTIONS:
             args = [number(a) for a in n.args]
             code = _FUNCTIONS[f]
@@ -413,29 +413,6 @@ def _expression(text, resolver, what):
     return _wrap(out)
 
 
-class Goal:
-    ''' What is made best: `minimize(x)` / `maximize(x)` in the constraints of an optimisation '''
-
-    def __init__(self, kind, spec):
-        if not (isinstance(spec, str) or callable(spec)):
-            raise MeasureError('%s(): what is made best is the name of a number of the result, a formula of them in a text, or a function of the result (not %r)' % (kind, spec))
-        self.kind, self.spec = kind, spec
-
-    def __repr__(self):
-        return '%s(%r)' % (self.kind, self.spec)
-
-
-def minimize(x):
-    ''' A goal of an optimisation: x -- a number of the analyses' results ('mass'), a formula of them ('mass + 0.01 * compliance') or a function of the result
-        -- as small as it can be.  It goes in the list of `constraints=`, with the comparisons the design keeps '''
-    return Goal('minimize', x)
-
-
-def maximize(x):
-    ''' A goal of an optimisation: x as large as it can be (see minimize) '''
-    return Goal('maximize', x)
-
-
 class Output:
     ''' The objective or a constraint, as a tree: the objective is minimised; a constraint is kept when its tree is 0 or less (the tree is
         in the size of the limit: 0.1 is a tenth over).  `case`: the analysis a constraint was made for (None: all of them, the objective) '''
@@ -446,21 +423,37 @@ class Output:
         self.value = value if value is not None else node
 
 
-def objective(spec, goal, analyses):
-    ''' The objective (to minimise) of `spec`: a text, or a function of the result; goal 'minimize' or 'maximize' -- or 'satisfy': nothing is made
-        best, the design only has to keep the constraints '''
+def _cases_of(condition, analyses):
+    ''' The numbers of the analyses the results of an optimization condition are of, among the analyses the optimization is given, in the order of the condition's own '''
+    out = []
+    for own in condition.analyses:
+        for i, a in enumerate(analyses):
+            if a.result is own:
+                out.append(i)
+                break
+        else:
+            raise MeasureError('%r: it is made of the results of an analysis that the optimization is not given -- give the optimization the analysis its results are of' % (condition,))
+    return out
+
+
+def _shown(text, cases):
+    ''' The text of a condition made of the results of several analyses, as it is shown: compliance@1 + compliance@2 '''
+    return text if cases is None else re.sub(r'__a(\d+)', lambda m: '@%d' % (cases[int(m.group(1))] + 1), text)
+
+
+def objective(spec, goal, analyses, bound=None, cases=None):
+    ''' The objective (to minimise) of `spec`: the text of a formula of results; goal 'minimize' or 'maximize' -- or 'satisfy': nothing is made
+        best, the design only has to keep the constraints.  `bound`: the analysis alone it is read in (the goal of an optimization condition), None: all of them, summed '''
     if goal == 'satisfy':
         return Output('objective', '', Const(0.0))
-    resolver = Resolver(analyses)
-    if callable(spec):
-        node = _wrap(spec(_Proxy(resolver)))
-        text = getattr(spec, '__name__', goal)
-    elif isinstance(spec, str):
+    resolver = Resolver(analyses, bound=bound, cases=cases)
+    if isinstance(spec, str):
         node = _expression(spec, resolver, goal)
-        text = spec.strip()
+        text = _shown(spec.strip(), cases)
     else:
-        raise MeasureError('%s: what is made best is the name of a number of the result, a formula of them, or a function of the result (not %r)' % (goal, spec))
+        raise MeasureError('%s: what is made best is a formula of results, made as an optimization condition (not %r)' % (goal, spec))
     return Output('objective', text, -node if goal == 'maximize' else node)
+
 
 
 def constraint(spec, analyses, baseline):
@@ -469,22 +462,23 @@ def constraint(spec, analyses, baseline):
     outs = []
     first_error = None
     cases = range(len(analyses))
+    mapping = None
+    if isinstance(spec, _blocks.OptimizationCondition):
+        # (a condition made of the results of one analysis is kept in that analysis; one made of the results of several is one condition, each result read in its own)
+        mapping = _cases_of(spec, analyses)
+        cases = [mapping[0]] if len(mapping) == 1 else [None]
+        spec = spec.text
     for i in cases:
-        resolver = Resolver(analyses, bound=i)
+        resolver = Resolver(analyses, bound=i, cases=mapping)
         try:
-            if callable(spec):
-                node = _wrap(spec(_Proxy(resolver)))
-                text = getattr(spec, '__name__', 'constraint')
-                scale = abs(baseline(node))
-                scale = scale if scale > 1e-12 and math.isfinite(scale) else 1.0
-                outs.append(Output('constraint', text, node / scale, i, scale, node))
-            elif isinstance(spec, str):
+            if isinstance(spec, str):
                 try:
                     tree = ast.parse(spec.strip(), mode='eval').body
                 except SyntaxError:
-                    raise MeasureError("constraints=: '%s' is not a comparison" % spec) from None
+                    raise MeasureError("conditions=: '%s' is not a comparison" % spec) from None
                 if not (isinstance(tree, ast.Compare) and all(type(o) in _COMPARISONS for o in tree.ops)):
-                    raise MeasureError("constraints=: '%s' is not a comparison of formulas with <, <=, >, >= or == (80 <= frequencies[0] <= 120 is a range)" % spec)
+                    raise MeasureError("conditions=: '%s' is not a comparison of formulas with <, <=, >, >= or == (80 <= frequencies[0] <= 120 is a range)" % spec)
+                shown = _shown(spec.strip(), mapping if mapping is not None and len(mapping) > 1 else None)
                 operands = [_wrap(_node_of(o, resolver, spec)) for o in [tree.left] + list(tree.comparators)]
                 for k, op in enumerate(tree.ops):
                     left, right = operands[k], operands[k + 1]
@@ -493,7 +487,7 @@ def constraint(spec, analyses, baseline):
                     if not (size > 1e-12 and math.isfinite(size)):
                         size = abs(baseline(left))
                     scale = size if size > 1e-12 and math.isfinite(size) else 1.0
-                    text = spec.strip() if len(analyses) == 1 else '%s  (analysis %d)' % (spec.strip(), i + 1)
+                    text = shown if len(analyses) == 1 or i is None else '%s  (analysis %d)' % (shown, i + 1)
                     if len(tree.ops) > 1:
                         text += '  [%d/%d]' % (k + 1, len(tree.ops))
                     if sign == '==':
@@ -506,29 +500,40 @@ def constraint(spec, analyses, baseline):
                     gap = ((left - right) if sign in ('<', '<=') else (right - left)) / scale
                     outs.append(Output('constraint', text, gap, i, scale, left if leaves(left) else right))
             else:
-                raise MeasureError('constraints=: each is a comparison in a text (\'max_von_mises <= 90\') or a function of the result that is 0 or less '
-                                   'when it is kept (not %r)' % (spec,))
+                raise MeasureError('conditions=: each item is an optimization condition (not %r)' % (spec,))
         except _Missing as e:
             first_error = first_error or e
     if not outs:
-        raise MeasureError('constraints=: %s' % (first_error or 'no analysis has what it reads'))
+        raise MeasureError('conditions=: %s' % (first_error or 'no analysis has what it reads'))
     return outs
 
 
 def outputs_of(items, analyses, baseline):
-    ''' The objective (a constant 0 when there is no goal) and the constraints of the list given as `constraints=`, and what the goal is ('minimize',
-        'maximize', or 'satisfy' for none) '''
-    if isinstance(items, (str, Goal)) or callable(items):
+    ''' The objective (a constant 0 when there is no goal) and the constraints of the optimization conditions given as `conditions=`, and what the goal is ('minimize', 'maximize', or
+        'satisfy' for none).  Only conditions are read: a text, a function or a number is refused, in plain words '''
+    if isinstance(items, _blocks.OptimizationCondition):
         items = [items]
     items = list(items or ())
-    goals = [g for g in items if isinstance(g, Goal)]
-    if len(goals) > 1:
-        raise MeasureError("constraints=: only one thing can be made best at a time -- write a trade-off as one formula: minimize('mass + 0.01 * compliance')")
-    out = [objective(goals[0].spec, goals[0].kind, analyses)] if goals else [objective(None, 'satisfy', analyses)]
     for c in items:
-        if not isinstance(c, Goal):
+        if not isinstance(c, _blocks.OptimizationCondition):
+            raise MeasureError('conditions=: each item is an optimization condition made from a result of the analysis -- keep_below(max_von_mises_1, 90), keep_above, keep_between, '
+                               'minimize(mass_1), maximize, or optimization_condition(max_von_mises_1 <= 90); right-click a result in the model tree to make them. '
+                               'A text such as \'max_von_mises <= 90\' or a function is not one (%r)' % (c,))
+    goals = [g for g in items if g.is_goal]
+    if len(goals) > 1:
+        raise MeasureError('conditions=: only one thing can be made best at a time -- write a trade-off as one formula: minimize(mass_1 + 0.01 * compliance_1)')
+    if not goals:
+        out = [objective(None, 'satisfy', analyses)]
+        kind = 'satisfy'
+    else:
+        # (the goal: read in the analysis its results are of)
+        cases = _cases_of(goals[0], analyses)
+        out = [objective(goals[0].text, goals[0].how, analyses, bound=cases[0] if len(cases) == 1 else None, cases=cases)]
+        kind = goals[0].how
+    for c in items:
+        if not c.is_goal:
             out += constraint(c, analyses, baseline)
-    return out, (goals[0].kind if goals else 'satisfy')
+    return out, kind
 
 
 # ---------------------------------------------------------------------------

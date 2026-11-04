@@ -23,9 +23,9 @@ thickness = [0.3, 1.2, 2.0]
 part = None
 for x0 in (-20.0, 8.0):                                                       # (three plates on each side of x = 0, 6 mm apart, 4.5 x 4.5 mm)
     for k, h in enumerate(thickness):
-        plate = box((x0 + 6.0 * k, 0, 0), (x0 + 6.0 * k + 4.5, 4.5, h))
+        plate = box(((x0 + 6.0 * k + 4.5) - (x0 + 6.0 * k), 4.5, h), position=(((x0 + 6.0 * k) + (x0 + 6.0 * k + 4.5)) / 2, 2.25, h / 2))
         part = plate if part is None else union(part, plate)
-left = box((-100, -100, -100), (0, 100, 100))
+left = box((100, 200, 200), position=(-50, 0, 0))
 lo, hi = (-24, -3, -2), (28, 8, 5)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=14)

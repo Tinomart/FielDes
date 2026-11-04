@@ -22,12 +22,12 @@ view.set_bounds((-4, -4, -4), (L + 4, H + 4, T + 4), auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 
-channel = box((0, 0, 0), (L, H, T))                                        # the domain: the water
-nothing = sphere(0.1, (-100, -100, -100))                                  # (the body the flow goes around: there is none, so one far away)
-faces = union(box((-1, -1, -1), (L + 1, H + 1, 0.01)), box((-1, -1, T - 0.01), (L + 1, H + 1, T + 1)))     # a frictionless face on each side: a two-dimensional flow
+channel = box((L, H, T), position=(L / 2, H / 2, T / 2))                                        # the domain: the water
+nothing = sphere(0.1, position=(-100, -100, -100))                                  # (the body the flow goes around: there is none, so one far away)
+faces = union(box(((L + 1) - (-1), (H + 1) - (-1), 1.01), position=(((-1) + (L + 1)) / 2, ((-1) + (H + 1)) / 2, -0.495)), box(((L + 1) - (-1), (H + 1) - (-1), (T + 1) - (T - 0.01)), position=(((-1) + (L + 1)) / 2, ((-1) + (H + 1)) / 2, ((T - 0.01) + (T + 1)) / 2)))     # a frictionless face on each side: a two-dimensional flow
 flow = fluid_analysis(nothing, channel,
-                      inlets=[inlet(box((-1, -1, -1), (0.01, H + 1, T + 1)), speed=U, profile='developed')],
-                      outlets=[outlet(box((L - 0.01, -1, -1), (L + 1, H + 1, T + 1)), pressure=0)],
+                      inlets=[inlet(box((1.01, (H + 1) - (-1), (T + 1) - (-1)), position=(-0.495, ((-1) + (H + 1)) / 2, ((-1) + (T + 1)) / 2)), speed=U, profile='developed')],
+                      outlets=[outlet(box(((L + 1) - (L - 0.01), (H + 1) - (-1), (T + 1) - (-1)), position=(((L - 0.01) + (L + 1)) / 2, ((-1) + (H + 1)) / 2, ((-1) + (T + 1)) / 2)), pressure=0)],
                       boundaries=[slip(faces)],                            # (the walls at y = 0 and y = H are in no region: walls at rest)
                       fluid=water, element_size=1.0, cache=False)
 

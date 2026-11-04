@@ -19,8 +19,8 @@ from mfgkit import *
 t = Table('c4_slot_narrower_than_the_ball: a slot 4 mm wide through a block, narrower than the ball of an inside corner radius of 3 mm, and a slot 8 mm wide beside it: the narrow slot is filled and left with the sag of the ball resting on its two edges (0.76 mm deep), the wide one only gets its two floor corners rounded')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-block = box((0, 0, 0), (60, 20, 12))
-part = difference(difference(block, box((13, -1, 2), (17, 21, 13))), box((40, -1, 2), (48, 21, 13)))
+block = box((60, 20, 12), position=(30, 10, 6))
+part = difference(difference(block, box((4, 22, 11), position=(15, 10, 7.5))), box((8, 22, 11), position=(44, 10, 7.5)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_radius=3.0)
 lo, hi = (-3, -3, -3), (63, 23, 15)

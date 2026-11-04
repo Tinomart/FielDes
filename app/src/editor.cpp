@@ -692,6 +692,8 @@ Editor::Editor(Language::Type language)
     m_dragGuard.setInterval(4000);
     m_dragGuard.setSingleShot(true);
     connect(&m_dragGuard, &QTimer::timeout, this, [this] { if (m_dragActive) onDragEnd(); });
+    m_dragWriteTimer.setSingleShot(true);
+    connect(&m_dragWriteTimer, &QTimer::timeout, this, [this] { flushDragVars(); });
     m_textChangedDebounce.setInterval(250);
     m_textChangedDebounce.setSingleShot(true);
     connect(&m_textChangedDebounce, &QTimer::timeout,
@@ -914,20 +916,74 @@ void Editor::onSpinner()
     }
 }
 
+Editor::~Editor()
+{
+    // (a reading of the tree may be on its way in another thread, and it uses the language this editor holds: it is waited for before they go)
+    if (m_outlineBusy) m_outlineFuture.waitForFinished();
+}
+
 void Editor::refreshOutline(bool runDone)
 {
     if (!m_language) return;
-    QJsonObject request;
-    request["source"] = script_doc->toPlainText();
-    request["run_done"] = runDone;
-    QString error;
-    const QString json = callSupport("outline_json", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
-    if (json.isEmpty())
+    // (a drag writes numbers into the text and changes nothing that the tree shows: the rows are read when it is over, by the run that follows it.  Reading them now, on this thread, is 3 to 5 seconds for a script of a thousand points
+    // -- and the timer of 80 ms after a text change fires between the writes of a drag now that they are 100 ms apart --, H90, the user: "it lags at the beginning heavily and ... freezes for like 30 seconds")
+    if (m_dragActive)
     {
-        m_outlineTimer.start(400);          // (Python is not ready yet, or is busy with something that cannot wait: again in a moment)
+        m_outlineRunDone = m_outlineRunDone || runDone;          // (a run that ended during the drag is read when the drag is over)
         return;
     }
-    emit(sceneChanged(json));
+    // (the tree is read from the text in a thread of its own: for a script of a thousand points that is 3 to 5 seconds of python, and the window that waited for it did not answer -- the freezes of H90.  One reading
+    // at a time; a text that changed while it was read is read again when it is back, and what was read of the older one is not shown)
+    m_outlineRunDone = m_outlineRunDone || runDone;
+    if (m_outlineBusy)
+    {
+        m_outlineAgain = true;
+        return;
+    }
+    if (m_scriptRunning && !m_outlineRunDone && m_outlineCostMs > 500)
+    {
+        m_outlineTimer.start(1500);          // (the rows are laid over by the run when it is done: reading the text of a big script again and again while it runs makes the run slower)
+        return;
+    }
+    const bool done = m_outlineRunDone;
+    m_outlineRunDone = false;
+    QJsonObject request;
+    request["source"] = script_doc->toPlainText();
+    request["run_done"] = done;
+    const QString body = QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact));
+    const int revision = script_doc->revision();
+    m_outlineBusy = true;
+    m_outlineClock.start();
+    auto watcher = new QFutureWatcher<QPair<QString, QString>>(this);
+    connect(watcher, &QFutureWatcher<QPair<QString, QString>>::finished, this, [this, watcher, revision, done] {
+        const QPair<QString, QString> answer = watcher->result();
+        watcher->deleteLater();
+        m_outlineBusy = false;
+        m_outlineCostMs = m_outlineClock.elapsed();
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING"))
+            std::cerr << "[outline] the tree was read from the text in " << m_outlineCostMs << " ms" << (done ? " (a run is done)" : "") << std::endl;
+        const bool again = m_outlineAgain || script_doc->revision() != revision;
+        m_outlineAgain = false;
+        if (answer.first.isEmpty())
+        {
+            m_outlineRunDone = m_outlineRunDone || done;
+            m_outlineTimer.start(400);          // (Python is not ready yet, or is busy with something that cannot wait: again in a moment)
+            return;
+        }
+        if (again)
+        {
+            m_outlineRunDone = m_outlineRunDone || done;          // (the text is not the one that was read: it is read again, with what the run found out)
+            refreshOutline(false);
+            return;
+        }
+        emit(sceneChanged(answer.first));
+    });
+    m_outlineFuture = QtConcurrent::run([this, body] {
+        QString error;
+        const QString json = callSupport("outline_json", body, &error);
+        return qMakePair(json, error);
+    });
+    watcher->setFuture(m_outlineFuture);
 }
 
 void Editor::onInterpreterDone(Result r)
@@ -1007,7 +1063,10 @@ void Editor::onInterpreterDone(Result r)
         // Store the textual position of variables, for later editing -- when this run was of the text that is in the editor now.  If the
         // text has been edited since the run began (a click of the tree, a key, the writes of a drag), the places that were followed
         // through those edits are the right ones, and the run's places are of another text (see varSpans)
+        QElapsedTimer doneStage;
+        doneStage.start();
         if (r.script == script_doc->toPlainText()) setVarSpans(r.vars);
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[done] the places of the numbers were made in " << doneStage.restart() << " ms (the window thread, H90)" << std::endl;
 
         // (a number edited in the call of a shape that was dragged is the number it has: the list of numbers under the call follows it; so does the place that a point on a body is made at -- a corner
         // that a pulled face took away from it).  What the run asked to be written goes with the edit that the run was of -- the drag, the typed number -- as one step of undo: an undo that took only the
@@ -1024,8 +1083,10 @@ void Editor::onInterpreterDone(Result r)
 
         m_errorLine0 = -1;
         emit(scriptErrorChanged(QString(), -1));       // (before the scene: the model tree's note is made from it)
+        doneStage.restart();
         emit(shapes(r.shapes));
         emit(fieldSources(r.fields));
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[done] the shapes of the run were taken in by the viewport in " << doneStage.restart() << " ms (the window thread, H90)" << std::endl;
     } else {
         setResult(Color::red, r.error.error);
         {
@@ -1490,6 +1551,8 @@ void Editor::onDragStart()
     script->setEnabled(false);
     drag_should_join = false;
     m_dragActive = true;
+    m_pendingDragVars.clear();
+    m_dragWriteClock.invalidate();                      // (the first numbers of a drag are written at once)
     m_textChangedDuringDrag = false;
     if (m_scriptRunning) m_discardResults = true;       // (what a run that began before the drag delivers would put its older numbers back over the dragged ones)
     m_dragGuard.start();
@@ -1497,6 +1560,11 @@ void Editor::onDragStart()
 
 void Editor::onDragEnd()
 {
+    flushDragVars();                                    // (the numbers of the last moves are in the text before it runs again)
+    m_dragWriteClock.invalidate();
+    // (the numbers of the drag are in the text now and the run that follows reads the rows when it is done: the timer that a text change started would read them once more before it, 3 to 5 seconds on this thread for a thousand points -- outline timer stop)
+    if (m_textChangedDuringDrag) m_outlineTimer.stop();
+    if (m_outlineRunDone) QTimer::singleShot(0, this, [this] { refreshOutline(false); });          // (a run ended during the drag: its rows are read now)
     script->setEnabled(true);
     if (m_scriptHadFocus) script->setFocus();
     m_scriptHadFocus = false;
@@ -1513,6 +1581,25 @@ void Editor::onDragEnd()
 void Editor::setVarValues(QMap<libfive::Tree::Id, float> vs)
 {
     if (m_dragActive) m_dragGuard.start();          // (the drag goes on: it is not left to the guard)
+    // (H90, the user, 2026-11-03: "moving points is WORSE IN EVERY WAY ... lags completely".)  A move of the mouse gives the numbers it makes, and writing them into the text costs 6-11 ms on a script of
+    // a few thousand lines (the document is edited in place and laid out again) while a mouse reports a hundred times a second or more: the writes piled up behind the hand.  While a drag goes on the
+    // text is written at most every 100 ms, with the latest numbers, and at once when the drag ends -- what is drawn does not wait for the text: the viewport has the numbers already
+    for (auto it = vs.begin(); it != vs.end(); ++it) m_pendingDragVars[it.key()] = it.value();
+    if (m_dragActive && m_dragWriteClock.isValid() && m_dragWriteClock.elapsed() < 100)
+    {
+        if (!m_dragWriteTimer.isActive()) m_dragWriteTimer.start(int(100 - m_dragWriteClock.elapsed()));
+        return;
+    }
+    flushDragVars();
+}
+
+void Editor::flushDragVars()
+{
+    m_dragWriteTimer.stop();
+    if (m_pendingDragVars.isEmpty()) return;
+    const QMap<libfive::Tree::Id, float> vs = m_pendingDragVars;
+    m_pendingDragVars.clear();
+    m_dragWriteClock.restart();
     // Temporarily enable the script so that we can edit the variable value
     script->setEnabled(true);
     QTextCursor drag_cursor(script_doc);

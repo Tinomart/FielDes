@@ -28,6 +28,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -117,6 +118,13 @@ MeshQuality meshQuality(const TetMesh& mesh);
 /*  Drops the vertices no tetrahedron uses and (re)builds the boundary faces
  *  and the vertices' on-surface flags from `tets`  */
 void finalizeMesh(TetMesh& mesh);
+
+/*  A mesh made elsewhere (meshing.py's mesh_volume), as the tetrahedral mesh the solvers take in place of the one meshShape makes from a shape: `positions` is
+ *  the x y z of each of the `vertexCount` nodes and `tets` the four nodes of each of the `tetCount` tetrahedra.  A tetrahedron that is inside out is turned (two
+ *  nodes swapped) and one of no volume is dropped; the boundary is the faces that belong to one tetrahedron only.  False with a message when a node is not a
+ *  number, a tetrahedron names a node that is not there, or a face is shared by more than two tetrahedra (a mesh whose elements cross).  The `h` of the mesh is
+ *  the middle one of its edge lengths  */
+bool meshFromArrays(size_t vertexCount, const double* positions, size_t tetCount, const int32_t* tets, TetMesh& out, std::string& error);
 
 /*  A tree's values at many points (on all cores)  */
 void evalTreePoints(const Tree& tree, const std::vector<Eigen::Vector3f>& pts, std::vector<float>& out);

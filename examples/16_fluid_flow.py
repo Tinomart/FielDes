@@ -26,16 +26,16 @@ D = 10.0                                   # the post's diameter
 U = 4.0                                    # mm/s: Re = U D / nu = 40 in water (nu = 1 mm^2/s)
 
 view.set_bounds((-4, -4, -4), (W + 4, H + 4, T + 4), auto_scale=True)
-view.set_resolution(5)
+view.set_resolution(25)
 view.set_quality(8)
 
-post = cylinder(D / 2, T + 2, (24.0, 20.0, -1.0))
-slab = box((0, 0, 0), (W, H, T))                 # the domain: the water, and the place of the post in it
+post = cylinder(D / 2, T + 2, position=(24.0, 20.0, -1.0 + (T + 2) / 2))
+slab = box((W, H, T), position=(W / 2, H / 2, T / 2))                 # the domain: the water, and the place of the post in it
 
-faces = union(box((-1, -1, -1), (W + 1, H + 1, 0.01)), box((-1, -1, T - 0.01), (W + 1, H + 1, T + 1)))
-sides = union(box((-1, -1, -1), (W + 1, 0.01, T + 1)), box((-1, H - 0.01, -1), (W + 1, H + 1, T + 1)))
-inlet_face = box((-1, -1, -1), (0.01, H + 1, T + 1))
-outlet_face = box((W - 0.01, -1, -1), (W + 1, H + 1, T + 1))
+faces = union(box(((W + 1) - (-1), (H + 1) - (-1), 1.01), position=(((-1) + (W + 1)) / 2, ((-1) + (H + 1)) / 2, -0.495)), box(((W + 1) - (-1), (H + 1) - (-1), (T + 1) - (T - 0.01)), position=(((-1) + (W + 1)) / 2, ((-1) + (H + 1)) / 2, ((T - 0.01) + (T + 1)) / 2)))
+sides = union(box(((W + 1) - (-1), 1.01, (T + 1) - (-1)), position=(((-1) + (W + 1)) / 2, -0.495, ((-1) + (T + 1)) / 2)), box(((W + 1) - (-1), (H + 1) - (H - 0.01), (T + 1) - (-1)), position=(((-1) + (W + 1)) / 2, ((H - 0.01) + (H + 1)) / 2, ((-1) + (T + 1)) / 2)))
+inlet_face = box((1.01, (H + 1) - (-1), (T + 1) - (-1)), position=(-0.495, ((-1) + (H + 1)) / 2, ((-1) + (T + 1)) / 2))
+outlet_face = box(((W + 1) - (W - 0.01), (H + 1) - (-1), (T + 1) - (-1)), position=(((W - 0.01) + (W + 1)) / 2, ((-1) + (H + 1)) / 2, ((-1) + (T + 1)) / 2))
 
 flow = fluid_analysis(post, slab,
                       inlets=[inlet(inlet_face, speed=U)],

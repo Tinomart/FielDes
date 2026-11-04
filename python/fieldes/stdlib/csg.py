@@ -235,3 +235,12 @@ def difference(a, b, *rest):
     """ Subtracts any number of shapes from the first argument
     """
     return intersection(a, inverse(union(b, *rest)))
+
+
+# What goes into each input of these, for the menus that write the call from the models selected (see fieldes.kinds.slot): the body is the first model selected, whatever it is, and a field selected
+# with it is the number
+from fieldes.kinds import slot as _slot, SHAPES as _SHAPES
+import inspect as _inspect
+for _fn in (offset, shell):
+    _names = list(_inspect.signature(_fn).parameters)
+    _fn._slots = [_slot(_names[0], _SHAPES, needed=True), _slot(_names[1], 'field')]

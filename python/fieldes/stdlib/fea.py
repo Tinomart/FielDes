@@ -4,8 +4,8 @@ Static finite element analysis (linear elasticity) of FielDes shapes.
     from fieldes import *
 
     bracket = ...                                        # any Shape, in mm
-    base = fixed(box((0, 0, 0), (5, 40, 20)))            # clamp the left end
-    push = force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))   # 200 N down
+    base = fixed(box((5, 40, 20), position=(2.5, 20, 10)))            # clamp the left end
+    push = force(box((5, 40, 20), position=(97.5, 20, 10)), (0, 0, -200))   # 200 N down
     result = static_analysis(bracket, supports=[base], loads=[push], material=aluminium, element_size=1.0)
     base, push                                           # each is drawn on the part the analysis was given: held (blue), pushed (red)
     result                                   # the stress on the deformed part (FielDes: the result card)
@@ -63,6 +63,7 @@ from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape, field_shape
 from fieldes.stdlib.element_size import default_element_size
+from fieldes.stdlib import sim_mesh as _sim_mesh
 from fieldes.stdlib.excluded import keep_regions, carry_locks
 from fieldes.stdlib.content_cache import Uncacheable, cache_for, problem_key, shape_key, value_key
 from fieldes.stdlib import result_cache
@@ -298,15 +299,33 @@ _SLOTS = {}
 
 
 def _register_slots(slots):
-    _SLOTS.update(slots)
+    """ A slot that two modules fill (the `constraints` of a topology optimization take the manufacturing constraints AND the optimization conditions of a result block) has the classes of both """
+    for name, (classes, text) in slots.items():
+        if name in _SLOTS:
+            old_classes, old_text = _SLOTS[name]
+            classes = tuple(old_classes) + tuple(c for c in classes if c not in old_classes)
+            text = old_text if text in old_text else old_text + ' and ' + text
+        _SLOTS[name] = (classes, text)
 
 
 _register_slots({'supports': ((_Support,), 'fixed(...) items'),
                  'loads': ((_Force, _Gravity, _Thermal), 'force(...), gravity(...) and thermal_expansion(...) items')})
 
 
+_optimization_slot = [False]
+
+
 def _slot_of(item):
     ''' The input a condition goes in (`supports`, `loads`, `inlets` ...), or None '''
+    if not _optimization_slot[0]:
+        # (the condition of an optimization -- made from a result block, see analysis_results.optimization_condition -- goes in the `conditions` of a topology optimization: told here, at the
+        # first call, so that it does not depend on which module was loaded first; the user, 2026-11-02, F35b: a condition dropped on the constraints of a call in the tree)
+        try:
+            from fieldes.stdlib.analysis_results import OptimizationCondition
+            _register_slots({'conditions': ((OptimizationCondition,), 'keep_below(...), minimize(...) and the other conditions made from a result')})
+            _optimization_slot[0] = True
+        except Exception:
+            pass
     for name, (classes, _) in _SLOTS.items():
         if isinstance(item, classes):
             return name
@@ -565,6 +584,8 @@ def _add_force(ptr, l, case=None):
 # FielDes draws at most this many elements' values a field (more are not drawn)
 from fieldes.stdlib.element_mesh import MAX_DRAWN as _MAX_DRAWN_VALUES, element_mesh as _element_mesh, elements_note as _elements_note
 
+from fieldes.stdlib.analysis_results import result_field as _result_field      # (every field an analysis calculates is stored as an analysis result: a field that knows which result of which analysis it is)
+
 _FIELDS = ['von_mises', 'displacement', 'ux', 'uy', 'uz',
            'sxx', 'syy', 'szz', 'sxy', 'syz', 'szx',
            'max_principal', 'min_principal', 'strain_energy']
@@ -596,6 +617,8 @@ class Result(FieldResult):
         safety_factor (if the material has a yield strength), elements,
         iterations, seconds, reaction (support force), ... '''
 
+    _physics = 'static'                      # (what kind of analysis it is: the table of results in analysis_results says which results it has)
+
     def __init__(self, handle, shape, material, element_size, element='tet'):
         self._handle = handle
         self.shape = shape
@@ -606,7 +629,7 @@ class Result(FieldResult):
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
             ptr = lib.libfive_fea_field(p, i)
-            setattr(self, name, field_shape(ptr))
+            setattr(self, name, _result_field(self, name, ptr))
             self._ranges[name] = (lib.libfive_fea_field_min(p, i), lib.libfive_fea_field_max(p, i))
         stat = lambda k: lib.libfive_fea_stat(p, k)
         # (the solver counts cells of the grid; a cell of tetrahedra is six elements)
@@ -664,7 +687,11 @@ class Result(FieldResult):
         density = self.material.density
         if isinstance(density, Shape):
             return None
-        return self.volume * density * 1000.0
+        # (the mass is a result like the volume: a property of the class stands before an attribute of the instance, so the result that wrap_numbers made for it was never what `analysis.mass` gave --
+        # it gave the formula volume * density, which the tree drew as a field; the user, 2026-11-03, H100: the rows of a result carry the result icon)
+        number = float(self.volume) * density * 1000.0
+        from fieldes.stdlib import analysis_results
+        return analysis_results.mass_result(self, number)
 
     def range(self, field='von_mises'):
         ''' (min, max) of a field over the part: of the smooth field (the nodal values;
@@ -685,7 +712,7 @@ class Result(FieldResult):
         shown = getattr(self, '_shown', None)
         if shown is None:
             size = self._model_size()
-            auto = 0.05 * size / self.max_displacement if self.max_displacement > 0 else 1.0
+            auto = 0.05 * size / float(self.max_displacement) if float(self.max_displacement) > 0 else 1.0
             steps = []
             for k in range(1, 21):
                 f = k / 20.0
@@ -750,7 +777,7 @@ class Result(FieldResult):
         s = field_shape if field_shape is not None else self.shape
         if scale is None:
             size = self._model_size()
-            scale = 0.05 * size / self.max_displacement if self.max_displacement > 0 else 1.0
+            scale = 0.05 * size / float(self.max_displacement) if float(self.max_displacement) > 0 else 1.0
         x, y, z = Shape.X(), Shape.Y(), Shape.Z()
         return s.remap(x - scale * self.ux, y - scale * self.uy, z - scale * self.uz)
 
@@ -796,7 +823,8 @@ def _bounds(shape):
 @_with_conditions
 def static_analysis(shape, supports, loads, material=steel, element_size=None,
                     bounds=None, tolerance=1e-6, cache=True, element='tet'):
-    ''' Linear static analysis of `shape` (a Shape, in mm).
+    ''' Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_volume) can take the place of `shape`: the analysis then solves on its tetrahedra as they
+        are, and `element_size` is not given (see docs/analysis.md, A mesh of your own).
 
         supports   what holds the part: fixed(...) items (at least one), one or a list
         loads      what pushes it: force(...) / gravity(...) / thermal_expansion(...) items, one or a list ([] for none).
@@ -819,6 +847,7 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
         can't be solved as given (no support touching the part, supports
         that don't hold it in place, ...). '''
     max_iterations = 20000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
+    shape, mesh = _sim_mesh.part(shape, 'static_analysis', element_size, element)
     if not isinstance(shape, Shape):
         raise TypeError('static_analysis: the part must be a Shape')
     if _is_cases(loads):
@@ -832,13 +861,13 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
     ekey = problem_key('static', shape=shape, part_bounds=getattr(shape, '_bounds', None),
                        supports=supports, loads=loads, material=material, element_size=element_size,
                        bounds=bounds, max_iterations=max_iterations, tolerance=tolerance,
-                       element=element) if cache else None
+                       element=element, **_sim_mesh.key(mesh)) if cache else None
     if ekey is not None and ekey in _early:
         _early.move_to_end(ekey)
         found = _early[ekey]
         return found if found.shape is shape else _copy_for(found, shape)
     result = _static_analysis_solve(shape, supports, loads, material, element_size, bounds,
-                                    max_iterations, tolerance, cache, element, ekey)
+                                    max_iterations, tolerance, cache, element, ekey, mesh)
     if ekey is not None:
         _early[ekey] = result
         while len(_early) > 8:
@@ -847,9 +876,11 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
 
 
 def _static_analysis_solve(shape, supports, loads, material, element_size, bounds, max_iterations,
-                           tolerance, cache, element, ekey=None):
-    lo, hi = bounds if bounds is not None else _bounds(shape)
+                           tolerance, cache, element, ekey=None, mesh=None):
+    lo, hi = bounds if bounds is not None else (mesh.bounds if mesh is not None else _bounds(shape))
     size = [hi[i] - lo[i] for i in range(3)]
+    if mesh is not None:
+        element_size = mesh.size            # (the elements are the mesh's own)
     if element_size is None:
         if element in ('tet', 'tet10'):
             element_size = default_element_size(shape, lo, hi, 30.0 if element == 'tet10' else 60.0, 250000 if element == 'tet10' else 1000000)
@@ -869,7 +900,7 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
     if element in ('tet', 'tet10'):
         return _static_analysis_tet(shape, supports, loads, material, element_size, region, max(size),
-                                    max_iterations, tolerance, cache, ekey, element)
+                                    max_iterations, tolerance, cache, ekey, element, mesh)
 
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load('fea', ekey, 'static analysis')
@@ -949,7 +980,7 @@ class TetResult(Result):
         p = handle.ptr
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
-            setattr(self, name, field_shape(lib.libfive_tetfea_field(p, i)))
+            setattr(self, name, _result_field(self, name, lib.libfive_tetfea_field(p, i)))
             self._ranges[name] = (lib.libfive_tetfea_field_min(p, i), lib.libfive_tetfea_field_max(p, i))
         stat = lambda k: lib.libfive_tetfea_stat(p, k)
         self.elements = int(stat(0))
@@ -1035,7 +1066,7 @@ def _remember_conditions(result, supports, loads):
 
 
 def _static_analysis_tet(shape, supports, loads, material, element_size, region, size, max_iterations,
-                         tolerance, cache, ekey=None, element='tet'):
+                         tolerance, cache, ekey=None, element='tet', mesh=None):
     ''' static_analysis on a body-fitted tetrahedral mesh (element 'tet10': with 10-node elements) '''
     if getattr(lib, 'libfive_tetfea_new', None) is None:
         raise FeaError("this FielDes library is too old for tetrahedral meshing")
@@ -1048,6 +1079,8 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
     # (a Young's modulus that is a field is measured against 1 MPa: each element has its own value of it)
     ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, _number(material.E, 1.0), material.nu)
     handle = _TetHandle(ptr)
+    if mesh is not None:
+        _sim_mesh.give('tetfea', ptr, mesh, 'static_analysis')
     if element == 'tet10':
         lib.libfive_tetfea_set_order(ptr, 2)
     _material_fields(ptr, material)
@@ -1110,7 +1143,7 @@ class Mode:
         p = handle.ptr
         self._ranges = {}
         for name, f in (('displacement', 1), ('ux', 2), ('uy', 3), ('uz', 4)):
-            setattr(self, name, field_shape(lib.libfive_fea_mode_field(p, index, f)))
+            setattr(self, name, _result_field(self, name, lib.libfive_fea_mode_field(p, index, f)))
             self._ranges[name] = (lib.libfive_fea_mode_field_min(p, index, f),
                                   lib.libfive_fea_mode_field_max(p, index, f))
 
@@ -1164,7 +1197,7 @@ class TetMode(Mode):
         p = handle.ptr
         self._ranges = {}
         for name, f in (('displacement', 1), ('ux', 2), ('uy', 3), ('uz', 4)):
-            setattr(self, name, field_shape(lib.libfive_tetfea_mode_field(p, index, f)))
+            setattr(self, name, _result_field(self, name, lib.libfive_tetfea_mode_field(p, index, f)))
             self._ranges[name] = (lib.libfive_tetfea_mode_field_min(p, index, f),
                                   lib.libfive_tetfea_mode_field_max(p, index, f))
 
@@ -1196,6 +1229,8 @@ class ModalResult(FieldResult):
         .modes (a Mode each: its shape as fields), .seconds.  Stated on its
         own it shows the first mode (result.modes[1] the second, ...). '''
 
+    _physics = 'modal'
+
     def __init__(self, handle, shape, material, element_size, seconds, size=None):
         p = handle.ptr
         self.material = material
@@ -1224,7 +1259,11 @@ class ModalResult(FieldResult):
         density = self.material.density
         if isinstance(density, Shape):
             return None
-        return self.volume * density * 1000.0
+        # (the mass is a result like the volume: a property of the class stands before an attribute of the instance, so the result that wrap_numbers made for it was never what `analysis.mass` gave --
+        # it gave the formula volume * density, which the tree drew as a field; the user, 2026-11-03, H100: the rows of a result carry the result icon)
+        number = float(self.volume) * density * 1000.0
+        from fieldes.stdlib import analysis_results
+        return analysis_results.mass_result(self, number)
 
     def _as_field(self):
         mode = self.modes[0]
@@ -1278,6 +1317,7 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
         other: e.g. stiffen the part where the first mode moves most.  An
         unchanged problem is cached. '''
     max_iterations = 100        # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
+    shape, mesh = _sim_mesh.part(shape, 'modal_analysis', element_size, element)
     if not isinstance(shape, Shape):
         raise TypeError('modal_analysis: the part must be a Shape')
     if not _density_given(material):
@@ -1291,12 +1331,14 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
     key = problem_key('modal', shape=shape, part_bounds=getattr(shape, '_bounds', None), supports=supports,
                       material=material, modes=int(modes), element_size=element_size, bounds=bounds,
                       max_iterations=max_iterations, tolerance=tolerance,
-                      element=element) if cache else None
+                      element=element, **_sim_mesh.key(mesh)) if cache else None
     if key is not None and key in _modal_cache:
         _modal_cache.move_to_end(key)
         return _modal_cache[key]
-    lo, hi = bounds if bounds is not None else _bounds(shape)
+    lo, hi = bounds if bounds is not None else (mesh.bounds if mesh is not None else _bounds(shape))
     size = [hi[i] - lo[i] for i in range(3)]
+    if mesh is not None:
+        element_size = mesh.size            # (the elements are the mesh's own)
     if element_size is None:
         if element in ('tet', 'tet10'):
             element_size = default_element_size(shape, lo, hi, 20.0 if element == 'tet10' else 40.0, 125000 if element == 'tet10' else 500000)
@@ -1325,6 +1367,8 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
     if tet:
         ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, _number(material.E, 1.0), material.nu)
         handle = _TetHandle(ptr)
+        if mesh is not None:
+            _sim_mesh.give('tetfea', ptr, mesh, 'modal_analysis')
         if element == 'tet10':
             lib.libfive_tetfea_set_order(ptr, 2)
         _material_fields(ptr, material)
@@ -1363,7 +1407,14 @@ def _copy_for(result, shape):
     r = object.__new__(type(result))
     r.__dict__.update(result.__dict__)
     r.shape = shape
+    _rebind(r)
     return r
+
+
+# The numbers an analysis gives are analysis results too (the user, 2026-11-03, H91): `stress.compliance`, `stress.max_von_mises`, `modes.frequencies[0]` -- see analysis_results.wrap_numbers
+from fieldes.stdlib.analysis_results import rebind as _rebind, wrap_class as _wrap_class
+for _cls in (Result, TetResult, ModalResult):
+    _wrap_class(_cls)
 
 
 class _ColoredShape(Shape):
@@ -1880,35 +1931,36 @@ def _same_value(a, b):
     return a == b
 
 
-def topology_optimization(analysis, constraints=(), iterations=None, filter_radius=None, keep=None,
+def topology_optimization(analysis, conditions=(), iterations=None, filter_radius=None, keep=None,
                           avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-5, cache=True):
     ''' Topology optimization: the layout of material, within the part of `analysis`, that is best for what is asked of it.
 
             stress = static_analysis(part, [fixed(base)], [force(lug, (0, 0, -300))], steel)
-            best = topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.3'])
-            lighter = topology_optimization(stress, constraints=[minimize('mass'), 'max_von_mises <= 120', 'max_displacement <= 0.4'])
+            compliance_1 = stress.compliance
+            volume_fraction_1 = stress.volume_fraction
+            best = topology_optimization(stress, conditions=[minimize(compliance_1), keep_below(volume_fraction_1, 0.3)])
+            lighter = topology_optimization(stress, conditions=[minimize(stress.mass), keep_below(stress.max_von_mises, 120),
+                                                                keep_below(stress.max_displacement, 0.4)])
 
         analysis      the result of an analysis of this script -- static_analysis, modal_analysis, thermal_analysis -- or a list of them: the part is the design
                       space, and its supports, loads and material are the problem it is designed for.  A list is several load cases (the
                       same part under other loads and supports), or a stress case and a vibration case: [stress, vibration].  The result of a
                       fluid_analysis is a BODY IN A FLOW: the body is the start of the design, the fluid domain its space, and the numbers
                       are drag_force and lift_force (the force of the flow on the body along it and across it, N) and volume_fraction (of
-                      the body's own volume) -- `topology_optimization(wing, constraints=[maximize('lift_force / drag_force'),
-                      'volume_fraction <= 0.4'])`.  The result of a thermal_analysis (tetrahedral elements) is a HEAT CONDUCTION:
+                      the body's own volume) -- `topology_optimization(wing, conditions=[maximize(lift_force_1 / drag_force_1),
+                      keep_below(volume_fraction_1, 0.4)])`.  The result of a thermal_analysis (tetrahedral elements) is a HEAT CONDUCTION:
                       the part is the design space, the held temperatures, heat inputs and convecting surfaces are the problem, and the numbers
                       are max_temperature, min_temperature, max_heat_flux, input_temperature (the temperature the heat comes in at: the
-                      heat-weighted mean of the heat inputs), temperature(x, y, z), volume, mass and volume_fraction --
-                      `topology_optimization(sink, constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3'])`
-        constraints   what the design is for, a list.  Comparisons it keeps: 'volume_fraction <= 0.3', 'max_von_mises <= 90', 'frequencies[0] >= 80',
-                      an exact value 'frequencies[0] == 100' (kept to within a thousandth), a range '80 <= frequencies[0] <= 120' -- or a
-                      function of the result that is 0 or less when kept.  And at most one goal: minimize(x) makes x as small as it can be,
-                      maximize(x) as large -- x a number of the analyses' results ('compliance', 'mass', 'max_von_mises', 'frequencies[0]'
-                      ...), a formula of them ('mass + 0.01 * compliance', 'lift_force / drag_force') or a function of the result
-                      (`lambda r: r.max_von_mises / r.mass`).  Without a goal the design only has to keep the comparisons.  The numbers of
-                      the design that the formulas can read: volume_fraction (the share of the part's volume it uses), volume, mass, and
-                      from a static analysis compliance, max_von_mises, max_displacement, safety_factor and ux(x, y, z), uy, uz, displacement
-                      (the displacement at a place), from a modal analysis frequencies[i].  With several analyses a number that more than one
-                      offers is, in a goal, the SUM of theirs, and a comparison on it is kept in each of them
+                      heat-weighted mean of the heat inputs), the temperature at a place (sink.temperature.at(x, y, z)), volume, mass and volume_fraction --
+                      `topology_optimization(sink, conditions=[minimize(max_temperature_1), keep_below(volume_fraction_1, 0.3)])`
+        conditions    what the design is for, a list of optimization conditions made from results of the analysis (right-click a result in the model tree): what the design keeps --
+                      keep_below(max_von_mises_1, 90), keep_above(frequency_1, 80), keep_between(frequency_1, 80, 120), keep_between(volume_fraction_1, 1, 1) for an exact value, or one
+                      comparison written whole, optimization_condition(max_von_mises_1 <= 90) -- and at most one goal: minimize(x) makes x as small as it can be, maximize(x) as
+                      large -- x a result of an analysis or a formula of them (mass_1, mass_1 + 0.01 * compliance_1, lift_force_1 / drag_force_1).  Without a goal the design only
+                      has to keep the conditions.  The numbers of the design that results can be made of: volume_fraction (the share of the part's volume it uses), volume,
+                      mass, and from a static analysis compliance, max_von_mises, max_displacement, safety_factor and the displacement at a place (stress.uz.at(x, y, z); ux, uy,
+                      uz, displacement), from a modal analysis frequencies[i].  With several analyses a number that more than one offers is, in a goal, the SUM of theirs, and a
+                      condition is kept in the analysis its results are of
         keep:         regions (Shapes, or a list) that must stay solid -- e.g. bolt bosses, mounting faces; the material around supports
                       and loads always stays
         avoid:        regions that must stay empty
@@ -1951,12 +2003,12 @@ def topology_optimization(analysis, constraints=(), iterations=None, filter_radi
     from fieldes.stdlib import fluid as _fluid
     probe = analysis[0] if isinstance(analysis, (list, tuple)) and len(analysis) else analysis
     if isinstance(probe, _fluid.FluidResult):
-        return _fluid.topology_optimization_flow(analysis, constraints, iterations=iterations, filter_radius=filter_radius, keep=keep, avoid=avoid,
+        return _fluid.topology_optimization_flow(analysis, conditions, iterations=iterations, filter_radius=filter_radius, keep=keep, avoid=avoid,
                                                  grow=grow, grow_limit=grow_limit, extrude=extrude, penalty=penalty, sharpness=sharpness,
                                                  symmetry=symmetry, tolerance=tolerance, cache=cache)
     if type(probe).__name__ == 'ThermalResult':
         from fieldes.stdlib import thermal as _thermal
-        return _thermal.topology_optimization_thermal(analysis, constraints, iterations=iterations, filter_radius=filter_radius, keep=keep, avoid=avoid,
+        return _thermal.topology_optimization_thermal(analysis, conditions, iterations=iterations, filter_radius=filter_radius, keep=keep, avoid=avoid,
                                                       grow=grow, grow_limit=grow_limit, extrude=extrude, penalty=penalty, sharpness=sharpness,
                                                       symmetry=symmetry, tolerance=tolerance, cache=cache)
     iterations = 100 if iterations is None else iterations
@@ -1964,8 +2016,8 @@ def topology_optimization(analysis, constraints=(), iterations=None, filter_radi
     max_iterations = 20000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     if getattr(lib, 'libfive_tetfea_optimize', None) is None or getattr(lib, 'libfive_tetfea_opt_measure', None) is None:
         raise FeaError('this FielDes library is too old for topology optimization')
-    if not constraints:
-        raise TypeError("topology_optimization: say what the design is for -- constraints=[minimize('mass'), 'max_von_mises <= 90', ...]")
+    if not conditions:
+        raise TypeError("topology_optimization: say what the design is for -- conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), ...]")
     analyses = _optimization_analyses(analysis, 'topology_optimization')
     given = [a.result for a in analyses]
     first = analyses[0]
@@ -2019,8 +2071,6 @@ def topology_optimization(analysis, constraints=(), iterations=None, filter_radi
             raise ValueError('topology_optimization: grow_limit is a distance of more than 0 mm')
 
     # What is asked of the design: the objective and the constraints as trees of measures, and the program the kernel is given
-    if isinstance(constraints, str) or callable(constraints):
-        constraints = [constraints]
 
     def baseline_leaf(key):
         return 1.0 if key[0] == 'fraction' else measures.true_value(key, given)
@@ -2028,7 +2078,7 @@ def topology_optimization(analysis, constraints=(), iterations=None, filter_radi
     def baseline(node):
         return measures.evaluate(node, baseline_leaf)
 
-    outputs, goal = measures.outputs_of(constraints, analyses, baseline)
+    outputs, goal = measures.outputs_of(conditions, analyses, baseline)
     program = measures.Program(outputs)
     if ('fraction',) not in program.measures:
         program.measures.append(('fraction',))                      # (the share of the part the design uses is always kept: the result reports it)
@@ -2437,5 +2487,9 @@ TopologyResult.fields = property(lambda self: OrderedDict([('shape', self.shape(
 
 # It is given the result of an analysis (a simulation) and writes `constraints=` as a placeholder: what the design is for is the user's
 from fieldes.kinds import takes as _declare
-topology_optimization._takes = _declare({'simulation'}, [{'simulation'}])
-topology_optimization._required = ('constraints',)
+topology_optimization._takes = _declare({'simulation', 'conditions'}, [{'simulation'}])       # (the analysis, and the optimization conditions that are selected with it: the user, 2026-11-04, of the tour: nobody is to type them -- select them and open the menu)
+topology_optimization._required = ('conditions',)
+
+# The analyses that can be given the mesh of a body in place of the body (the menus read it: menu_catalog._part_kinds)
+_sim_mesh.takes_mesh(static_analysis)
+_sim_mesh.takes_mesh(modal_analysis)

@@ -28,15 +28,16 @@ print('KNOWN BEST %.2f square : weak side %.2f -> first frequency by theory %.0f
 
 b = var(8)
 h = var(16)
-bar = box((0, 0, 0), (100, b, h))
-wall = fixed(box((-1, -1, -1), (1, 40, 40)))
+bar = box((100, b, h), position=(50, b / 2, h / 2))
+wall = fixed(box((2, 41, 41), position=(0, 19.5, 19.5)))
 modes = modal_analysis(bar, supports=[wall], material=aluminium, modes=3, element_size=3)
 
-best = parametric_optimization(modes, [(b, 4, 20), (h, 4, 20)],
-                               constraints=[maximize('frequencies[0]'), 'mass <= 0.04'])
+frequencies_0_1 = modes.frequencies[0]
+mass_1 = modes.mass
+best = parametric_optimization(modes, [(b, 4, 20), (h, 4, 20)], conditions=[maximize(frequencies_0_1), keep_below(mass_1, 0.04)])
 
-starting_bar = move(box((0, 0, 0), (100, 8, 16)), (0, -35, 0))
-known_best_bar = move(box((0, 0, 0), (100, side, side)), (0, 30, 0))
+starting_bar = move(box((100, 8, 16), position=(50, 4, 8)), (0, -35, 0))
+known_best_bar = move(box((100, side, side), position=(50, side / 2, side / 2)), (0, 30, 0))
 starting_bar
 best
 known_best_bar

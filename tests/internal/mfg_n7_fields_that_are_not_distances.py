@@ -21,8 +21,8 @@ from mfgkit import *
 t = Table('n7_fields_that_are_not_distances: a fin of 0.6 mm and a slot of 0.2 mm (a small scene, 12 cells to the millimetre) whose field is not a distance -- the field of the part times 2 (a slope of 2), times 0.5, and times 1 (a true distance) for comparison -- and a wall rule of 0.8 mm and a gap rule of 0.4 mm: a wall is a length and not a number of the field, so each must be measured and made the same')
 
 def make(s):
-    fin = box((0, 0, 0), (0.6, 6, 4))
-    return union(union(fin, box((3, 0, 0), (6, 6, 4))), box((6.2, 0, 0), (9.2, 6, 4))) * s
+    fin = box((0.6, 6, 4), position=(0.3, 3, 2))
+    return union(union(fin, box((3, 6, 4), position=(4.5, 3, 2))), box((3, 6, 4), position=(7.7, 3, 2))) * s
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 rules = [manufacturing_constraint(min_wall=0.8, min_gap=0.4)]
 lo, hi = (-1.5, -1.5, -1.5), (10.7, 7.5, 5.5)

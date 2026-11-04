@@ -23,8 +23,8 @@ from mfgkit import *
 t = Table('h4_remedy_selection: a fin 0.6 mm thick and a slot of 0.2 mm between two blocks, a wall rule of 0.8 and a gap rule of 0.4 asked, and the tool told which remedy it may make (remedies=): only the one chosen is made; a remedy that no rule asks for makes nothing and the tool says so; a name that is no remedy is refused and the message lists those there are')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-fin = box((0, 0, 0), (0.6, 12, 10))
-part = union(union(fin, box((6, 0, 0), (12, 12, 10))), box((12.2, 0, 0), (18.2, 12, 10)))
+fin = box((0.6, 12, 10), position=(0.3, 6, 5))
+part = union(union(fin, box((6, 12, 10), position=(9, 6, 5))), box((6, 12, 10), position=(15.2, 6, 5)))
 rules = [manufacturing_constraint(min_wall=0.8, min_gap=0.4)]
 lo, hi = (-3, -3, -3), (21, 15, 13)
 # (the view of the window: the box round the part, and how finely it is drawn)

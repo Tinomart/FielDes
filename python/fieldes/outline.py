@@ -41,8 +41,8 @@ _DISPLAYS = {}
 _ERROR = {}
 
 # The facts of a model that a run gives, and that are laid over the row the text gives (the rest of a row is the text's)
-_FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'outline', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles',
-              'handle_count', 'handle_cap', 'ends_only', 'is_list', 'is_pair', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked', 'symmetry_image')
+_FACT_KEYS = ('exact_bounds', 'carried', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'outline', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles',
+              'handle_count', 'handle_cap', 'ends_only', 'is_list', 'is_pair', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked', 'symmetry_image', 'lost')
 # What a call to the same function is taken to make again, when the statement was edited (its text is not what ran)
 _KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'outline', 'condition_role', 'domain', 'cls', 'is_list', 'is_pair', 'surface_selection')
 
@@ -160,7 +160,8 @@ def _primitive_names():
     if _PRIMITIVE_NAMES is None:
         try:
             from fieldes import menu_catalog as M
-            _PRIMITIVE_NAMES = frozenset(n for n, _g, _t in M.PRIMITIVES)
+            # (and the four of the Optimization section of the menu, which are operations and have a picture of their own as well)
+            _PRIMITIVE_NAMES = frozenset(n for n, _g, _t in M.PRIMITIVES) | frozenset(('topology_optimization', 'parametric_optimization', 'optimization_condition', 'keep_below', 'keep_above', 'keep_between', 'minimize', 'maximize'))
         except Exception:
             return frozenset()
     return _PRIMITIVE_NAMES
@@ -194,6 +195,16 @@ def _glyph_of(callee, call):
     if callee in ('Material', 'Fluid'):
         return _preset_names().get(text, 'material' if callee == 'Material' else '')
     return callee if callee in names else ''
+
+
+def _image_glyph(by_name, call):
+    ''' The picture of the row of an image `image = symmetry_image(model, symmetry, 3)`: the picture of the model it is the image of -- a mirror image of a wave surface is drawn as a wave surface, not as a
+        plane (the user, 2026-11-03, H92: "both are wave surfaces, though only one is displayed as such").  '' when it is not known '''
+    if isinstance(call, ast.Call) and call.args and isinstance(call.args[0], ast.Name):
+        source = by_name.get(call.args[0].id)
+        if source:
+            return source.get('glyph') or ''
+    return ''
 
 
 def _slot_kinds(callee, k):
@@ -247,15 +258,16 @@ def facts_of(v):
     result = not shape and not placed and callable(getattr(v, '_display', None))
     mkind = None if failed else kind_of(v)
     shown = shape or result or placed
-    f = {'model': bool(shape or failed or result or mkind is not None), 'failed': failed, 'result': result, 'type': mkind,
+    f = {'model': bool(shape or failed or result or mkind is not None), 'failed': failed, 'result': result, 'carried': bool(getattr(v, '_carried', None)), 'type': mkind,
          'shown': shown, 'no_gizmo': bool(getattr(v, '_no_gizmo', False)) or result or not shown or mkind == 'field',   # (a field: its icon is what is dragged)
          'outline': bool(getattr(v, '_outline_gizmo', False)),         # (a profile, a polyline, a spline: no numbers of its own, but a gizmo mode)
-         'is_list': isinstance(v, list), 'is_pair': isinstance(v, tuple) and len(v) == 2}
+         'is_list': isinstance(v, list), 'is_pair': isinstance(v, tuple) and len(v) == 2,
+         'lost': bool(getattr(v, '_lost', None)) and bool(getattr(v, '_lost_after_found', False))}          # (an edge that was found and cannot follow its body any more: features._lost_line says so; the tree removes it -- ScenePanel::removeLostEdges)
     if failed:
         f['error'] = v.error
     if mkind == 'conditions':
         f['condition_role'] = A._condition_role(v)
-    if mkind in ('conditions', 'simulation'):
+    if mkind in ('conditions', 'simulation', 'result'):
         domain = domain_of_value(v)         # (the colour and the icon of its engineering domain)
         if domain:
             f['domain'] = domain
@@ -282,6 +294,21 @@ def _property_text(v):
     ''' How a property of a result is shown in the property drawer (its kind and a short text), or None when it is not one to offer:
         numbers, vectors and short lists of numbers, flags, short texts '''
     import math
+    # A number an analysis gives is an analysis result (H91): the drawer offers it by its number, the same click writes it below the analysis as a model of its own
+    from fieldes.stdlib.analysis_results import AnalysisResult, ResultSequence
+    if isinstance(v, AnalysisResult):
+        if isinstance(v, ResultSequence):
+            try:
+                numbers_ = [float(x) for x in v]
+            except (TypeError, ValueError):
+                return None
+            if not numbers_:
+                return None
+            return 'number', ('(' + ', '.join('%.4g' % x for x in numbers_[:8]) + ')') if len(numbers_) > 1 else '%.4g' % numbers_[0]
+        number = v._num()
+        if number is not None and math.isfinite(number):
+            return 'number', '%.4g' % number
+        return ('number', "(the design's)") if v.kind.physics == 'design' else None
     if isinstance(v, bool):
         return 'flag', 'yes' if v else 'no'
     if isinstance(v, (int, float)):
@@ -462,8 +489,10 @@ def finish(source, gs, out):
                             facts.pop('bounds', None)
                             facts.pop('exact_bounds', None)
                     if shapes:
+                        # (the var()s of the placement arguments -- position, rotation, scale: what a gizmo drags -- are not numbers that place the surfaces: a shape that has only those has no handles
+                        # yet, and is asked for them when it is selected)
                         has_var = any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'var'
-                                      for n in ast.walk(stmt))
+                                      for n in _without_placement(stmt))
                         measure.append((0 if t.id in shown_names else 1, t.id, text, shapes,
                                         dict(facts, _has_var=has_var, _own=isinstance(v, Shape)), facts))
         for k, stmt in enumerate(tree.body):
@@ -485,12 +514,20 @@ def finish(source, gs, out):
                 b = A._estimate_bounds(shapes, deadline)
                 if b:
                     facts['bounds'] = b
-        deadline = _time.time() + A._BOUNDS_SECONDS
+        # (The count of a shape's pullable numbers is a measurement of its own, with the time of its own: a slow shape in front must not take the handles of every shape written after it --
+        # the loop used to stop at the end of one budget for all of them, and a shape it did not reach had no count, so it was never given handles.  Past the budget the count is not
+        # skipped but left to the moment the shape is selected, when the library counts it for good (handles_text); only what cannot have handles by what it is, which needs no
+        # measurement, is told so.  The user, 2026-11-03: "no state of the script can keep them from being created, for any shape")
+        deadline = _time.time() + 4 * A._BOUNDS_SECONDS
         for _, name, text, shapes, view, facts in sorted(measure, key=lambda m: m[0]):
-            if _time.time() > deadline:
-                break
             if view.get('_has_var') or facts.get('colored') or not view.get('_own') or getattr(shapes[0], '_no_handles', False):
                 continue                    # (a shape that is made from another -- a profile of a surface -- has no faces of its own to pull)
+            if _time.time() > deadline:
+                if os.environ.get('FIELDES_OUTLINE_DEBUG'):
+                    print('[outline] %s: no time left to count its handles, they are counted when it is selected' % (name,))
+                if not A._no_handles_by_kind(shapes[0]):
+                    facts['can_handles'], facts['handle_count'], facts['handle_cap'], facts['ends_only'] = True, 0, A._MAX_HANDLES, False
+                continue
             n = A._handle_count(shapes[0])
             facts['can_handles'] = 0 < n <= A._MAX_HANDLES
             facts['handle_count'] = n
@@ -501,6 +538,20 @@ def finish(source, gs, out):
         if os.environ.get('FIELDES_OUTLINE_DEBUG'):
             import traceback
             traceback.print_exc()
+
+
+def _without_placement(node):
+    ''' The nodes of a statement (as ast.walk gives them), except those inside the PLACEMENT arguments of a call -- `position=`, `rotation=`, `alpha=`, `origin=`, and `scale=` when it is the triple of
+        numbers a gizmo drags: their var()s are what the gizmo moves, not numbers that place the surfaces of the shape '''
+    todo = [node]
+    while todo:
+        n = todo.pop()
+        yield n
+        for child in ast.iter_child_nodes(n):
+            if isinstance(child, ast.keyword) and (child.arg in ('position', 'rotation', 'alpha', 'origin')
+                                                   or (child.arg == 'scale' and isinstance(child.value, ast.Tuple) and len(child.value.elts) == 3)):
+                continue
+            todo.append(child)
 
 
 def seed(items_json):
@@ -1299,6 +1350,13 @@ def outline_json(arg):
                             'text': A._short(src.segment(stmt.value), 70), 'deps': deps}
                     if mkind:
                         item['type'] = mkind
+                    if facts.get('lost'):
+                        item['lost'] = True
+                    # (an operation that carries the gizmos of its parts -- a union, a difference ...: made_from._note_carried -- says so to the tree, which then does not write a placement of its own
+                    # into it when its dimmed placement row is clicked: scenetree.cpp writePlacement.  The fact was computed by every run and never reached the item (H93, measured 2026-11-04 in the
+                    # window: u._carried True, the item of the union had no carried))
+                    if facts.get('carried'):
+                        item['carried'] = True
                     if not shown:
                         item['displayable'] = False
                     item['inputs'], item['variadic'], item['numbers'] = inputs, variadic, numbers
@@ -1321,7 +1379,7 @@ def outline_json(arg):
                         item['attribute_of'] = node.id
                     if mkind == 'conditions':
                         item['condition_role'] = facts.get('condition_role') or _guess_role(callee)
-                    if mkind in ('conditions', 'simulation'):
+                    if mkind in ('conditions', 'simulation', 'result'):
                         domain = facts.get('domain') or domain_of(callee)
                         if domain:
                             item['domain'] = domain
@@ -1335,7 +1393,7 @@ def outline_json(arg):
                         item['cls'] = facts['cls']
                     item['points'] = A._points_of(stmt.value, ns) if isinstance(stmt.value, ast.Call) else []
                     item['callee'] = callee
-                    glyph = _glyph_of(callee, stmt.value)
+                    glyph = _glyph_of(callee, stmt.value) or (_image_glyph(by_name, stmt.value) if callee == 'symmetry_image' else '')
                     if glyph:
                         item['glyph'] = glyph                    # (the picture of the primitive it makes, beside the kind's)
                     if _call_takes(callee):
@@ -1413,7 +1471,7 @@ def outline_json(arg):
             mkind = facts.get('type') or _guess_type(A._callee_name(stmt.value), [], by_name, ns)
             if mkind:
                 item['type'] = mkind
-            if mkind in ('conditions', 'simulation'):
+            if mkind in ('conditions', 'simulation', 'result'):
                 domain = facts.get('domain') or domain_of(A._callee_name(stmt.value))
                 if domain:
                     item['domain'] = domain
@@ -1497,7 +1555,15 @@ def outline_json(arg):
             it['mode'], it['mode_explicit'] = ('never' if it.get('outline') else 'click'), False
             # The placement is always in the tree, inside the model: position, rotation, scale and alpha, the ones written as they are written and the others with their defaults
             if it['kind'] == 'shape' and not it.get('no_gizmo') and it.get('placement') is not None:
-                it['args'] = list(it.get('args', [])) + A._placement_rows(it['placement'], it.get('type') == 'symmetry')
+                # (the position is GLOBAL, one for every model: where the model is.  A model made in its own frame is at its position, 0, 0, 0 unwritten; any other is where its parts put it -- the
+                # middle of its box -- until a position is written)
+                pl, b = it['placement'], it.get('bounds')
+                if pl.get('frame') != 'origin' and b and len(b) == 2 and len(b[0]) == 3 and len(b[1]) == 3:
+                    try:
+                        pl['place'] = [0.5 * (float(b[0][i]) + float(b[1][i])) for i in range(3)]
+                    except (TypeError, ValueError):
+                        pass
+                it['args'] = list(it.get('args', [])) + A._placement_rows(pl, it.get('type') == 'symmetry')
 
     items.sort(key=lambda it: it['line'])
     for it in items:
@@ -1542,8 +1608,15 @@ def outline_json(arg):
         return set(d for d in row.get('deps', []) if d not in row.get('shadows', ()) and d != row.get('attribute_of') and d != row.get('part_name'))
 
     for index, (uline, user, user_block) in enumerate(rows):
-        group = [(user, user_block)]
         group_keys = {row_key(user, user_block)}
+        # (the members of the group by the name each of them reads, in the order of their lines: a row that joins stands above every member, so it goes to the front.  A body of a thousand points is the
+        # user of a thousand rows: the names every member reads were worked out again for every member for every row -- 600 000 times, 5 s of the 15 the tree of such a script took: H90)
+        wanters = {}
+
+        def join(member, member_block):
+            for name in wants(member, member_block):
+                wanters.setdefault(name, []).insert(0, (member, member_block))
+        join(user, user_block)
         j = index - 1
         while j >= 0:
             _, row, is_block = rows[j]
@@ -1555,16 +1628,15 @@ def outline_json(arg):
                     continue
                 break
             first = None
-            for member, member_block in sorted(group, key=lambda m: m[0]['line']):
-                if row['var'] in wants(member, member_block):
-                    earlier = [x for x in versions.get(row['var'], []) if x['line'] < member['line']]
-                    if earlier and earlier[-1] is row and section_of(row['line']) == section_of(member['line']):
-                        first = (member, member_block)
-                        break
+            for member, member_block in wanters.get(row['var'], ()):
+                earlier = [x for x in versions.get(row['var'], []) if x['line'] < member['line']]
+                if earlier and earlier[-1] is row and section_of(row['line']) == section_of(member['line']):
+                    first = (member, member_block)
+                    break
             if first is None:
                 break
             row['owner'] = row_key(*first)
-            group.append((row, False))
+            join(row, False)
             group_keys.add(row_key(row, False))
             j -= 1
     last_of = {}

@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('g5_slit_under_a_wide_slot: a narrow slit of 0.2 mm at the bottom of a wide slot of 3 mm, for a 0.4 mm gap rule: only the slit is closed, up to its mouth, and the wide slot above it stays as wide as it was')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = difference(box((0, 0, 0), (30, 10, 10)), union(box((13.5, -1, 3.0), (16.5, 11, 11)), box((14.9, -1, 0.5), (15.1, 11, 3.1))))
+part = difference(box((30, 10, 10), position=(15, 5, 5)), union(box((3, 12, 8), position=(15, 5, 7)), box((0.2, 12, 2.6), position=(15, 5, 1.8))))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_gap=0.4)
 lo, hi = (-2, -2, -2), (32, 12, 12)

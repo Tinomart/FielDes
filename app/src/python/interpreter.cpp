@@ -223,6 +223,13 @@ static PyObject* retune_func(PyObject*, PyObject* args) {
             }
             Py_DECREF(vars);
         }
+        // (a number of `__vars` was changed in place: whoever keeps a copy of the numbers -- the key of a statement, see app_support._var_sync -- reads them again when this count has moved)
+        {
+            long gen = 0;
+            if (PyObject* g = PyObject_GetAttrString(host_mod, "__vars_gen")) { gen = PyLong_AsLong(g); Py_DECREF(g); }
+            PyErr_Clear();
+            if (PyObject* next = PyLong_FromLong(gen + 1)) { PyObject_SetAttrString(host_mod, "__vars_gen", next); Py_DECREF(next); }
+        }
         Py_DECREF(host_mod);
     }
     if (PyObject* handle = PyObject_GetAttrString(v, "ptr")) {
@@ -233,6 +240,15 @@ static PyObject* retune_func(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+// The native field of a sweep or a prism (see Interpreter::nativeField): the host function that path_extrude and extrude of profile.py call with the shape they have made
+static PyObject* native_field_func(PyObject*, PyObject* args)
+{
+    PyObject* obj = nullptr;
+    if (!PyArg_ParseTuple(args, "O", &obj)) return nullptr;
+    if (!g_interpreter) Py_RETURN_NONE;
+    return g_interpreter->nativeField(obj);
+}
+
 static PyMethodDef host_methods[] = {
     {"__retune", retune_func, METH_VARARGS, "Gives a variable of the run another number"},
     {"set_resolution", set_resolution, METH_VARARGS, "Sets render resolution"},
@@ -241,6 +257,7 @@ static PyMethodDef host_methods[] = {
     {"__var", var_func, METH_VARARGS, "Constructs a free variable"},
     {"partial_scene", partial_scene, METH_VARARGS, "Gives the model tree what a running script has made so far"},
     {"partial_shapes", partial_shapes, METH_VARARGS, "Gives the viewport what a running script has shown so far"},
+    {"native_field", native_field_func, METH_VARARGS, "The native distance field of the triangles of a sweep or a prism, as a tree handle (or None)"},
     {NULL, NULL, 0, NULL}        /* Sentinel */
 };
 
@@ -436,6 +453,11 @@ void Interpreter::init() {
     // Reset studio.__vars to an empty list
     const auto empty_list = PyList_New(0);
     PyObject_SetAttrString(host_mod, "__vars", empty_list);
+    {
+        PyObject* gen0 = PyLong_FromLong(0);          // (the count of the numbers of `__vars` that were changed in place: see retune)
+        PyObject_SetAttrString(host_mod, "__vars_gen", gen0);
+        Py_XDECREF(gen0);
+    }
     Py_DECREF(empty_list);
     // The variables found again by the place they are in (var_func), and how many times each key was asked for in this run
     const auto by_key = PyDict_New();
@@ -1393,6 +1415,67 @@ static std::shared_ptr<const std::set<libfive::Tree::Id>> sceneGizmoIds()
     return made;
 }
 
+PyObject* Interpreter::nativeField(PyObject* obj)
+{
+    // (the numbers of the script's variables made so far in this run, read the way the partial result reads them)
+    std::map<libfive::Tree::Id, float> vars;
+    if (PyObject* host_mod = PyImport_ImportModule("_fieldes_host"))
+    {
+        if (const auto list = PyObject_GetAttrString(host_mod, "__vars"))
+        {
+            if (PyList_Check(list))
+            {
+                for (Py_ssize_t i = 0; i < PyList_Size(list); ++i)
+                {
+                    PyObject* s = nullptr;
+                    double value = 0;
+                    int lineno, end_lineno, col_offset, end_col_offset;
+                    if (!PyArg_ParseTuple(PyList_GetItem(list, i), "Od(iiii)", &s, &value, &lineno, &end_lineno, &col_offset, &end_col_offset))
+                    {
+                        PyErr_Clear();
+                        continue;
+                    }
+                    const auto ptr_obj = PyObject_GetAttrString(s, "ptr");
+                    if (ptr_obj)
+                    {
+                        vars[static_cast<libfive::Tree::Id>(PyLong_AsVoidPtr(ptr_obj))] = float(value);
+                        Py_DECREF(ptr_obj);
+                    }
+                    PyErr_Clear();
+                }
+            }
+            Py_DECREF(list);
+        }
+        Py_DECREF(host_mod);
+    }
+    PyErr_Clear();
+    Result tmp;
+    recordShape(obj, tmp, vars, -1, false);
+    PyObject* made = nullptr;
+    for (Shape* shape : tmp.shapes)
+    {
+        if (!made)
+        {
+            std::vector<float> xyz;
+            std::vector<uint32_t> tri;
+            if (shape->nativeMeshArrays(vars, xyz, tri))
+            {
+                libfive_mesh_import_info info;
+                const libfive_tree t = libfive_mesh_from_arrays(xyz.data(), uint32_t(xyz.size() / 3), tri.data(), uint32_t(tri.size() / 3), 1.0f, &info);
+                if (t) made = PyLong_FromVoidPtr(const_cast<void*>(static_cast<const void*>(t)));
+            }
+        }
+        shape->deleteLater();       // (it lives in the main thread by now: see recordShape)
+    }
+    PyErr_Clear();
+    if (!made)
+    {
+        made = Py_None;
+        Py_INCREF(made);
+    }
+    return made;
+}
+
 void Interpreter::recordShape(
         PyObject* obj,
         Result &out,
@@ -1550,6 +1633,7 @@ void Interpreter::recordShape(
                 PyObject* cd = PyObject_GetAttrString(obj, "_ctrl_default");
                 PyObject* cl = PyObject_GetAttrString(obj, "closed");
                 PyObject* cface = PyObject_GetAttrString(obj, "_profile_face");
+                if (!cface) PyErr_Clear();                                               // (only a profile drawn as a face has it; a missing one must not leave an error pending)
                 const bool face = cface && PyObject_IsTrue(cface) == 1;
                 std::vector<Shape::ControlPoint> points;
                 bool good = true;
@@ -1745,6 +1829,7 @@ void Interpreter::recordShape(
                         {
                             c.pos[a] = treeOfShape(PyTuple_GetItem(at, a));
                             if (!c.pos[a].is_valid()) { good = false; break; }
+                            c.var[a] = Shape::soleVarOf(c.pos[a]);          // (the number that moves this point: the viewport's gizmo of a sweep moves the points it is made of, see Shape::sweepControlOf)
                         }
                         PyObject* r = (cr && PyList_Check(cr) && i < PyList_Size(cr)) ? PyList_GetItem(cr, i) : nullptr;
                         if (good && r && PyTuple_Check(r) && PyTuple_Size(r) == 3)
@@ -1853,6 +1938,79 @@ void Interpreter::recordShape(
             PyObject* ed = PyObject_GetAttrString(obj, "_editable");
             shape->setEditable(ed && PyObject_IsTrue(ed) == 1);
             Py_XDECREF(ed);
+            PyErr_Clear();
+            // (a body made of points: its surface is where a point is put -- `_morph_faces`, the triangles it is made of)
+            shape->setPointBody(PyObject_HasAttrString(obj, "_morph_faces") == 1);
+            {
+                // (the line of an edge that was not found says so: it is drawn in the warning colour)
+                PyObject* lost = PyObject_GetAttrString(obj, "_lost");
+                shape->setLost(lost && PyObject_IsTrue(lost) == 1);
+                Py_XDECREF(lost);
+                PyErr_Clear();
+            }
+            PyErr_Clear();
+        }
+        {
+            // (a body made of points is DRAWN from the numbers of its points: the control points of the patches of its surface as expressions -- three to a control point --, every vertex of the
+            // surface as a sum of control points times weights (`_morph_vstart`, `_morph_vctrl`, `_morph_vweight`) and the triangles between the vertices, evaluated at every render and at every
+            // step of a drag; see fieldes.stdlib.morph and Shape::morphNow)
+            PyObject* cp = PyObject_GetAttrString(obj, "_morph_controls");
+            PyObject* vs = cp ? PyObject_GetAttrString(obj, "_morph_vstart") : nullptr;
+            PyObject* vc = vs ? PyObject_GetAttrString(obj, "_morph_vctrl") : nullptr;
+            PyObject* vw = vc ? PyObject_GetAttrString(obj, "_morph_vweight") : nullptr;
+            PyObject* tr = vw ? PyObject_GetAttrString(obj, "_morph_tris") : nullptr;
+            if (cp && vs && vc && vw && tr && PyList_Check(cp) && PyList_Check(vs) && PyList_Check(vc) && PyList_Check(vw) && PyList_Check(tr)
+                && PyList_Size(cp) >= 3 && PyList_Size(vs) >= 4 && PyList_Size(tr) > 0 && PyList_Size(vc) == PyList_Size(vw))
+            {
+                std::vector<libfive::Tree> controls;
+                std::vector<uint32_t> start, control, triangles;
+                std::vector<double> weight;
+                bool good = true;
+                const long nControls = long(PyList_Size(cp));
+                const long nVertices = long(PyList_Size(vs)) - 1;
+                for (Py_ssize_t i = 0; i < nControls && good; ++i)
+                {
+                    PyObject* at = PyList_GetItem(cp, i);
+                    if (!PyTuple_Check(at) || PyTuple_Size(at) != 3) { good = false; break; }
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        controls.push_back(treeOfShape(PyTuple_GetItem(at, a)));
+                        if (!controls.back().is_valid()) { good = false; break; }
+                    }
+                }
+                for (Py_ssize_t i = 0; i < PyList_Size(vs) && good; ++i)
+                {
+                    const long s = PyLong_AsLong(PyList_GetItem(vs, i));
+                    if (s < 0 || s > long(PyList_Size(vc)) || (i > 0 && uint32_t(s) < start.back())) { good = false; break; }
+                    start.push_back(uint32_t(s));
+                }
+                if (good && start.back() != uint32_t(PyList_Size(vc))) good = false;
+                for (Py_ssize_t i = 0; i < PyList_Size(vc) && good; ++i)
+                {
+                    const long c = PyLong_AsLong(PyList_GetItem(vc, i));
+                    const double w = PyFloat_AsDouble(PyList_GetItem(vw, i));
+                    if (c < 0 || c >= nControls || !std::isfinite(w)) { good = false; break; }
+                    control.push_back(uint32_t(c));
+                    weight.push_back(w);
+                }
+                for (Py_ssize_t i = 0; i < PyList_Size(tr) && good; ++i)
+                {
+                    PyObject* t = PyList_GetItem(tr, i);
+                    if (!PyTuple_Check(t) || PyTuple_Size(t) != 3) { good = false; break; }
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        const long v = PyLong_AsLong(PyTuple_GetItem(t, a));
+                        if (v < 0 || v >= nVertices) { good = false; break; }
+                        triangles.push_back(uint32_t(v));
+                    }
+                }
+                if (good) shape->setMorph(std::move(controls), std::move(start), std::move(control), std::move(weight), std::move(triangles));
+            }
+            Py_XDECREF(tr);
+            Py_XDECREF(vw);
+            Py_XDECREF(vc);
+            Py_XDECREF(vs);
+            Py_XDECREF(cp);
             PyErr_Clear();
         }
         {
@@ -1967,6 +2125,26 @@ void Interpreter::recordShape(
         }
 
         {
+            // A field that is not negative anywhere is a surface: it is drawn by its zero set (Shape::unsignedMesh)
+            PyObject* unsignedFlag = PyObject_GetAttrString(obj, "_unsigned");
+            shape->setUnsigned(unsignedFlag && PyObject_IsTrue(unsignedFlag) == 1);
+            Py_XDECREF(unsignedFlag);
+            PyErr_Clear();
+            // (the signed field the surface was made from, `facing`: which layer of the shell a vertex is on)
+            PyObject* facing = PyObject_GetAttrString(obj, "facing");
+            PyObject* facingPtr = facing ? PyObject_GetAttrString(facing, "ptr") : nullptr;
+            shape->setFacing((facingPtr && PyLong_Check(facingPtr)) ? libfive::Tree(static_cast<libfive_tree>(PyLong_AsVoidPtr(facingPtr))) : libfive::Tree::invalid());
+            Py_XDECREF(facingPtr);
+            Py_XDECREF(facing);
+            PyObject* limitField = PyObject_GetAttrString(obj, "limit");
+            PyObject* limitPtr = limitField ? PyObject_GetAttrString(limitField, "ptr") : nullptr;
+            shape->setLimit((limitPtr && PyLong_Check(limitPtr)) ? libfive::Tree(static_cast<libfive_tree>(PyLong_AsVoidPtr(limitPtr))) : libfive::Tree::invalid());
+            Py_XDECREF(limitPtr);
+            Py_XDECREF(limitField);
+            PyErr_Clear();
+        }
+
+        {
             // The box the script says the shape fills (`_bounds`: the primitives know it from their numbers, and handles() and the placement arguments carry it, widened by what was pulled).  It sizes the
             // shape, for its resolution, where the quick search for its box finds none -- a shape made with var()s (Shape::setScriptBox)
             PyObject* box = PyObject_GetAttrString(obj, "_bounds");
@@ -1988,6 +2166,11 @@ void Interpreter::recordShape(
                 if (ok) shape->setScriptBox(QVector3D(float(v[0]), float(v[1]), float(v[2])), QVector3D(float(v[3]), float(v[4]), float(v[5])));
             }
             Py_XDECREF(box);
+            PyErr_Clear();
+            // (the longest side of the box the part had before it was placed, in world units: a part that is turned is normed by it, not by the box it fills turned -- H146)
+            PyObject* ownLen = PyObject_GetAttrString(obj, "_own_len");
+            if (ownLen && PyFloat_Check(ownLen)) shape->setScriptOwnLength(PyFloat_AsDouble(ownLen));
+            Py_XDECREF(ownLen);
             PyErr_Clear();
         }
 
@@ -2049,6 +2232,29 @@ void Interpreter::recordShape(
             PyErr_Clear();
             Py_XDECREF(owner);
             shape->setResolutionOverride(own > 0.0 ? float(own) : 0.0f);
+        }
+
+        // The size of the smallest feature of its surface, in mm (`_feature_size`: the pitch of a thread -- fieldes.stdlib.cad.threaded_rod): the viewport meshes it finely enough to show it, also
+        // at the first level of a drag.  A body placed by its placement arguments or edited with handles() has the one of the body it was made from
+        {
+            PyObject* owner = obj;
+            Py_INCREF(owner);
+            for (int depth = 0; owner && depth < 8 && !PyObject_HasAttrString(owner, "_feature_size") && PyObject_HasAttrString(owner, "_placed_from"); ++depth)
+            {
+                PyObject* from = PyObject_GetAttrString(owner, "_placed_from");
+                Py_DECREF(owner);
+                owner = from;
+            }
+            double size = 0.0;
+            if (owner && PyObject_HasAttrString(owner, "_feature_size"))
+            {
+                PyObject* r = PyObject_GetAttrString(owner, "_feature_size");
+                if (r && PyNumber_Check(r)) size = PyFloat_AsDouble(r);
+                Py_XDECREF(r);
+            }
+            PyErr_Clear();
+            Py_XDECREF(owner);
+            shape->setFeatureSize(size > 0.0 ? float(size) : 0.0f);
         }
 
         // The exact triangles of a tessellated part (fieldes.stdlib.tessellated_import): (key, vertices as bytes of floats,
@@ -2156,6 +2362,35 @@ void Interpreter::recordShape(
                     Py_XDECREF(sp);
                     PyErr_Clear();
                 }
+                // The kind of a point of a morph body (`_point_kind`, set by morph._morph) says which parts of its gizmo it has: a corner point only moves, a sphere point moves and scales, a spline point has the whole gizmo
+                // (the user, 2026-11-04, H130: "A corner point always only displays move gizmo. Sphere point has move and scale and spline point has the full gizmo")
+                if (PyObject_HasAttrString(obj, "_point_kind"))
+                {
+                    PyObject* pk = PyObject_GetAttrString(obj, "_point_kind");
+                    const char* kindText = (pk && PyUnicode_Check(pk)) ? PyUnicode_AsUTF8(pk) : nullptr;
+                    if (kindText)
+                    {
+                        const std::string kind(kindText);
+                        if (kind == "corner" || kind == "sphere")
+                            for (int a = 0; a < 3; ++a) hd.rotate[a] = nullptr;
+                        if (kind == "corner")
+                        {
+                            for (int a = 0; a < 3; ++a) hd.scale[a] = nullptr;
+                            hd.influence = nullptr;
+                        }
+                    }
+                    Py_XDECREF(pk);
+                    PyErr_Clear();
+                }
+                // The largest influence the point can show (the radius of a sphere point stops at half the shortest edge, see morph._morph): the wheel and the ring keep the number below it
+                if (PyObject_HasAttrString(obj, "_influence_max"))
+                {
+                    PyObject* im = PyObject_GetAttrString(obj, "_influence_max");
+                    if (im && PyFloat_Check(im)) hd.influenceMax = PyFloat_AsDouble(im);
+                    else if (im && PyLong_Check(im)) hd.influenceMax = PyLong_AsDouble(im);
+                    Py_XDECREF(im);
+                    PyErr_Clear();
+                }
                 // The gizmo of an image (`_symmetry`: the matrix of the image, then its centre, then -- for the image that is a placed copy, see points.image_dot -- how far it is moved
                 // after): the original's numbers, placed where the image is -- its moves, its turn and its scale (a point's: how strongly a spline leaves it), which the viewport
                 // draws and drags at the image through the map
@@ -2205,6 +2440,52 @@ void Interpreter::recordShape(
                 shape->setGizmo(hd);
             }
             Py_XDECREF(h);
+            PyErr_Clear();
+        }
+
+        // The parts an operation is made of that are placed by numbers of a gizmo (fieldes.made_from, `_carried`: one gizmo tuple each): the viewport moves, turns and scales those with the
+        // operation, shown or hidden, so that the operation and its parts stay on top of each other (the user, 2026-11-03, H93: "only a one way link is necessary").  Nothing of it is in the script
+        if (PyObject_HasAttrString(obj, "_carried"))
+        {
+            PyObject* cs = PyObject_GetAttrString(obj, "_carried");
+            if (cs && PyTuple_Check(cs))
+            {
+                auto idOf = [](PyObject* v) -> libfive::Tree::Id {
+                    if (!v || !PyObject_HasAttrString(v, "ptr")) return nullptr;
+                    PyObject* p = PyObject_GetAttrString(v, "ptr");
+                    libfive::Tree::Id id = nullptr;
+                    if (p && PyLong_Check(p)) id = static_cast<libfive::Tree::Id>(PyLong_AsVoidPtr(p));
+                    Py_XDECREF(p);
+                    return id;
+                };
+                std::vector<Shape::Gizmo> carried;
+                for (Py_ssize_t k = 0; k < PyTuple_Size(cs); ++k)
+                {
+                    PyObject* h = PyTuple_GetItem(cs, k);
+                    if (!h || !PyTuple_Check(h) || PyTuple_Size(h) != 5) continue;
+                    Shape::Gizmo g;
+                    g.present = true;
+                    PyObject* about = PyTuple_GetItem(h, 1);
+                    if (PyTuple_Check(about) && PyTuple_Size(about) == 3)
+                    {
+                        g.about = QVector3D(float(PyFloat_AsDouble(PyTuple_GetItem(about, 0))),
+                                            float(PyFloat_AsDouble(PyTuple_GetItem(about, 1))),
+                                            float(PyFloat_AsDouble(PyTuple_GetItem(about, 2))));
+                    }
+                    PyObject* mv = PyTuple_GetItem(h, 2);
+                    PyObject* rt = PyTuple_GetItem(h, 3);
+                    PyObject* sc = PyTuple_GetItem(h, 4);
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        if (PyTuple_Check(mv) && PyTuple_Size(mv) == 3) g.move[a] = idOf(PyTuple_GetItem(mv, a));
+                        if (PyTuple_Check(rt) && PyTuple_Size(rt) == 3) g.rotate[a] = idOf(PyTuple_GetItem(rt, a));
+                        if (PyTuple_Check(sc) && PyTuple_Size(sc) == 3) g.scale[a] = idOf(PyTuple_GetItem(sc, a));
+                    }
+                    carried.push_back(g);
+                }
+                if (!carried.empty()) shape->setCarried(carried);
+            }
+            Py_XDECREF(cs);
             PyErr_Clear();
         }
 
@@ -2593,6 +2874,10 @@ void Interpreter::recordShape(
                         // elements drawn; the Elements button of the card, and the choice it made before, still decide)
                         PyObject* first = PyObject_GetAttrString(obj, "_elements_first");
                         if (first && PyObject_IsTrue(first) == 1 && shape->hasElements()) shape->setShowElements(true);
+                        // (a mesh -- the result of a meshing operation -- is its cells and nothing else: no body from its field, no button to show the cells)
+                        PyObject* cellsOnly = PyObject_GetAttrString(obj, "_cells_only");
+                        if (cellsOnly && PyObject_IsTrue(cellsOnly) == 1 && shape->hasElements()) shape->setCellsOnly(true);
+                        Py_XDECREF(cellsOnly);
                         Py_XDECREF(first);
                         PyErr_Clear();
                     }

@@ -23,44 +23,44 @@ view.set_resolution(3)
 view.set_quality(8)
 
 # the solids
-box_1 = box((-70, -10, 0), (-50, 10, 20))
+box_1 = box(20, position=(-60, 0, 10))
 box_1
 
-sphere_1 = sphere(10, (-30, 0, 10))
+sphere_1 = sphere(10, position=(-30, 0, 10))
 sphere_1
 
-cylinder_1 = cylinder(10, 20, (-10, 0, 0))
+cylinder_1 = cylinder(10, 20, position=(-10, 0, 0))
 cylinder_1
 
-cone_1 = cone(10, 20, (10, 0, 0))
+cone_1 = cone(10, 20, position=(10, 0, 0))
 cone_1
 
-pyramid_1 = pyramid((20, -10), (40, 10), 0, 20)
+pyramid_1 = pyramid(20, 20, position=(30, 0, 0))
 pyramid_1
 
 prism_1 = prism((50, -10), (70, -10), (60, 10), 0, 20)
 prism_1
 
-torus_1 = torus(10, 3, (90, 0, 10))
+torus_1 = torus(10, 3, position=(90, 0, 10))
 torus_1
 
-rounded_box_1 = rounded_box((100, -10, 0), (120, 10, 20), 0.3)
+rounded_box_1 = rounded_box(20, 0.3, position=(110, 0, 10))
 rounded_box_1
 
 # the flat shapes (drawn in the plane z = 0: look at them from above, View > Top, or the key 7)
-circle_1 = circle(8, (-70, -35))
+circle_1 = circle(8, position=(-70, -35))
 circle_1
 
-rectangle_1 = rectangle((-55, -43), (-40, -27))
+rectangle_1 = rectangle((15, 16), position=(-47.5, -35))
 rectangle_1
 
-rounded_rectangle_1 = rounded_rectangle((-30, -43), (-10, -27), 3)
+rounded_rectangle_1 = rounded_rectangle((20, 16), 3, position=(-20, -35))
 rounded_rectangle_1
 
-ring_1 = ring(8, 5, (5, -35))
+ring_1 = ring(8, 5, position=(5, -35))
 ring_1
 
-polygon_1 = polygon(8, 6, (30, -35))
+polygon_1 = polygon(8, 6, position=(30, -35))
 polygon_1
 
 triangle_1 = triangle((45, -43), (65, -43), (55, -27))

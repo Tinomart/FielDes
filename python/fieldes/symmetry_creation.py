@@ -2,7 +2,7 @@
 What the viewport writes when something is made while a symmetry is selected (Shift+S): the images of what is made, as ONE model under it --
 `leg_images = symmetry_images(leg, symmetry_1)` (all the images of a body, a 2D shape or a point, or `only=(1, 3)` of them) -- `symmetry_1` is the symmetry
 model.  What an operation makes of other models (a path_extrude, a union ...) gets `symmetry_images(x, symmetry_1, distinct=True)`: the images that are not the model itself.  A surface
-or a field is written with a model for each image, `symmetry_image(model, symmetry_1, 3)`: 3 is the number of the image in the symmetry.
+or a field is written with a model for each image, `symmetry_image(model, symmetry_1, 3)`: 3 is the number of the image in the symmetry (a surface that the menu makes has none: it is made once, H92).
 
 The symmetry arrives in a request as {var: 'symmetry_1', centre: [x, y, z], elements: [{mirror: [nx, ny, nz] | null, turn: [[ax, ay, az], degrees] | null}, ...]}: its name, and
 every image but the identity as the places it takes a point to -- for what has to be known now (an image that is the model itself is not made; where the images of the points of
@@ -169,8 +169,13 @@ def post_for(var, call_text, request, prelude=''):
             kind = kind_of(shape)
         except Exception:
             kind = None
-    if kind in ('surface', 'field'):
-        # (a surface or a field has no union that means anything: a model for each image)
+    if kind == 'surface':
+        # (a surface is made once: its image in the symmetry in use was a second surface, the same and slightly offset, that nobody asked for -- the user, 2026-11-03, H92: "There is only one option and it says
+        # new surface, which when clicked creates to surfaces, both the same, slightly offset ... That is obviously completely wrong behaviour, fix it".  A surface that is wanted in the symmetry is added by
+        # hand, Shift+S, as every model is)
+        return ''
+    if kind == 'field':
+        # (a field has no union that means anything: a model for each image)
         return ''.join(image_statement(var, '%s_m%d' % (var, k), elements[i], symmetry['var']) for k, i in enumerate(keep, 1))
     # One model for all the images: the union of those of a body or a 2D shape, the set of the images of a point
     only = '' if len(keep) == len(elements) else ', only=(%s)' % ', '.join(str(elements[i].index) for i in keep)
@@ -250,6 +255,41 @@ def stroke_structure(points, elements, name, close, tol):
         loops, rest = _join_meeting(strokes) if len(strokes) > 1 else ([], strokes)
         shapes = [('profile', s) for s in loops] + [(name, s) for s in rest]
     return made, shapes
+
+
+def partner_links(points, elements, tol):
+    ''' A body made of points that is its own image in every image of the symmetry -- a cube made with its middle on a plane of the symmetry: each point has its mirror partner among
+        the points -- needs no image of its own, and no point on top of another: the symmetry is applied to every individual point, and an image that lands on a point that is there IS that
+        point (the user, 2026-11-02: "if one already has one that is the same thing ... shouldnt create another point on top of the current ones").  Returns {j: (i, e)}: the point j is the
+        image of the earlier point i by the image number e (0 ..), which is how it is written -- `symmetry_image(p_i, symmetry, e + 1)` -- so that moving i moves j.  A point that is its own
+        image (on a plane) or the first of its partners is not in it.  None when some point has no partner in some image: the body is mirrored as a whole then, as it was '''
+    def index_at(q):
+        for k, p in enumerate(points):
+            if math.dist(p, q) < tol:
+                return k
+        return None
+    for el in elements:
+        for p in points:
+            if index_at(el.apply(p)) is None:
+                return None
+    return partner_pairs(points, elements, tol)
+
+
+def partner_pairs(points, elements, tol):
+    ''' The points that have an exact mirror partner earlier in the list: {j: (i, e)}, the point j is the image of the earlier point i by the image number e (0 ..).  Not all or nothing, as
+        `partner_links` is: the points that have no partner are simply not in it -- a symmetry applied LATER to a shape that was made without one links the points that have an exact
+        partner under it and leaves the others as they are (the user, 2026-11-02: "a symmetry applies to points that already have an exact mirror partner").  A point that is its own image
+        (on a plane) is not in it, and a point that is an image already has no partners of its own (its partners are the images of the first of them) '''
+    links = {}
+    for j, pj in enumerate(points):
+        for i in range(j):
+            if i in links:
+                continue                                     # (an image already: its partners are the images of the first of them)
+            hit = next((e for e, el in enumerate(elements) if math.dist(el.apply(points[i]), pj) < tol), None)
+            if hit is not None and math.dist(points[i], pj) >= tol:
+                links[j] = (i, hit)
+                break
+    return links
 
 
 def simple_images(points, elements, tol):

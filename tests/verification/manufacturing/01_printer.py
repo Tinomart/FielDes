@@ -20,16 +20,16 @@ t = Table('01 a printer\'s job: a thin fin, a narrow slot, a ledge and a round h
 
 # THE PART (written out here: boxes and cylinders, nothing computed).  In front: a fin 1.2 thick, two blocks 0.7 apart, an L of two walls, a round boss, a hole.  Behind: a wall with a ledge (left) and a
 # block with a horizontal hole (right)
-plate = difference(box((0, 0, 0), (76, 90, 5)), cylinder(2.5, 7, (62, 8, -1)))
-fin = box((5, 5, 5), (6.2, 20, 17))
-block_a = box((10, 5, 5), (18, 20, 13))
-block_b = box((18.7, 5, 5), (26.7, 20, 13))
-ell = union(box((32, 5, 5), (44, 8, 15)), box((32, 5, 5), (35, 25, 15)))
-boss = cylinder(5, 10, (55, 28, 5))
-wall = box((0, 46, 5), (10, 86, 45))
-ledge = box((10, 46, 25), (30, 86, 30))
-block = box((36, 46, 5), (76, 66, 35))
-hole = rotate_x(cylinder(5, 30, (56, 20, -71)), math.pi / 2)          # (a round hole along y through the block, its axis at x = 56, z = 20)
+plate = difference(box((76, 90, 5), position=(38, 45, 2.5)), cylinder(2.5, 7, position=(62, 8, -1)))
+fin = box((1.2, 15, 12), position=(5.6, 12.5, 11))
+block_a = box((8, 15, 8), position=(14, 12.5, 9))
+block_b = box((8, 15, 8), position=(22.7, 12.5, 9))
+ell = union(box((12, 3, 10), position=(38, 6.5, 10)), box((3, 20, 10), position=(33.5, 15, 10)))
+boss = cylinder(5, 10, position=(55, 28, 5))
+wall = box((10, 40, 40), position=(5, 66, 25))
+ledge = box((20, 40, 5), position=(20, 66, 27.5))
+block = box((40, 20, 30), position=(56, 56, 20))
+hole = rotate_x(cylinder(5, 30, position=(56, 20, -71)), math.pi / 2)          # (a round hole along y through the block, its axis at x = 56, z = 20)
 part = plate
 for piece in (fin, block_a, block_b, ell, boss, wall, ledge):
     part = union(part, piece)
@@ -38,8 +38,8 @@ part = difference(union(part, block), hole)
 # WHAT IS ASKED: the preset of a printer with a 1.0 mm nozzle (walls of 2.0, gaps of 1.0, bridges up to 20 mm), and an overhang of 45 degrees held in two places only: a gusset under the ledge, a teardrop
 # above the hole (`region=` holds a rule in one part of the part; the printers' presets leave the overhang to the slicer).  The only conditions the tool is given: it has no loads, supports or material
 rule = fff_constraint(nozzle=1.0)
-rule_ledge = manufacturing_constraint(overhang=45, overhang_fix='fill', region=box((-2, 44, 3), (32, 88, 47)))
-rule_hole = manufacturing_constraint(overhang=45, overhang_fix='cut', region=box((34, 44, 3), (78, 68, 37)))
+rule_ledge = manufacturing_constraint(overhang=45, overhang_fix='fill', region=box((34, 44, 44), position=(15, 66, 25)))
+rule_hole = manufacturing_constraint(overhang=45, overhang_fix='cut', region=box((44, 24, 34), position=(56, 56, 20)))
 rules = [rule, rule_ledge, rule_hole]
 
 # THE CHECK: where the part breaks the rules of the nozzle, before anything is changed

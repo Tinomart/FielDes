@@ -20,13 +20,13 @@ from mfgkit import *
 t = Table('g4_holes_and_cavity: closed and narrow spaces: a hollow cube with 0.5 mm walls, and holes of 0.3, 0.5, 0.62 and 1.0 mm in a block for a gap rule of 0.6 mm: the small ones must close, the others stay')
 
 # (a) THE HOLLOW CUBE: a cube 24 mm with a closed cavity inside it, the walls 0.5 mm thick: the wall rule 0.8 asks for thicker walls; the cavity has to stay a cavity
-cube = difference(box((0, 0, 0), (24, 24, 24)), box((0.5, 0.5, 0.5), (23.5, 23.5, 23.5)))
+cube = difference(box(24, position=(12, 12, 12)), box(23, position=(12, 12, 12)))
 # (b) THE BLOCK: 30 x 12 x 10 with four round holes through it, across 0.3, 0.5, 0.62 and 1.0 mm; a gap of 0.6 asked, and the check allows 5 % (a hole under 0.57 is too narrow)
 diameters = [0.3, 0.5, 0.62, 1.0]
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-block = box((50, 0, 0), (80, 12, 10))
+block = box((30, 12, 10), position=(65, 6, 5))
 for i, d in enumerate(diameters):
-    block = difference(block, cylinder(d / 2.0, 12, (55 + 6.5 * i, 6, -1)))
+    block = difference(block, cylinder(d / 2.0, 12, position=(55 + 6.5 * i, 6, -1)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 wall_rule = manufacturing_constraint(min_wall=0.8)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)

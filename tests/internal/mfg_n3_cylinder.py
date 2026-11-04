@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('n3_cylinder: a cylinder of radius 10 and height 30: a smooth part that keeps every rule')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = cylinder(10, 30, (0, 0, 0))
+part = cylinder(10, 30)
 lo, hi = (-13, -13, -3), (13, 13, 33)
 res = control(t, part, lo, hi, 'cylinder')
 

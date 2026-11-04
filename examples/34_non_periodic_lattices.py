@@ -14,31 +14,31 @@
 from fieldes import *
 
 view.set_bounds([-22, -22, -22], [110, 66, 22], auto_scale=True)
-view.set_resolution(4)
+view.set_resolution(20)
 view.set_quality(8)
 
 # ---- row 1: a random net over a surface -----------------------------------------------------------------------------------------------------------
-block = difference(box((-15, -15, -8), (15, 15, 8)), sphere(7, (0, 0, 8)))
+block = difference(box((30, 30, 16)), sphere(7, position=(0, 0, 8)))
 net = surface_lattice(block, cell_size=5, thickness=1.0)                                  # cells that are mostly hexagons, three beams at every node
 net
 
-block_b = difference(box((29, -15, -8), (59, 15, 8)), sphere(7, (44, 0, 8)))
+block_b = difference(box((30, 30, 16), position=(44, 0, 0)), sphere(7, position=(44, 0, 8)))
 triangles = surface_lattice(block_b, cell_size=5, pattern="delaunay", thickness=1.0)      # the same, in triangles
 triangles
 
-ball = sphere(15, (88, 0, 0))
+ball = sphere(15, position=(88, 0, 0))
 inside = intersection(surface_lattice(ball, cell_size=5, thickness=1.2), ball)            # half of each beam is outside the body: this is the net inside it
 inside
 
 # ---- row 2: foams ----------------------------------------------------------------------------------------------------------------------------------
-ball_c = sphere(15, (0, 44, 0))
+ball_c = sphere(15, position=(0, 44, 0))
 cut = voronoi_lattice(random_points(ball_c, spacing=6, seed=1), thickness=1.0)            # the surface cuts the beams off
 cut
 
-ball_d = sphere(15, (44, 44, 0))
+ball_d = sphere(15, position=(44, 44, 0))
 clean = voronoi_lattice(random_points(ball_d, spacing=6, surface=True, seed=1), thickness=1.0)       # a net of beams on the surface, joined to the foam inside
 clean
 
-ball_e = sphere(15, (88, 44, 0))
+ball_e = sphere(15, position=(88, 44, 0))
 truss = delaunay_lattice(random_points(ball_e, spacing=6, surface=True, seed=1), thickness=1.0)      # beams along the surface between the points
 truss

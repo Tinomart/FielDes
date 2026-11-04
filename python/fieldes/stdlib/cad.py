@@ -34,7 +34,7 @@ from fieldes.stdlib.fields import _shape_bounds, _eval_many, mass_properties
 from fieldes.stdlib.shapes import cylinder, _own, _parametric, _bounded
 from fieldes.stdlib.transforms import move
 
-__all__ = ['rotate', 'reflect', 'mirror', 'linear_pattern', 'circular_pattern', 'revolve', 'cut_plane', 'split', 'hole_cutter', 'hole', 'screw_spec', 'threaded_rod',
+__all__ = ['rotate', 'reflect', 'mirror', 'linear_pattern', 'circular_pattern', 'revolve', 'cut_plane', 'split', 'hole_cutter', 'hole', 'screw_spec', 'threaded_rod', 'threaded_rod_normed',
            'capsule', 'tube', 'slot', 'align', 'surface_area', 'section_area', 'interference', 'distance_between']
 
 X, Y, Z = Shape.X, Shape.Y, Shape.Z
@@ -403,7 +403,10 @@ def hole_cutter(position, diameter=None, depth=None, direction=(0, 0, -1), kind=
         groove = r - (minor / 2.0 + _thread_flank(_thread_phase(spec['pitch'], hand)) * ((major - minor) / 2.0))       # (negative in the groove of the thread)
         groove = intersection(intersection(groove, -margin - Z()), Z() - reach)
         cutter = union(cutter, groove)
-    return _in_frame(cutter, position, direction)
+    out = _in_frame(cutter, position, direction)
+    if threaded:
+        out._feature_size = spec['pitch']          # (the turns of the thread are what the viewport must be able to draw: see _rod_of)
+    return out
 
 
 def hole(body, position, diameter=None, depth=None, direction=(0, 0, -1), kind='simple', head_diameter=None, head_depth=None, angle=90.0,
@@ -411,37 +414,93 @@ def hole(body, position, diameter=None, depth=None, direction=(0, 0, -1), kind='
     ''' The body with a hole in it: it starts on the surface at `position` and goes `depth` into the body along `direction` (the default goes down; through everything
         when `depth` is None), `diameter` wide, or the size of the screw: `hole(plate, (10, 10, 4), screw='M6', kind='counterbore')`.  `kind` is 'simple', 'counterbore',
         'countersink' or 'tapped' (see hole_cutter, which says it all) '''
-    return difference(_s(body), hole_cutter(position, diameter, depth, direction, kind, head_diameter, head_depth, angle, screw, fit, pitch, thread_depth, modeled, hand))
+    cutter = hole_cutter(position, diameter, depth, direction, kind, head_diameter, head_depth, angle, screw, fit, pitch, thread_depth, modeled, hand)
+    out = difference(_s(body), cutter)
+    if getattr(cutter, '_feature_size', None):
+        out._feature_size = cutter._feature_size
+    return out
 
 
-def _rod_of(spec, hand, cx, cy, z0, z1, anchor, major=None):
-    ''' A rod with the ISO thread of `spec` along the vertical line through (cx, cy), from the height z0 to z1: its numbers are its diameter and the heights of its ends, so the handles pull
-        the side of the rod (the diameter starts as the screw's; the pitch stays, and so does the profile of the thread, which is as deep as it was) and an end each.  `anchor` is where the
-        thread starts, which an end that is pulled does not move '''
-    pitch = spec['pitch']
-    if major is None:
-        major = spec['diameter']
-    depth = 1.2269 * pitch                                           # (from the crest of the thread to its root: the ISO profile)
+# The pitch of a thread in proportion to the radius of its rod, so that a thick rod and a thin one are the same shape at two sizes.  This is the proportion of the ISO coarse thread of an M8 (the
+# radius 4, the pitch 1.25), which a rod has unless it says a pitch
+_PITCH_PER_RADIUS = 1.25 / 4.0
+
+
+def _rod_of(ratio, hand, cx, cy, z0, z1, anchor, radius):
+    ''' A rod of the radius `radius` with an ISO thread along the vertical line through (cx, cy), from the height z0 to z1: its numbers are its radius and the heights of its ends, so the handles
+        pull the side of the rod and an end each.  The thread is in proportion to the radius -- its pitch is `ratio` radii and its depth is that of the ISO profile, 1.2269 pitches -- so a rod
+        made thinner has a thinner thread, not the same deep thread on a thin core (the user, 2026-10-28: "rescaling should also scale the thread").  `anchor` is where the thread starts, which an
+        end that is pulled does not move '''
+    # The pitch is a NUMBER, the one this run gives it (`ratio` radii), and the depth is an expression of the radius's var(): while the side is pulled the depth follows the radius and the turns of the
+    # thread stay where they are.  (A pitch that followed the radius moves the turns by the distance from the anchor over the pitch, ~20 turns for a millimetre of the radius at the far end of a rod: a
+    # flank sweeps through any point of the surface twenty times while the radius changes by a millimetre, and the solver that finds the radius to pull a point to the cursor has twenty roots to jump between
+    # -- it hit its 25000 iterations and froze, on a flank; on a crest, where the field does not change along the thread, it was instant: the user, 2026-10-28, "sometimes changing the thread radius with the drag
+    # handles causes huge freezes and lag ... I think this depends on what direction the normal of the surface of the thread is".)  The run that follows the drag gives the thread its new pitch
+    pitch = _plain(radius, 'radius') * ratio
+    depth = radius * (ratio * 1.2269)                                # (from the crest of the thread to its root: the ISO profile, in proportion to the radius)
     r = ((X() - cx).square() + (Y() - cy).square()).sqrt()
-    material = r - ((major - depth) * 0.5 + _thread_flank(_thread_phase(pitch, hand, (cx, cy), anchor)) * (depth * 0.5))       # (negative in the thread)
+    material = r - ((radius * 2.0 - depth) * 0.5 + _thread_flank(_thread_phase(pitch, hand, (cx, cy), anchor)) * (depth * 0.5))       # (negative in the thread)
     out = _own(material.max(_s(z0) - Z()).max(Z() - _s(z1)))
     # (the flanks of a thread face up, down and out, and the side of the rod is pulled the same way wherever it is pressed: along the radius, away from this axis -- see View: the part of the
     # normal that lies along the axis is not taken)
     out._pull_axis = (0.0, 0.0, 1.0)
-    width = _plain(major, 'diameter')
+    width = 2.0 * _plain(radius, 'radius')
     _bounded(out, (cx - width / 2.0, cy - width / 2.0, z0), (cx + width / 2.0, cy + width / 2.0, z1))
-    _parametric(out, [major, z0, z1], lambda v: _rod_of(spec, hand, cx, cy, v[1], v[2], anchor, v[0]))
+    _parametric(out, [radius, z0, z1], lambda v: _rod_of(ratio, hand, cx, cy, v[1], v[2], anchor, v[0]))
+    # (the smallest thing the viewport must be able to draw of it: one turn of the thread.  A coarse picture of it -- the first one of a drag, which is at a fraction of the final resolution --
+    # is as fine as that needs, so that the thread is not drawn as the random spikes of a grid it does not fit: see Shape::finestFeature)
+    out._feature_size = _plain(radius, 'radius') * ratio
     return out
 
 
-def threaded_rod(screw, length, base=(0, 0, 0), pitch=None, hand='right'):
-    ''' A rod with a right-hand ISO thread (`hand='left'` for a left-hand one) along its whole length, standing along z on `base`: the screw (`screw='M8'`, `pitch` for a fine one) is the
-        nominal diameter, the thread has the ISO profile (the root at the diameter 1.2269 pitches under the nominal).  It fits the hole of hole(..., kind='tapped', modeled=True) of the
-        same screw.  Its handles pull its side (the diameter: the pitch stays, and so does the profile of the thread) and its two ends.  Like a thread, it wants a fine mesh to draw '''
+def threaded_rod(radius, length, base=(0, 0, 0), pitch=None, hand='right'):
+    ''' A threaded cylinder: a rod of the radius `radius` and the length `length` standing along z on `base`, with a right-hand thread cut into it (`hand='left'` for a left-hand one), as big as a
+        cylinder of the same two numbers.  The thread is in proportion to the radius -- it is the proportion of an ISO thread (a radius of 4 has the pitch 1.25 of an M8) unless `pitch` says
+        another pitch for this radius -- so a rod pulled thinner has a thinner thread and the shape is the same at any size; the depth of the thread is that of the ISO profile, 1.2269 pitches.
+        Its handles pull its side (the radius) and its two ends.  It fits the hole of hole(..., kind='tapped', modeled=True) of the screw of the same radius and pitch (a radius of 4, an M8).  A thread
+        wants a fine mesh to draw: the viewport draws it at one that shows the turns '''
+    if isinstance(radius, str):
+        raise TypeError("threaded_rod(): the first argument is the radius of the rod in mm, as the radius of a cylinder is -- not the name of a screw: for the thread of an M8 give the radius 4 "
+                        "(its pitch is the proportion of the radius a thread has, 1.25), or say the pitch=")
+    r = _positive(radius, 'radius')
+    h = _positive(length, 'length')
+    b = _xyz(base, 'base')
+    if pitch is None:
+        ratio = _PITCH_PER_RADIUS
+    else:
+        fine = _plain(pitch, 'pitch')
+        if not 0.0 < fine < _plain(r, 'radius'):
+            raise ValueError('pitch must be more than 0 and less than the radius {:g}'.format(_plain(r, 'radius')))
+        ratio = fine / _plain(r, 'radius')
+    return _rod_of(ratio, hand, b[0], b[1], b[2], b[2] + h, _plain(b[2], 'base'), r)
+
+
+def _normed_rod_of(spec, hand, cx, cy, z0, z1, anchor):
+    ''' A rod with the ISO thread of the screw `spec` (screw_spec) along the vertical line through (cx, cy), from the height z0 to z1: the nominal diameter, the pitch and the depth of the thread
+        are the screw's, fixed numbers -- no handle pulls them, as the size of a bolt is not a thing to pull '''
+    pitch = spec['pitch']
+    depth = 1.2269 * pitch                                           # (from the crest of the thread to its root: the ISO profile)
+    r = ((X() - cx).square() + (Y() - cy).square()).sqrt()
+    material = r - ((spec['diameter'] - depth) * 0.5 + _thread_flank(_thread_phase(pitch, hand, (cx, cy), anchor)) * (depth * 0.5))       # (negative in the thread)
+    out = _own(material.max(_s(z0) - Z()).max(Z() - _s(z1)))
+    half = spec['diameter'] / 2.0
+    _bounded(out, (cx - half, cy - half, z0), (cx + half, cy + half, z1))
+    out._feature_size = pitch                                         # (one turn of the thread: see _rod_of)
+    # (the handles are the two ends, the top and the bottom, and nothing else: the size of a bolt is not a thing to pull, and without numbers declared here the surface of its side was
+    # dragged by the base of the rod, sideways, with the thread running away under the hand -- the user, 2026-11-03: "It should just have no handle for its sides, only for the top and bottom")
+    _parametric(out, [z0, z1], lambda v: _normed_rod_of(spec, hand, cx, cy, v[0], v[1], anchor))
+    return out
+
+
+def threaded_rod_normed(screw, length, base=(0, 0, 0), pitch=None, hand='right'):
+    ''' A rod with a right-hand ISO thread of a standard screw (`hand='left'` for a left-hand one) along its whole length, standing along z on `base`: the screw (`screw='M8'`, `pitch` for a fine
+        one) is the nominal diameter and gives the pitch, and the thread has the ISO profile (the root at the diameter 1.2269 pitches under the nominal).  It fits the hole of
+        hole(..., kind='tapped', modeled=True) of the same screw.  The sizes are the screw's: no handle pulls them. Its handles are its two ends, the top and the bottom, and nothing on its side (for a thread that is pulled to any size, and scales with it, use threaded_rod).
+        Like a thread, it wants a fine mesh to draw '''
     spec = screw_spec(screw, pitch)
     h = _positive(length, 'length')
     b = _xyz(base, 'base')
-    return _rod_of(spec, hand, b[0], b[1], b[2], b[2] + h, _plain(b[2], 'base'))
+    return _normed_rod_of(spec, hand, b[0], b[1], b[2], b[2] + h, _plain(b[2], 'base'))
 
 
 def _in_frame(shape, position, direction):
@@ -718,11 +777,14 @@ def distance_between(a, b, element_size=None):
 # What the menus offer these for: bodies (a profile for revolve), see fieldes.kinds.takes
 from fieldes.kinds import takes as _declare, BODIES as _BODIES
 
-for _fn in (rotate, reflect, mirror, linear_pattern, circular_pattern, cut_plane, hole):
+for _fn in (reflect, linear_pattern, circular_pattern, cut_plane, hole):
     _fn._takes = _declare(_BODIES, [_BODIES])
+# (rotate and mirror are offered for points as well: with points selected they change the points themselves, in place -- profile_edit._transform_points; move, rotate_z and scale_xyz take any shape)
+for _fn in (rotate, mirror):
+    _fn._takes = _declare(_BODIES | {'point'}, [_BODIES | {'point'}])
 revolve._takes = _declare({'profile'}, [{'profile'}])
 
 # What they make, for the model tree before the statement has run (a run says it exactly): a body -- a 3D shape with a gizmo --, or a 2D shape for slot
-for _fn in (rotate, reflect, mirror, linear_pattern, circular_pattern, revolve, cut_plane, hole, hole_cutter, threaded_rod, capsule, tube, align):
+for _fn in (rotate, reflect, mirror, linear_pattern, circular_pattern, revolve, cut_plane, hole, hole_cutter, threaded_rod, threaded_rod_normed, capsule, tube, align):
     _fn._makes = 'solid'
 slot._makes = 'profile'

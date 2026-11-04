@@ -53,12 +53,12 @@ def run(label, fn):
 
 
 L, W = 40.0, 10.0
-bar = box((0, 0, 0), (L, W, W))
-end0 = box((-1, -1, -1), (0, W + 1, W + 1))                 # the face x = 0
-endL = box((L, -1, -1), (L + 1, W + 1, W + 1))              # the face x = L
-corner_a = box((-1, -1, -1), (0.1, 0.1, 0.1))               # the edge points that stop the bar from moving as a whole
-corner_b = box((-1, W - 0.1, -1), (0.1, W + 1, 0.1))
-corner_c = box((-1, -1, W - 0.1), (0.1, 0.1, W + 1))
+bar = box((L, W, W), position=(L / 2, W / 2, W / 2))
+end0 = box((1, (W + 1) - (-1), (W + 1) - (-1)), position=(-0.5, ((-1) + (W + 1)) / 2, ((-1) + (W + 1)) / 2))                 # the face x = 0
+endL = box(((L + 1) - L, (W + 1) - (-1), (W + 1) - (-1)), position=((L + (L + 1)) / 2, ((-1) + (W + 1)) / 2, ((-1) + (W + 1)) / 2))              # the face x = L
+corner_a = box(1.1, position=(-0.45, -0.45, -0.45))               # the edge points that stop the bar from moving as a whole
+corner_b = box((1.1, (W + 1) - (W - 0.1), 1.1), position=(-0.45, ((W - 0.1) + (W + 1)) / 2, -0.45))
+corner_c = box((1.1, 1.1, (W + 1) - (W - 0.1)), position=(-0.45, -0.45, ((W - 0.1) + (W + 1)) / 2))
 pins = [(corner_a, (None, 0.0, 0.0)), (corner_b, (None, None, 0.0)), (corner_c, (None, 0.0, None))]
 
 print('--- the solvers there are')
@@ -237,7 +237,7 @@ try:
 except ValueError as e:
     check('heat without a place where the temperature is given is refused', 'fixed' in str(e), str(e)[:160])
 try:
-    solve('elasticity', bar, element_size=5, fixed=[(box((100, 100, 100), (101, 101, 101)), (0.0, 0.0, 0.0))])
+    solve('elasticity', bar, element_size=5, fixed=[(box(1, position=(100.5, 100.5, 100.5)), (0.0, 0.0, 0.0))])
     check('a region with no node in it is refused', False)
 except ValueError as e:
     check('a region with no node in it is refused', 'no node' in str(e), str(e)[:160])

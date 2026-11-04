@@ -18,7 +18,7 @@ from mfgkit import *
 t = Table('d1_upright: an upright 10 x 10 x 30, a draft of 2 degrees asked: wider at the foot by 30 x tan 2 degrees, the top as it is')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = box((0, 0, 0), (10, 10, 30))
+part = box((10, 10, 30), position=(5, 5, 15))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(draft=2.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

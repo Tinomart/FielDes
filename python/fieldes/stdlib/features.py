@@ -201,6 +201,11 @@ class _Surface:
             centre = tuple(sum(p[a] for p, _ in kept) / len(kept) for a in range(3))
             faces.append((normal, centre, len(kept)))
         faces.sort(key=lambda f: -f[2])
+        # (the samples that lie within a step of an edge have a gradient that is smeared across it, between the normals of the two faces; a few of them are within 25 degrees of one another and make a
+        # "face" of three or four samples, which turns an edge into a corner for the search -- the slanted edge at one corner of a pyramid was not found for it (H112, measured: 4 smeared samples
+        # against 44 and 42 of the real faces).  A face with fewer than a seventh of the samples of the biggest one is no face)
+        if faces:
+            faces = [f for f in faces if f[2] >= max(3.0, 0.15 * faces[0][2])]
         return faces
 
 
@@ -293,8 +298,15 @@ def find_feature(values, near, scale, size, kind=None):
         return None
     if kind == 'edge' and found['kind'] == 'corner':
         # (a corner has edges: the edge that goes nearest the place is looked for again, away from the corner)
-        found = _edge_of_corner(surface, near, r, found)
+        corner_found = found
+        found = _edge_of_corner(surface, near, r, corner_found)
         if found is None:
+            # (the rim of a cylinder or a cone, at some places round it, is read as a corner with no edge -- measured on cylinder(10, 20): edge_at was lost at 8 of 24 places of the top rim, the
+            # place the menu wrote among them; when the circle through the place is there, that is the edge)
+            rim = _edge_from_corner(surface, corner_found, r)
+            if rim is not None:
+                rim['straight'] = None if _find_circle(surface, near, r) is not None else _straight(surface, rim)
+                return rim
             return None
     elif kind is not None and found['kind'] != kind:
         return None
@@ -377,6 +389,163 @@ def _straight(surface, edge):
     return None
 
 
+def _on_segment(p, a, b, tol):
+    ''' Whether the place p lies within tol of the segment from a to b '''
+    ab = _sub(b, a)
+    length2 = _dot(ab, ab)
+    t = 0.0 if length2 < 1e-24 else max(0.0, min(1.0, _dot(_sub(p, a), ab) / length2))
+    return _norm(_sub(p, _add(a, _mul(ab, t)))) <= tol
+
+
+def _crease_flags(surface, points, u, size):
+    ''' For each place of a line (all of them on the one line of direction u): whether the surface is there AND has a crease along the line there -- an edge --, and not a face that the line runs across
+        (a seam in a flat face, where two cubes side by side make one face: the surface is on the line there, but it is on both sides of it as well).  Read from the field alone, with no normal: a ring of 24
+        places a hundredth of the body round the line, across it; how much of the ring is inside the body says what the line is on -- half of it on a face, a quarter at a convex edge of a right angle,
+        three quarters at a reflex one.  Within 7 % of a half (the faces on both sides turn by less than 25 degrees, which is what the library calls one face) it is no edge '''
+    delta = 0.01 * size
+    e = min(range(3), key=lambda i: abs(u[i]))
+    axis = [0.0, 0.0, 0.0]
+    axis[e] = 1.0
+    a = _unit(_cross(u, tuple(axis)))
+    b = _cross(u, a)
+    ring = []
+    for k in range(24):
+        t = 2.0 * math.pi * k / 24.0
+        ring.append(_add(_mul(a, delta * math.cos(t)), _mul(b, delta * math.sin(t))))
+    batch = []
+    for p in points:
+        batch.append(p)
+        for r in ring:
+            batch.append(_add(p, r))
+    field = surface.values(batch)
+    quiet = 1e-5 * size
+    out = []
+    for i in range(len(points)):
+        base = 25 * i
+        if abs(field[base]) > 1e-4 * size:
+            out.append(False)                           # (the surface is not on the line here)
+            continue
+        inside = 0.0
+        for k in range(24):
+            v = field[base + 1 + k]
+            inside += 1.0 if v < -quiet else (0.5 if v <= quiet else 0.0)
+        out.append(not (0.43 <= inside / 24.0 <= 0.57))
+    return out
+
+def _walk_edge(surface, start, u, size):
+    ''' From `start`, a place on an edge, along u: the farthest place on the line that is still on the edge (steps of a hundredth of the body, then halving), and how wide the last gap was '''
+    step = size / 100.0
+    surface.step = 1e-3 * size
+    good, t, chunk, walked = 0.0, 0.0, 8, 0
+    while walked < 400:
+        ts = [t + (k + 1) * step for k in range(chunk)]
+        flags = _crease_flags(surface, [_add(start, _mul(u, s)) for s in ts], u, size)
+        walked += chunk
+        failed = None
+        for s, flag in zip(ts, flags):
+            if not flag:
+                failed = s
+                break
+            good = s
+        if failed is not None:
+            lo, hi = good, failed
+            for _ in range(12):
+                mid = 0.5 * (lo + hi)
+                if _crease_flags(surface, [_add(start, _mul(u, mid))], u, size)[0]:
+                    lo = mid
+                else:
+                    hi = mid
+            return _add(start, _mul(u, lo)), hi - lo
+        t = ts[-1]
+        chunk = min(2 * chunk, 32)
+    return _add(start, _mul(u, good)), 0.0
+
+
+def _corner_near(surface, p, size):
+    ''' The corner of the body at the place where an edge ended (within 4.5 % of the body of it), or None: an edge ends at a corner, anything else is no edge of ours '''
+    reach = 0.03 * size
+    found = _find(surface, p, reach)
+    if found is not None and found['kind'] == 'corner' and _norm(_sub(found['point'], p)) <= 1.5 * reach:
+        return found['point']
+    return None
+
+
+def _straight_edges_at(surface, corner, size, known=()):
+    ''' The straight edges that leave a corner: [(corner, far corner)].  The ways out are the lines that two of the faces round the corner make (either way from the corner); a way is an edge only where
+        the surface has a crease along it a little way out (`_crease_flags`: a read of the field -- the ways into the body, into the air or along a flat face are dropped there), and the edge on it is
+        walked to its other end (`_walk_edge`), which has to be a corner.  The edges that are `known` (the one the corner was reached by, and any found from another corner) are not walked again '''
+    out = []
+    faces = surface.faces(corner, max(0.0075 * size, 2e-4 * size))
+    ways = []
+    for i in range(len(faces)):
+        for j in range(i + 1, len(faces)):
+            d = _cross(faces[i][0], faces[j][0])
+            if _norm(d) < _PARALLEL:
+                continue
+            u = _unit(d)
+            ways.append(u)
+            ways.append(_mul(u, -1.0))
+    along = 0.01 * size
+    for u in ways:
+        probe = _add(corner, _mul(u, along))
+        if not _crease_flags(surface, [probe], u, size)[0]:
+            continue                                    # (no edge goes out of the corner along this line)
+        if any(_on_segment(probe, a, b, 0.5 * along) for a, b in list(known) + out):
+            continue                                    # (an edge that is already there)
+        far, gap = _walk_edge(surface, probe, u, size)
+        end = _corner_near(surface, far, size)
+        if end is None or _norm(_sub(end, corner)) < _MIN_STRAIGHT * size:
+            continue
+        out.append((corner, end))
+    return out
+
+
+def connected_edges(values, near, scale, size, limit=400, seconds=20.0):
+    ''' H97 (the user, 2026-11-03: "A line along connected edges operation.  It is the same thing as the current line along the edge ... except that it doesnt stop at any node that splits into multiple
+        edges and creates edges in all possible directions, meaning every edge connected to the edge that would be created is also created"): every straight edge that is joined to the edge nearest
+        `near`, through its corners and the corners of those, in every direction: [(p0, p1), ...], the picked edge first.  `values(points)` is the field at many points, `scale` the neighbourhood that is
+        looked in (as for `find_feature`), `size` the size of the body.  An empty list when there is no straight edge near `near`.  It stops after `limit` edges or `seconds` -- what was found by then
+        is returned: a body with very many edges does not make the call run for ever.  An edge that is not a straight line (a circle, a curve along a surface) is not followed '''
+    import time
+    began = time.perf_counter()
+    first = find_feature(values, near, scale, size, 'edge')
+    if first is None or first.get('direction') is None:
+        return []
+    surface = _Surface(values, size)
+    tol = 0.02 * size
+    edges = []
+    corners = []
+    # (the picked edge is walked both ways from the place that was found on it, with the crease at every step, as every other edge: `first['straight']` follows the surface for as long as it stays on the
+    # line, which on a flat face runs on past the corner where the edge really ends)
+    u = first['direction']
+    start = first['point']
+    ends = []
+    for sign in (1.0, -1.0):
+        far, gap = _walk_edge(surface, start, _mul(u, sign), size)
+        ends.append(_corner_near(surface, far, size))
+    if ends[0] is None or ends[1] is None or _norm(_sub(ends[0], ends[1])) < _MIN_STRAIGHT * size:
+        return []
+
+    def known(a, b):
+        for p, q in edges:
+            if (_norm(_sub(a, p)) < tol and _norm(_sub(b, q)) < tol) or (_norm(_sub(a, q)) < tol and _norm(_sub(b, p)) < tol):
+                return True
+        return False
+
+    queue = [(ends[0], ends[1])]
+    while queue and len(edges) < limit and time.perf_counter() - began < seconds:
+        a, b = queue.pop(0)
+        if known(a, b):
+            continue
+        edges.append((a, b))
+        for c in (a, b):
+            if any(_norm(_sub(c, d)) < tol for d in corners):
+                continue
+            corners.append(c)
+            queue.extend(_straight_edges_at(surface, c, size, edges + queue))
+    return edges
+
+
 def features_near(values, near, scale, size):
     ''' What the right-click menu offers at a place: {'corner': point or None, 'edge': {'point', 'straight': (p0, p1) or None} or None} -- the nearest corner and the nearest
         edge.  A place with neither (a face, a smooth surface: nearly every click) costs a look round the place and no more '''
@@ -399,9 +568,19 @@ def features_near(values, near, scale, size):
                     break
         return {'corner': None, 'edge': None, 'circle': None, 'rounded': rounded or None}
     corner = edge = None
+    rim_circle = False
     if found['kind'] == 'corner':
         corner = found['point']
         edge = _edge_of_corner(surface, near, r, found)
+        if edge is None:
+            # (a point of a circular edge read as a corner: the curved side of a cylinder or a cone is cut into two faces now and then, and the two with the other face make three, a corner that
+            # no edge runs out of -- measured on cylinder(10, 20): the rim at 45 degrees round the axis gave a corner and no edge, so the menu offered no curve; when the circle through the place
+            # is there, that is the edge and the place is no corner)
+            rim = _edge_from_corner(surface, found, r)
+            if rim is not None:
+                # (a circle, or any other curve where two curved faces meet -- a cylinder and a sphere in a difference, measured in the window: a corner and no edge, so no curve was offered)
+                edge, corner = rim, None
+                rim_circle = _find_circle(surface, near, r) is not None
     else:
         edge = found
         # (a corner a little further off than the neighbourhood: the click was near an edge, and the corner at its end is near too)
@@ -410,7 +589,7 @@ def features_near(values, near, scale, size):
             corner = wider['point']
     circle = None
     if edge is not None:
-        edge['straight'] = _straight(surface, edge)
+        edge['straight'] = None if rim_circle else _straight(surface, edge)
         if edge['straight'] is None:
             found_circle = _find_circle(surface, near, r)
             if found_circle is not None:
@@ -452,13 +631,56 @@ def _circle_through(a, b, c):
     return centre, _norm(_sub(a, centre)), _unit(w)
 
 
+def _edge_from_corner(surface, corner, r):
+    ''' A corner that is a point of a circular edge: the curved side of a cylinder or a cone is cut into two faces now and then, and the two with the other face make three, which is a corner with no
+        direction.  The two faces whose normals turn most against each other are the faces of the edge, and the edge runs across both normals: {'kind': 'edge', 'point', 'direction'}, or None when no
+        two of the faces turn against each other by more than about 12 degrees '''
+    faces = surface.faces(corner['point'], max(r / 4.0, 2e-4 * surface.size))
+    # (the samples that straddle a crease make clusters of their own, between the faces and not in their plane -- measured on the curve where a cylinder meets a sphere: 10 to 13 samples against 27 and 39 of the two faces --: only a cluster with at least 0.4 of the samples of the biggest is a face)
+    if faces:
+        biggest = max(f[2] for f in faces)
+        faces = [f for f in faces if f[2] >= 0.4 * biggest]
+    best = None
+    for i in range(len(faces)):
+        for j in range(i + 1, len(faces)):
+            c = _cross(faces[i][0], faces[j][0])
+            n = _norm(c)
+            if best is None or n > best[0]:
+                best = (n, c, i, j)
+    if best is None or best[0] < 0.2:
+        return None
+    # (every face of an edge has a normal across the edge: the samples that straddle it, and the pieces a curved face is cut into, all turn in the plane of the two faces; a third face whose normal has a part along the edge is the third face of a corner -- the first try with angles took the straddling samples, half way between the two faces, for a third face, measured: the rim of a cylinder at 45 degrees was a corner again)
+    along = _unit(best[1])
+    for k in range(len(faces)):
+        if k not in (best[2], best[3]) and abs(_dot(faces[k][0], along)) > 0.5:
+            return None
+    return {'kind': 'edge', 'point': corner['point'], 'direction': _unit(best[1])}
+
+
 def _find_circle(surface, near, r):
     ''' The circular edge nearest `near`: (centre, radius, unit normal), or None.  The edge found there gives a point and the way it runs; two points a little way along it, put
         onto the edge, give a first circle; the circle is then read again from the edge at wider and wider angles round it, up to 100 degrees either side, which fixes it to the
         accuracy of the points, and a point on the far side must be on it '''
     first = _find(surface, near, r)
     if first is None or first['kind'] != 'edge' or first['direction'] is None:
-        return None
+        # (at some places round a rim the samples on the curved side make a third face, and three faces make a corner, which has no direction: the rim is looked at again from a little nearer and a little
+        # further -- measured 2026-11-02 on cylinder(10, 20) with a scale of 3: 7 of 16 places round its rim found no circle, SN1)
+        tried = [first]
+        for wider in (0.6, 1.6, 0.35, 2.4):
+            first = _find(surface, near, wider * r)
+            tried.append(first)
+            if first is not None and first['kind'] == 'edge' and first['direction'] is not None:
+                break
+        else:
+            # (still a corner at every look: the rim point is read as an edge from the two faces that turn most against each other there)
+            first = None
+            for t in tried:
+                if t is not None and t['kind'] == 'corner':
+                    first = _edge_from_corner(surface, t, r)
+                    if first is not None:
+                        break
+            if first is None:
+                return None
     p0, t0 = first['point'], first['direction']
     size = surface.size
 
@@ -682,12 +904,80 @@ def _matrix_of(shape):
         s = args[2]
         s = (1.0, 1.0, 1.0) if s is None else (tuple(float(value_of(s)) for _ in range(3)) if not isinstance(s, (tuple, list)) else _numbers(s, (1.0, 1.0, 1.0)))
         c = tuple(float(v) for v in parts[1])
+        if len(args) > 5 and args[5] != 'origin' and args[0] is not None:
+            m = tuple(float(m[i]) - c[i] for i in range(3))        # (a model that is not made in its own frame has its position GLOBAL -- where its pivot is --: it is moved by the position less the pivot)
         R = [[float(v) for v in row] for row in _turn_matrix(r)]
         A = tuple(tuple(R[i][j] * float(s[j]) for j in range(3)) for i in range(3))
         t = tuple(c[i] + float(m[i]) - sum(A[i][j] * c[j] for j in range(3)) for i in range(3))
         return A, t
     except Exception:
         return ident
+
+
+# The calls of edge_at that found their edge at least once in this session: an edge that is lost AFTER that was lost by an edit (the model tree removes it), one that never was found is left as it is -- the
+# user, 2026-11-03, of the message that said an edge was removed the moment he made the lines along connected edges of a pyramid: "That doesnt make sense, that the popup happens on creation"
+# (the unit of the memory is the STATEMENT -- its function and where it stands in the script -- and not the place it writes: the program rewrites that place while the edge follows a drag (`_write_place`), and a run with a place that no run found before is not 'never found': the user, 2026-11-04, H113, his file edge_notdeleted..py: "I JUST PLACED THE EDGE, DRAGGED THE HANDLES, IT GOT LOST BUT NOT DLETED")
+_EVER_FOUND = {}
+_TARGETS = ['', {}]
+
+
+def _targets_of(source):
+    ''' {position of a call: the name its statement gives the result} for the text of the script (read once for each text) '''
+    if _TARGETS[0] != source:
+        import ast
+        names = {}
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call):
+                call = node.value
+                names[(call.lineno, call.end_lineno, call.col_offset, call.end_col_offset)] = node.targets[0].id
+        _TARGETS[0], _TARGETS[1] = source, names
+    return _TARGETS[1]
+
+
+def _statement(name):
+    ''' What a call is from one edit of the script to the next: its function and the name its statement gives the result (`edge_1` of `edge_1 = edge_at(...)`), and where there is none its line.  Not the line
+        alone: the first drag of a handle writes a `handles(...)` line above the call and moves it down, and a call that had found its edge was a call that never had (measured in the library, H113: the same
+        lost edge, two lines further down, was not sent to the tree and stayed in the script) '''
+    frame = _script_frame()
+    if frame is None:
+        return (name, ('', 0))
+    try:
+        import itertools
+        from fieldes import runner
+        source = getattr(runner, 'running_source', None)
+        if source and frame.f_code.co_filename == '<file>':
+            position = tuple(next(itertools.islice(frame.f_code.co_positions(), frame.f_lasti // 2, None)))
+            target = _targets_of(source).get(position)
+            if target:
+                return (name, target)
+    except Exception:
+        pass
+    return (name, (frame.f_code.co_filename, frame.f_lineno))
+
+
+def _note_found(point, reach, near=None):
+    ''' This statement found its edge at `point` (the place it writes is within `reach` of it: see `_write_place`) '''
+    try:
+        _EVER_FOUND[_statement('edge_at')] = (tuple(float(c) for c in point), 2.0 * reach, None if near is None else tuple(float(c) for c in near))
+    except Exception:
+        pass
+
+
+def _found_before(near):
+    ''' Whether this statement found its edge earlier in this session, at about the place it writes now.  The place is part of it, as a check and not as a name: another file's `edge_1`, or a new edge that has the name of
+        one that was deleted, is not where that edge was found, and an edge that never was found is not removed on creation '''
+    try:
+        found = _EVER_FOUND.get(_statement('edge_at'))
+        if found is None:
+            return False
+        here = tuple(float(c) for c in near)
+        # (the written place is the one it had when this statement found its edge: a drag takes the edge along, run after run, and the place is rewritten only at the release, so the point it was last found at
+        # is far from the written place and the edge, lost by the next jump, did not count as found before -- measured in a window, H114: a slow drag lost five of eight edges and they stayed in the script)
+        if len(found) > 2 and found[2] is not None and _norm(_sub(here, found[2])) <= 1e-6:
+            return True
+        return _norm(_sub(here, found[0])) <= found[1]
+    except Exception:
+        return False
 
 
 def _call_key(name, near):
@@ -735,6 +1025,22 @@ def _remember(key, matrix, points, planes=None, lives=None, shape=None):
             indexed, count = _indexed_terms(shape, terms)
             live.append(indexed)
     _followed[key] = {'matrix': matrix, 'found': [tuple(float(c) for c in p) for p in points], 'planes': planes, 'live': live, 'count': count}
+
+
+def _last_good(key, matrix):
+    ''' The two ends of the line that this call found the last time it found an edge, carried by how the body is placed now -- None when there is no such line (the call found a curve, or never an edge) '''
+    old = _followed.get(key) if key is not None else None
+    if old is None or len(old['found']) != 2:
+        return None
+    A0, t0 = old['matrix']
+    A, t = matrix
+    out = []
+    for p in old['found']:
+        local = _solve3(A0, tuple(p[i] - t0[i] for i in range(3)))
+        if local is None:
+            return None
+        out.append(tuple(sum(A[i][j] * local[j] for j in range(3)) + t[i] for i in range(3)))
+    return out
 
 
 def _indexed_terms(shape, terms):
@@ -812,11 +1118,16 @@ def _plane_set(surface, point, r, count):
         # to a different corner of the shape")
         return None if best is None else [(f[0], f[1]) for f in top]
     pair = None
+    biggest = max((f[2] for f in top), default=1)
     for i in range(len(top)):
         for j in range(i + 1, len(top)):
             s = _norm(_cross(top[i][0], top[j][0]))
-            if s >= _PARALLEL and (pair is None or s > pair[0]):
-                pair = (s, i, j)
+            # (the samples that straddle a crease make clusters of their own, between the faces and not in their plane -- measured on the curve where a cylinder meets a sphere, in the window and in the library: 12 samples
+            # against 35 and 25 of the two faces; the straddling cluster turns more against the cylinder than the sphere does, was taken for the second face, and the trace of the edge that started from it was lost at once --:
+            # the pair that turns most is weighed by the size of its smaller face, so that a few straddling samples do not outweigh a face)
+            w = s * min(top[i][2], top[j][2]) / biggest
+            if s >= _PARALLEL and (pair is None or w > pair[0]):
+                pair = (w, i, j)
     return None if pair is None else [(top[pair[1]][0], top[pair[1]][1]), (top[pair[2]][0], top[pair[2]][1])]
 
 
@@ -960,6 +1271,11 @@ def _meeting(surface, planes, count, at):
         neighbourhood as well, and the live terms are made of the three (None when fewer meet there) '''
     if not planes or at is None:
         return planes
+    if len(planes) == count:
+        # (no choice to make: the faces ARE the ones that meet there.  A face that is round -- the side of a cylinder, a sphere -- is not a plane, and the plane through its samples is off the edge by the sag of
+        # the face over the samples: more than a thousandth of the body for a small radius, and a feature whose faces were dropped for it had no terms -- one point of a circle, all of the curve where a cylinder
+        # meets a sphere: it did not follow, the user, 2026-10-28)
+        return planes
     on = [p for p in planes if abs(_dot(p[0], _sub(at, p[1]))) <= 2e-3 * surface.size]
     if len(on) < count:
         return None
@@ -1053,6 +1369,179 @@ def _live_point(place, terms):
     return point(*coords)
 
 
+def _faces_across(surface, at, direction, rho):
+    ''' The two faces that meet at `at`, read ACROSS the edge: [(unit normal, a place on the face)] or None.  A ring of places round the edge, `rho` from it in the plane square to `direction`, is carried onto
+        the surface, and the normals found there fall in two groups -- one for each face --, each with its mean place.  (The faces found by sampling all round the place, `Surface.faces`, are a mixture at
+        most places of a curved edge -- the sphere's face at the curve where a cylinder meets it came out 50 degrees off -- and the places they are read from lie on the edge itself, where the field is the blend of
+        both: a number that moves one face turns the gradient there by a whole radian.  The user, 2026-10-28: "does not follow AT ALL") '''
+    t = _unit(direction)
+    ref = (1.0, 0.0, 0.0) if abs(t[0]) < 0.9 else (0.0, 1.0, 0.0)
+    u = _unit(_cross(t, ref))
+    w = _cross(t, u)
+    ring = [_add(at, _add(_mul(u, rho * math.cos(2.0 * math.pi * k / 24)), _mul(w, rho * math.sin(2.0 * math.pi * k / 24)))) for k in range(24)]
+    hits = []
+    for hit in surface.project(ring):
+        if hit is None:
+            continue
+        place, n, left = hit
+        if abs(left) < 0.1 * rho and _norm(_sub(place, at)) < 3.0 * rho:
+            hits.append((place, n))
+    groups = []
+    for place, n in hits:
+        for g in groups:
+            if _angle(_unit(g[0]), n) < math.radians(20.0):
+                g[0] = _add(g[0], n)
+                g[1].append(place)
+                break
+        else:
+            groups.append([n, [place]])
+    groups.sort(key=lambda g: -len(g[1]))
+    if len(groups) < 2:
+        return None
+    faces = [(_unit(g[0]), tuple(sum(p[a] for p in g[1]) / len(g[1]) for a in range(3))) for g in groups[:2]]
+    if _angle(faces[0][0], faces[1][0]) < math.radians(30.0):
+        return None
+    return faces
+
+
+def _live_terms_each(shape, surface, items):
+    ''' `_live_terms` (for the points of an edge, `count` 2) of many places at once: [(planes, the direction the edge runs there, the place)] -> one list of terms for each, or None.  Each number of the script is
+        moved ONCE for all of them (the cost of a number is a call to the host, not a read of the field): the curve of an edge has thirty places, and a number that is moved thirty times is the freeze '''
+    none = [None] * len(items)
+    try:
+        import _fieldes_host as host
+    except ImportError:
+        return none
+    entries = getattr(host, '__vars', None)
+    retune = getattr(host, '__retune', None)
+    if not entries or retune is None:
+        return none
+    prepared, spans, centres = [], [], []
+    for planes, direction, at in items:
+        meeting = _meeting(surface, planes, 2, at)
+        if not meeting or len(meeting) != 2 or direction is None:
+            prepared.append(None)
+            spans.append(None)
+            continue
+        prepared.append(meeting)
+        spans.append(len(centres))
+        centres.extend(p[1] for p in meeting)
+    if not centres:
+        return none
+    try:
+        turning = _turning_vars(shape)
+        base = surface.both(centres)
+        results = [[] for _ in items]
+        for e in list(entries)[:_LIVE_NUMBERS]:
+            var = e[0]
+            value = float(e[1])
+            if id(var) in turning:
+                continue
+            step = _LIVE_STEP * max(1.0, abs(value))
+            retune(var, value + step)
+            try:
+                moved = surface.both(centres)
+            finally:
+                retune(var, value)
+            for i, start in enumerate(spans):
+                if start is None:
+                    continue
+                b, m = base[start:start + 2], moved[start:start + 2]
+                lengths = [_norm(g) for _v, g in b]
+                if min(lengths) < 1e-9:
+                    continue
+                if max(_angle(bb[1], mm[1]) for bb, mm in zip(b, m)) > 0.08:
+                    continue                        # (a face is turned by this number: see _live_terms -- where a face that is round is read half a radius off the edge the gradient there turns by 0.03 to 0.04 for a number that
+                                                    # only moves the face, where 0.03 left out most of a curve; a face that is turned by a number turns by much more)
+                outward = [-(mm[0] - bb[0]) / n for bb, mm, n in zip(b, m, lengths)]
+                if max(abs(x) for x in outward) < 1e-6 * step:
+                    continue
+                move = _solve3([prepared[i][0][0], prepared[i][1][0], items[i][1]], outward + [0.0])
+                if move is not None:
+                    results[i].append((var, tuple(c / step for c in move), value))
+        _live_note('%d places of an edge: %s' % (len(items), ', '.join(str(len(r)) for r in results[:12])))
+        return [r or None for r in results]
+    except Exception as error:
+        _live_note('no terms: %s: %s' % (type(error).__name__, error))
+        return none
+
+
+def _edge_curve(shape, surface, places, tangents, closed, r, given):
+    ''' The curve of an edge that is not a line: a spline through `places` (closed or not), each point locked to the body, and -- when the call was not given a neighbourhood of its own -- moving with the
+        numbers of the script as the ends of the line of `edge_at` do (`_live_terms_each`: the faces of the edge at each place, and how they move with each number), so that the curve follows a handle of
+        the body in real time (the user, 2026-10-28: "when scaling the cylinder, after letting go of the handle, the edge does adjust correctly, but it is not in real time") '''
+    from fieldes.stdlib.curves import spline
+    lives = [None] * len(places)
+    if not given:
+        items = [(_faces_across(surface, p, t, 1.5 * r), t, p) for p, t in zip(places, tangents)]
+        lives = _live_terms_each(shape, surface, items)
+    return _found_on(spline([_found_on(_live_point(p, terms), shape) for p, terms in zip(places, lives)], closed=closed), shape)
+
+
+def _turn_of(line, closed):
+    ''' The biggest turn between two pieces of a polyline, in radians '''
+    n = len(line)
+    worst = 0.0
+    for i in range(1, n if closed else n - 1):
+        a, b, c = line[i - 1], line[i], line[(i + 1) % n]
+        u, v = _sub(b, a), _sub(c, b)
+        lu, lv = _norm(u), _norm(v)
+        if lu < 1e-12 or lv < 1e-12:
+            continue
+        worst = max(worst, math.acos(max(-1.0, min(1.0, _dot(u, v) / (lu * lv)))))
+    return worst
+
+
+def _trace_edge(shape, surface, found, r, size, bounds):
+    ''' The edge that is neither a line nor a circle, followed along the surface where its two faces meet: (places, closed), or None.  It is the way the frame of a lattice follows the creases of a body
+        (lattices._follow_crease: a step along the crease, found again across it from where the normal turns, both ways from the place found, until it comes round to where it began, or reaches a corner,
+        or is lost); the step is a spacing that makes the line turn by no more than 0.3 radian from one step to the next, so that a small curve is followed in as fine a step as a big one.  At most 64
+        places, evenly spread (the steps are even) '''
+    from fieldes.stdlib import lattices as L
+    from fieldes.stdlib.fields import _s, _shape_bounds
+    planes = _plane_set(surface, found['point'], r, 2)
+    if planes is None:
+        return None
+    na, nb = planes[0][0], planes[1][0]
+    across = L._v_unit(L._v_sub(na, nb))
+    if across is None:
+        return None
+    body = _s(shape)
+    lo, hi = _shape_bounds(body, bounds)
+    c0 = tuple(found['point'])
+    spacing = min(0.08 * size, 3.0 * r)
+    result = None
+    for _ in range(4):
+        unit = 0.01 * spacing
+        fwd, how = L._follow_crease(body, c0, na, nb, across, 1.0, spacing, unit, (), lo, hi)
+        if how == 'closed':
+            line, closed = [c0] + fwd, True
+        else:
+            own = L._Hash(0.2 * spacing)
+            for a, b in zip(fwd[3:], fwd[4:]):
+                pieces = max(1, int(math.ceil(math.dist(a, b) / (0.1 * spacing))))
+                for k in range(pieces + 1):
+                    own.add(L._v_add(a, L._v_sub(b, a), k / pieces))
+            back, _how = L._follow_crease(body, c0, na, nb, across, -1.0, spacing, unit, (own,), lo, hi)
+            line, closed = back[::-1] + [c0] + fwd, False
+        if len(line) < 4:
+            spacing *= 0.4                      # (the step was too big for the curve: it was lost at once)
+            continue
+        result = (line, closed)
+        turn = _turn_of(line, closed)
+        if turn <= 0.5:
+            break
+        spacing = max(spacing * 0.3 / turn, 0.002 * size)
+    if result is None:
+        return None
+    line, closed = result
+    if closed and len(line) > 2 and math.dist(line[0], line[-1]) < 1e-9 * size:
+        line = line[:-1]
+    if len(line) > 64:
+        line = line[::-(-len(line) // 64)]
+    return line, closed
+
+
 def _influenced(out, influence):
     ''' A point that is found on a body says its influence too -- `corner_at(part, near, influence=var(1))` --: the radius of a field that is made of it (`radial_field`, `distance_to_point`), and the ring of
         its gizmo drags it.  The point is locked to its body, so it has no arrows and no rings: the gizmo it has is that ring (the numbers of a move, a turn and a scale are plain numbers: nothing to drag) --
@@ -1071,7 +1560,7 @@ def corner_at(shape, near, scale=None, bounds=None, rounded=False, influence=Non
     ''' The corner of `shape` nearest `near`: a point, where three faces of the surface meet at sharp angles.
 
         near    a place on or near the surface (x, y, z) -- where the corner is looked for
-        influence  how far the point reaches, in mm -- a number or a var(): the radius of a field made of it, as for `point(x, y, z, influence=r)`; its gizmo has a ring that drags it
+        influence  how far the point reaches, in mm -- a number or a var(): the radius of a field made of it, as for `point(position=(x, y, z), influence=r)`; its gizmo has a ring that drags it
         scale   how far round `near` is looked, in mm (default: 3 % of the body, and wider, up to 0.4 of it, when there is no corner so near -- a face that was pulled by its handle has
                 carried the corner away from the place written, and the corner is found where it went)
         bounds  ((x0, y0, z0), (x1, y1, z1)) of the shape, if it cannot be found
@@ -1173,10 +1662,39 @@ def edge_point_at(shape, near, scale=None, bounds=None, rounded=False, influence
     return _influenced(out, influence)
 
 
-def edge_at(shape, near, scale=None, bounds=None):
-    ''' The straight edge of `shape` nearest `near`: a polyline of two points, from the corner at one end of the edge to the corner at the other.  Raises ValueError
+def _on_an_edge(values, ends, reach, size):
+    ''' Whether the straight line between `ends` lies on a sharp edge of the body: one is within twice `reach` of its middle.  A check that cannot be made does not lose an edge '''
+    try:
+        a, b = ends
+        mid = tuple(0.5 * (float(a[i]) + float(b[i])) for i in range(3))
+        return find_feature(values, mid, 2.0 * reach, size, 'edge') is not None
+    except Exception:
+        return True
+
+
+def _same_direction(old, found, matrix):
+    ''' Whether the edge `found` runs the way the edge that `old` remembers did: the line of its two faces, carried by the change of the placement, within 25 degrees.  A check that cannot be made says yes '''
+    try:
+        planes = old.get('planes')
+        direction = found.get('direction')
+        if not planes or len(planes) != 2 or direction is None:
+            return True
+        n1 = _carry_vector(old['matrix'], matrix, planes[0][0])
+        n2 = _carry_vector(old['matrix'], matrix, planes[1][0])
+        d = _cross(n1, n2)
+        if _norm(d) < 1e-9 or _norm(direction) < 1e-9:
+            return True
+        return abs(_dot(_unit(d), _unit(direction))) >= math.cos(math.radians(25.0))
+    except Exception:
+        return True
+
+
+def _edge_at(shape, near, scale=None, bounds=None):
+    ''' The edge of `shape` nearest `near`: for a straight edge a polyline of two points, from the corner at one end of the edge to the corner at the other; for a circle (the rim of a cylinder or a
+        hole, the base of a cone) a closed curve that says its circle; for any other edge a curve through places that are followed along the surface where the two faces meet (the way the frame of a
+        lattice follows the creases of a body), closed when it comes round to where it began and open when it ends at a corner.  Raises ValueError
         when there is no edge round `near` within a `scale` that was given (with none, the neighbourhood is widened, and the line stays a short one at `near` when there is still no edge),
-        or when it curves (a circle is not a line: `edge_point_at` gives a point of it).
+        or when a curved edge could not be followed (`edge_point_at` gives a point of it).
         The line follows its body and the two faces of the edge, as the corner of `corner_at` follows its three: a face that is pulled by its handle takes it along.  See the module and `corner_at`. '''
     from fieldes.stdlib.points import point
     from fieldes.stdlib.curves import polyline
@@ -1191,30 +1709,95 @@ def edge_at(shape, near, scale=None, bounds=None):
         return _wider(lambda s: find_feature(values, place, s, size, 'edge'), scale, size, given)
 
     # (the two faces the edge was made of, found again where they are now, and the line they make walked to its corners: see corner_at)
-    found, planes = None, None
+    found, planes, rejected = None, None, False
     old = _followed.get(key) if tracked else None
-    if old is not None:
+    # (only a straight edge, remembered by its two ends, is followed by its faces: the faces of a circle meet in a line that touches it at one place, and that line is straight to the eye of the
+    # search -- measured in the window: after the release of the radius handle the rim came back as a dash of a straight line)
+    if old is not None and len(old['found']) == 2:
         followed = _follow_planes(surface, values, old, matrix, size, 2, start)
         if followed is not None:
             candidate = {'kind': 'edge', 'point': followed['point'], 'direction': followed['direction']}
             candidate['straight'] = _straight(surface, candidate)
+            if candidate['straight'] is not None and not given and not _on_an_edge(values, candidate['straight'], r, size):
+                # (the two faces of the edge are still there but the line they make is no edge of the body any more: it is lost, and the lines below say so -- the user, 2026-11-04, H114, picture 98: two of the lines of the stretched pyramid lay on its front face)
+                candidate['straight'] = None
+                rejected = True
             if candidate['straight'] is not None:
                 found, planes = candidate, followed['planes']
-    if found is None:
+
+    # (a straight edge that was followed before and whose faces cannot be found again now, or whose line is no edge of the body any more: only the narrow neighbourhood of where the numbers carried it is
+    # looked at, and only an edge that runs the way the old one did is taken.  The search that widens takes the nearest edge, which is another line's -- measured in a window and in the library, H114, the
+    # user, 2026-11-04, "Dragging the pyramid made edges get lost, but not deleted": the two slanted edges of the pulled face went to the base edges of the pyramid and lay on the lines of those; the line
+    # that finds nothing is lost, and the tree removes it)
+    narrowed = old is not None and len(old['found']) == 2 and not given
+    if found is None and narrowed:
+        if not rejected:
+            found = find_feature(values, start, scale, size, 'edge')
+            if found is not None and not _same_direction(old, found, matrix):
+                found = None
+    elif found is None:
         found = look(start)
         if found is None and tracked:
             found = look(near)              # (see corner_at)
     if found is None and not given:
         # (the edge is not there any more, not even in a wide neighbourhood: a short line at the place the body carried it to, and a note, where an error would stop the script -- see corner_at)
-        a = start
-        b = (start[0] + 1e-3 * size, start[1], start[2])
-        _remember(key, matrix, [a, b])
-        print('edge_at: no edge of the body near (%.4g, %.4g, %.4g), not even in a wide neighbourhood: the line stays at that place' % tuple(start))
-        return _found_on(polyline([_found_on(point(*_clean(a)), shape), _found_on(point(*_clean(b)), shape)]), shape)
+        last = _last_good(key, matrix)
+        if last is not None:
+            # (a line that was found before stays where it was, carried by the placement of the body: when the body comes back the edge is found again from where it was -- nothing is remembered of this run)
+            a, b = last
+            print('edge_at: no edge of the body near (%.4g, %.4g, %.4g), not even in a wide neighbourhood: the line stays where it was last found' % tuple(start))
+        else:
+            a = start
+            b = (start[0] + 1e-3 * size, start[1], start[2])
+            _remember(key, matrix, [a, b])
+            print('edge_at: no edge of the body near (%.4g, %.4g, %.4g), not even in a wide neighbourhood: the line stays at that place' % tuple(start))
+        return _lost_line(shape, a, b, 'no edge of the body near (%.4g, %.4g, %.4g)' % tuple(start), after_found=key is not None and _found_before(near))
     if found is None:
         raise ValueError('edge_at: no edge of the body near (%.4g, %.4g, %.4g): two faces that meet at a sharp angle within %.3g mm of it' % (near + (scale,)))
     if found['straight'] is None:
-        raise ValueError('edge_at: the edge near (%.4g, %.4g, %.4g) curves, so it is not a line: edge_point_at gives a point of it' % near)
+        # (a curve: a circle -- the rim of a cylinder or of a hole, the base of a cone -- is an edge too, as a closed curve that carries the exact circle; any other edge is followed along the
+        # surface where its two faces meet, as the frame of a lattice follows the creases of a body)
+        circle = _find_circle(surface, found['point'], r)
+        traced = None
+        if circle is None:
+            traced = _trace_edge(shape, surface, found, r, size, bounds)
+            if traced is None:
+                if not given:
+                    # (an error here would stop the whole script for as long as the edge cannot be followed -- a statement after it never runs: no new model, no handles --: a short line at the place, and a note, as
+                    # when there is no edge at all)
+                    a = tuple(found['point'])
+                    b = (a[0] + 1e-3 * size, a[1], a[2])
+                    _remember(key, matrix, [a, b])
+                    print('edge_at: the edge near (%.4g, %.4g, %.4g) could not be followed along the surface: the line stays at that place' % near)
+                    # (a statement that traced its edge before and cannot now is lost by an edit like one that finds no edge: the tree removes it -- measured in the window, E2: after the release of the sphere's handle the trace returned None, the line stayed and nothing took it out)
+                    return _lost_line(shape, a, b, 'the edge near (%.4g, %.4g, %.4g) could not be followed along the surface' % near, after_found=_found_before(near))
+                raise ValueError('edge_at: the edge near (%.4g, %.4g, %.4g) could not be followed along the surface: edge_point_at gives a point of it' % near)
+        # (the faces of the edge and how its point moves with the numbers of the script, as the point of edge_point_at has them: a face pulled by its handle takes the place that the run after the drag
+        # starts from -- without them that run looked for the rim where it was, measured in the window: a radius dragged from 10 to 18.186 put the rim 8 mm from the written place, outside the reach of
+        # the search, edge_at was lost and the tree took the line away)
+        planes = None if given else _plane_set(surface, found['point'], r, 2)
+        terms = None
+        if planes is not None and found.get('direction') is not None:
+            terms = _live_terms(shape, surface, planes, 2, found['direction'], at=found['point'])
+        if terms is not None:
+            _remember(key, matrix, [found['point']], planes, [terms], shape)
+        else:
+            _remember(key, matrix, [found['point']])
+        if key is not None:
+            _note_found(found['point'], r, near)
+        if not given:
+            _write_place('edge_at', near, found['point'], r)         # (see corner_at)
+        if circle is not None:
+            return _circle_edge(shape, circle, found['point'], None if given else (surface, r))
+        places, closed = traced
+        count = len(places)
+        tangents = []
+        for i in range(count):
+            a = places[(i - 1) % count] if closed or i > 0 else places[i]
+            b = places[(i + 1) % count] if closed or i < count - 1 else places[i]
+            d = _sub(b, a)
+            tangents.append(d if _norm(d) > 1e-12 else (1.0, 0.0, 0.0))
+        return _edge_curve(shape, surface, places, tangents, closed, r, given)
     a, b = found['straight']
     if planes is None:
         planes = None if given else _plane_set(surface, found['point'], r, 2)
@@ -1224,9 +1807,83 @@ def edge_at(shape, near, scale=None, bounds=None):
         terms_a = _live_terms(shape, surface, _plane_set(surface, a, r, 3), 3, at=a)
         terms_b = _live_terms(shape, surface, _plane_set(surface, b, r, 3), 3, at=b)
     _remember(key, matrix, [a, b], planes, [terms_a, terms_b], shape)
+    if key is not None:
+        _note_found(found['point'], r, near)
     if not given:
         _write_place('edge_at', near, found['point'], r)         # (see corner_at)
     return _found_on(polyline([_found_on(_live_point(a, terms_a), shape), _found_on(_live_point(b, terms_b), shape)]), shape)
+
+
+def _lost_line(shape, a, b, why, after_found=False):
+    """ The short line that stands for an edge that was not found (the body was changed or dragged so that no edge is there any more): it says so in `_lost` -- the viewport draws a line that says it in the
+        warning colour, orange as a placeholder is, and the note in the output names the edge (the user, 2026-10-29: "a warning pop up, like the placeholder and ask for a manual reposition") """
+    from fieldes.stdlib.points import point
+    from fieldes.stdlib.curves import polyline
+    out = _found_on(polyline([_found_on(point(*_clean(a)), shape), _found_on(point(*_clean(b)), shape)]), shape)
+    out._lost = why + ': the line stays where it was last found (right-click: Curve along the edge, picks it again)'
+    out._lost_after_found = bool(after_found)      # (found before and lost by an edit: the model tree removes such an edge; an edge that never was found is left as it is)
+    return out
+
+
+def edge_at(shape, near, scale=None, bounds=None):
+    ''' The edge of `shape` nearest `near`: for a straight edge a polyline of two points, from the corner at one end of the edge to the corner at the other; for a circle (the rim of a cylinder or a
+        hole, the base of a cone) a closed curve that says its circle; for any other edge a curve through places that are followed along the surface where the two faces meet (the way the frame of a
+        lattice follows the creases of a body), closed when it comes round to where it began and open when it ends at a corner.  The line follows its body and the two faces of the edge, as the corner
+        of `corner_at` follows its three: a face that is pulled by its handle takes it along.
+        In the window a lost edge does not stay: about a second after the edit that lost it is done (never while a mouse button is down) the model tree removes the edge from the script, with the routine that deletes a model -- what was made of it has `...` where it was, so the script has no error --, and a message says so (it has "Don't show this again", and Settings > Tell me when an edge is removed turns it on again); Undo brings the edge back.  An edge that something else of the script still uses is not removed.  What follows is what the library itself does, for a script that is run without the window. An edge counts as lost by an edit when the same statement found its edge earlier in this session, at about the place the call writes now.  The statement is its function and the name it gives its result (`edge_1` of `edge_1 = edge_at(...)`), not the line it stands on, because the first selection of a shape writes a `handles(...)` line above it; and the place is where the edge was last found, because the program rewrites it while the edge follows a drag (the user, 2026-11-04: the edge was lost by dragging the handles and stayed in the script).
+        An edge that is not found -- the body was changed or dragged so that no edge is there any more, or the search met a state it could not work in -- never stops the script: the line is a short
+        one at the place, and a note in the output says why (the statements after it still run: a new model is made, with its handles).  Only a `scale` that is given says "error", for an edge that is
+        not there: ValueError.  See `_edge_at` for the details and the module and `corner_at` '''
+    try:
+        return _edge_at(shape, near, scale, bounds)
+    except (KeyboardInterrupt, SystemExit, MemoryError):
+        raise
+    except Exception as reason:
+        # (a place that is no place, or a scale that was given, is an error of the one who wrote the call; anything else is a state of the search, and a script that stops at its line shows nothing of
+        # what comes after it -- the user, 2026-10-29, the flicker and the missing handles of a new model "probably when it cannot find the edge anymore after editing and dragging")
+        try:
+            at = tuple(float(c) for c in near)
+            if len(at) != 3 or scale is not None:
+                raise reason
+        except (TypeError, ValueError):
+            raise reason
+        from fieldes.stdlib.points import point
+        from fieldes.stdlib.curves import polyline
+        try:
+            last = _last_good(_call_key('edge_at', at), _matrix_of(shape))
+        except Exception:
+            last = None
+        if last is not None:
+            a, b = tuple(_clean(last[0])), tuple(_clean(last[1]))          # (where the line was last found)
+        else:
+            a = tuple(_clean(at))
+            b = (a[0] + 1e-3, a[1], a[2])
+        print('edge_at: the edge near (%.4g, %.4g, %.4g) was not found (%s: %s): the line stays %s' % (at + (type(reason).__name__, str(reason)[:120], 'where it was last found' if last is not None else 'at that place')))
+        return _lost_line(shape, a, b, 'the edge near (%.4g, %.4g, %.4g) was not found (%s)' % (at + (type(reason).__name__,)), after_found=_found_before(at))
+
+
+def _circle_edge(shape, circle, at, live=None):
+    ''' A circular edge as a closed curve: a spline through eight points of the circle (the first is the place of the edge that was found), the way a line along a straight edge is a polyline through
+        its two ends.  The curve says the exact circle it is -- `_edge_circle`, (centre, axis, radius) -- so what is made of it need not read the circle from the spline.  `live` is (surface, r) when the
+        points are to move with the numbers of the script (see `_edge_curve`) '''
+    from fieldes.stdlib.points import point
+    from fieldes.stdlib.curves import spline
+    centre, radius, axis = circle
+    d = _sub(at, centre)
+    d = _sub(d, _mul(axis, _dot(d, axis)))
+    if _norm(d) < 1e-12:
+        ref = (1.0, 0.0, 0.0) if abs(axis[0]) < 0.9 else (0.0, 1.0, 0.0)
+        d = _sub(ref, _mul(axis, _dot(ref, axis)))
+    u = _mul(d, 1.0 / _norm(d))
+    v = (axis[1] * u[2] - axis[2] * u[1], axis[2] * u[0] - axis[0] * u[2], axis[0] * u[1] - axis[1] * u[0])
+    places = [_add(centre, _add(_mul(u, radius * math.cos(2.0 * math.pi * k / 8)), _mul(v, radius * math.sin(2.0 * math.pi * k / 8)))) for k in range(8)]
+    if live is not None:
+        tangents = [_add(_mul(u, -math.sin(2.0 * math.pi * k / 8)), _mul(v, math.cos(2.0 * math.pi * k / 8))) for k in range(8)]
+        out = _edge_curve(shape, live[0], places, tangents, True, live[1], False)
+    else:
+        out = spline([_found_on(point(*_clean(p)), shape) for p in places], closed=True)
+    out._edge_circle = (tuple(centre), tuple(axis), float(radius))
+    return _found_on(out, shape)
 
 
 def _rounded_feature(values, near, scale, size, kind):

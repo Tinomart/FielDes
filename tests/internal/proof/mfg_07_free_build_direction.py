@@ -17,8 +17,8 @@ view.set_bounds([-30, -90, -40], [40, 40, 45], auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 
-post = box((0, 0, 0), (10, 10, 30))
-plate = box((-20, -20, 30), (30, 30, 35))
+post = box((10, 10, 30), position=(5, 5, 15))
+plate = box((50, 50, 5), position=(5, 5, 32.5))
 part = union(post, plate)
 
 free = manufacturing_constraint(overhang=45, build_direction=None)

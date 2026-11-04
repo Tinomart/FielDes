@@ -10,7 +10,7 @@
 #      profile first."
 #   3. Click `circle_3`, then Ctrl+click `guide` (a 2D shape and a curve) and press Ctrl+E: `path_extrude(circle_3, guide)` is written -- the circle swept along the curve.
 #   4. Select `extrude_2` and drag its TOP face (the flat end, the face that is parallel to the circle): the length changes, the radius stays.  Drag its WALL: the radius changes and the
-#      ends stay.  The numbers are in the `handles(extrude_2, [...])` line the tree writes: centre x, centre y, the radius, then the two ends -- one number moves per face.
+#      ends stay.  The numbers are in two `handles(...)` lines the tree writes: `handles(circle_2, [centre x, centre y, radius])` for the wall and `handles(extrude_2, [a, b])` for the two ends -- one number moves per face (seen 2026-11-04: the top face took `b` from 20 to 22.3184, the wall took the radius from 10 to 11.4917).
 #   5. The same for `extrude_3`, the extrusion of a rectangle: its top face is its length, each of its four walls is a side of the rectangle (the numbers of the rectangle, then the two ends).
 #      This holds for every 2D shape: circle, rectangle, rounded rectangle, triangle, polygon, ring, profile.
 #   6. Select `circle_2` (the flat circle lies under the extrusion's base) and drag its edge where the extrusion is drawn over it: the CIRCLE's radius changes, not the extrusion's.
@@ -23,26 +23,26 @@ view.set_bounds([-30, -60, -17], [90, 45, 60], auto_scale=True)
 view.set_resolution(3)
 view.set_quality(8)
 
-circle_1 = circle(10, (40, 20))
+circle_1 = circle(10, position=(40, 20))
 circle_1
 
-box_1 = box((15, 15, 0), (25, 25, 10))
+box_1 = box(10, position=(20, 20, 5))
 box_1
 
-circle_2 = circle(10, (0, -30))
+circle_2 = circle(10, position=(0, -30))
 circle_2
 
 extrude_2 = extrude(circle_2, 0, 20)
 extrude_2
 
-rectangle_2 = rectangle((30, -40), (55, -20))
+rectangle_2 = rectangle((25, 20), position=(42.5, -30))
 rectangle_2
 
 extrude_3 = extrude(rectangle_2, 0, 15)
 extrude_3
 
-circle_3 = circle(4, (70, 0))
+circle_3 = circle(4, position=(70, 0))
 circle_3
 
-guide = spline([point(70, 0, 0), point(70, 0, 18), point(80, 0, 32)])
+guide = spline([point(position=(70, 0, 0)), point(position=(70, 0, 18)), point(position=(80, 0, 32))])
 guide

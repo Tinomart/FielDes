@@ -15,16 +15,16 @@ import tempfile
 from fieldes import *
 
 view.set_bounds((-5, -10, -10), (65, 30, 20), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)
 view.set_quality(8)
 
 # SECTION The part
-beam = difference(box((0, 0, 0), (60, 20, 10)), cylinder(3, 20, (30, 10, -5)))
+beam = difference(box((60, 20, 10), position=(30, 10, 5)), cylinder(3, 20, position=(30, 10, 5)))
 beam
 
 # SECTION The analysis
-support = fixed(box((-1, -1, -1), (1, 21, 11)))
-load = force(box((59, -1, -1), (61, 21, 11)), (0, 0, -300))
+support = fixed(box((2, 22, 12), position=(0, 10, 5)))
+load = force(box((2, 22, 12), position=(60, 10, 5)), (0, 0, -300))
 result = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=3)
 result
 

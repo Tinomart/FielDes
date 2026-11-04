@@ -56,6 +56,11 @@ public:
      *  the runner, on the run's own thread, before a statement that takes long  */
     void publishPartial(PyObject* snapshot, PyObject* lines, int runningLine);
 
+    /*  The native field of the sweep or the prism that a running script has just made (fieldes.stdlib.profile.path_extrude and extrude call it through the host module): the shape of the object is made as for a result, its mesh
+     *  is made from the numbers the script has now, and the handle of the tree that libfive_mesh_from_arrays makes the distance field of its triangles of is given as an integer (a new reference), or None when the object is
+     *  neither.  The shape that was made for it is not kept  */
+    PyObject* nativeField(PyObject* obj);
+
 public slots:
     void eval(QString s) override;
     void resume() override;

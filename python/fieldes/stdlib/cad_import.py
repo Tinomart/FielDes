@@ -604,16 +604,8 @@ def _begin_run():
 def _note_import(result):
     ''' `import_model` gave `result`: the resolution is picked for everything that was imported by now, unless the script has said one of its own '''
     _run_imports.append(result)
-    try:
-        import _fieldes_host as host
-        current = getattr(host, '__resolution', None)
-        ours = _auto_resolution['value']
-        if current is None or (ours is not None and abs(float(current) - ours) < 1e-12):
-            value = float(roi_resolution(*_run_imports))
-            host.set_resolution(value)
-            _auto_resolution['value'] = value
-    except Exception:
-        pass                                    # (outside the application, or a model without a size: the default stays)
+    # (the scene's resolution is not picked for the import any more: it is normed by the size of every model -- ten samples across it for every unit -- and an imported part has a resolution of its own, in
+    # samples per mm, chosen for it: `roi_resolution`.  A per-mm number put in the place of the scene's would be read as the samples across, and every other model would be meshed at a tenth of it)
     return result
 
 

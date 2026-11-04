@@ -20,7 +20,7 @@
 from fieldes import *
 
 view.set_bounds([-12, -12, -14], [124, 12, 14], auto_scale=True)
-view.set_resolution(6)
+view.set_resolution(30)
 view.set_quality(8)
 
 
@@ -99,5 +99,5 @@ print('a tree:', low_level_field(lambda x, y, z: (x * y + 1).sqrt() - z))
 
 # ...and what comes out of all this is a body like any other: here a twisted cube with a slot cut through it by the library's own
 # box and difference.  (A shape made from a max is not an exact distance: an offset of it is only about as large as it says.)
-slotted = difference(shifted(twisted_by(cube, 0.14), 112), box((108, -1.5, -10), (116, 1.5, 10)))
+slotted = difference(shifted(twisted_by(cube, 0.14), 112), box((8, 3, 20), position=(112, 0, 0)))
 slotted

@@ -20,10 +20,10 @@ t = Table('w2_wedge_wall: a wedge wall 0.2 mm thick at one end and 1.1 mm at the
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 slope = 0.9 / 20.0
-plane = half_space((-slope, 0.0, 1.0), (0.0, 0.0, 0.2))
+plane = half_space((-slope, 0.0, 1.0), position=(0.0, 0.0, 0.2))
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them
 t.check('the plane of the wedge faces the way the case assumes (inside below it)', evaluate(plane, [(10.0, 2.0, 0.0)])[0] < 0 < evaluate(plane, [(10.0, 2.0, 3.0)])[0], '', '')
-part = intersection(box((0, 0, 0), (20, 4, 1.3)), plane)           # (z from 0 up to 0.2 + 0.045 x)
+part = intersection(box((20, 4, 1.3), position=(10, 2, 0.65)), plane)           # (z from 0 up to 0.2 + 0.045 x)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 lo, hi = (-1.5, -1.5, -1.5), (21.5, 5.5, 2.8)

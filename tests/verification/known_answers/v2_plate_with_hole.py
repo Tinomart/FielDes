@@ -33,11 +33,11 @@ view.set_quality(8)
 
 # one eighth: the hole is at the origin, x = 0 .. L/2 (along the pull), y = 0 .. W/2 (across), z = 0 .. T/2
 a, b, h = L / 2, W / 2, T / 2
-part = difference(box((0, 0, 0), (a, b, h)), cylinder(D / 2, h + 2, (0, 0, -1)))
-plane_x = box((-1, -1, -1), (0.01, b + 1, h + 1))                                 # the plane of symmetry x = 0: held in x only
-plane_y = box((-1, -1, -1), (a + 1, 0.01, h + 1))                                 # the plane of symmetry y = 0: held in y only
-plane_z = box((-1, -1, -1), (a + 1, b + 1, 0.01))                                 # the middle plane of the thickness, z = 0: held in z only
-pull = box((a - 0.01, -1, -1), (a + 1, b + 1, h + 1))                             # the pulled end
+part = difference(box((a, b, h), position=(a / 2, b / 2, h / 2)), cylinder(D / 2, h + 2, position=(0, 0, -1)))
+plane_x = box((1.01, (b + 1) - (-1), (h + 1) - (-1)), position=(-0.495, ((-1) + (b + 1)) / 2, ((-1) + (h + 1)) / 2))                                 # the plane of symmetry x = 0: held in x only
+plane_y = box(((a + 1) - (-1), 1.01, (h + 1) - (-1)), position=(((-1) + (a + 1)) / 2, -0.495, ((-1) + (h + 1)) / 2))                                 # the plane of symmetry y = 0: held in y only
+plane_z = box(((a + 1) - (-1), (b + 1) - (-1), 1.01), position=(((-1) + (a + 1)) / 2, ((-1) + (b + 1)) / 2, -0.495))                                 # the middle plane of the thickness, z = 0: held in z only
+pull = box(((a + 1) - (a - 0.01), (b + 1) - (-1), (h + 1) - (-1)), position=(((a - 0.01) + (a + 1)) / 2, ((-1) + (b + 1)) / 2, ((-1) + (h + 1)) / 2))                             # the pulled end
 result = static_analysis(part, supports=[fixed(plane_x, displacement=(0, inf, inf)), fixed(plane_y, displacement=(inf, 0, inf)), fixed(plane_z, displacement=(inf, inf, 0))],
                          loads=[force(pull, (SIGMA * b * h, 0, 0))], material=steel, element_size=SIZE, cache=False)
 

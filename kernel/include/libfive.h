@@ -268,6 +268,13 @@ const void* libfive_tree_id(libfive_tree t);
 float libfive_tree_eval_f(libfive_tree t, libfive_vec3 p);
 
 /*
+ *  The numbers of n trees at the place (0, 0, 0), written to out (n floats): every distinct node that the trees share is worked out once, so that a thousand expressions made of one
+ *  another cost one pass over their nodes, not a thousand evaluators (libfive_tree_eval_f makes an evaluator of the whole tree at each call).  The numbers of the free variables are
+ *  those the application told the kernel (see DefaultVars).  A tree that this cannot read directly (an operation it does not do, a variable that has no number) is read by libfive_tree_eval_f.
+ */
+void libfive_tree_eval_many(const libfive_tree* trees, int n, float* out);
+
+/*
  *  Evaluates the given math tree over a spatial region, returning an interval
  *  that is guaranteed to contain the result
  *  TODO:  Free variables are treated as zero
@@ -451,6 +458,10 @@ void libfive_tetmesh_delete(libfive_tetmesh* m);
 typedef struct libfive_tetfea_ libfive_tetfea;
 libfive_tetfea* libfive_tetfea_new(libfive_tree shape, libfive_region3 region,
                                    float element_size, float E, float nu);
+/*  Uses a mesh made elsewhere (meshing.py's mesh_volume: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
+ *  the shape: the shape stays what the curved edges of the 10-node element are measured against, and element_size the size a node's distance to a region is
+ *  measured in.  Returns 0, and the message says why, when the mesh cannot be used  */
+int libfive_tetfea_set_mesh(libfive_tetfea* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets);
 /*  A support: the directions x, y, z (non-zero: held) of the part inside `region` are held at the displacement dx, dy, dz (mm: 0 does not let the part move there, another
  *  number imposes a displacement; a static analysis solves for the rest of the part)  */
 void libfive_tetfea_add_support(libfive_tetfea* f, libfive_tree region, int x, int y, int z, double dx, double dy, double dz);
@@ -615,6 +626,10 @@ void libfive_tetfea_delete(libfive_tetfea* f);
 typedef struct libfive_tetthermal_ libfive_tetthermal;
 libfive_tetthermal* libfive_tetthermal_new(libfive_tree shape, libfive_region3 region, float element_size,
                                            float conductivity);
+/*  Uses a mesh made elsewhere (meshing.py's mesh_volume: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
+ *  the shape: the shape stays what the curved edges of the 10-node element are measured against, and element_size the size a node's distance to a region is
+ *  measured in.  Returns 0, and the message says why, when the mesh cannot be used  */
+int libfive_tetthermal_set_mesh(libfive_tetthermal* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets);
 void libfive_tetthermal_add_temperature(libfive_tetthermal* f, libfive_tree region, float value);
 void libfive_tetthermal_add_heat(libfive_tetthermal* f, libfive_tree region, float watts);
 void libfive_tetthermal_add_generation(libfive_tetthermal* f, libfive_tree region, float watts);
@@ -685,6 +700,10 @@ void libfive_tetthermal_delete(libfive_tetthermal* f);
 typedef struct libfive_tetflow_ libfive_tetflow;
 libfive_tetflow* libfive_tetflow_new(libfive_tree domain, libfive_region3 region, float element_size,
                                      float density, float viscosity);
+/*  Uses a mesh made elsewhere (meshing.py's mesh_volume: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
+ *  the shape: the shape stays what the curved edges of the 10-node element are measured against, and element_size the size a node's distance to a region is
+ *  measured in.  Returns 0, and the message says why, when the mesh cannot be used  */
+int libfive_tetflow_set_mesh(libfive_tetflow* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets);
 /*  direction (zero: along the inward normal), the mean speed (<= 0: the direction's length), a flow
  *  rate (> 0 overrides the speed), profile 0 uniform / 1 developed  */
 void libfive_tetflow_add_inlet(libfive_tetflow* f, libfive_tree region, float dx, float dy, float dz, float speed,

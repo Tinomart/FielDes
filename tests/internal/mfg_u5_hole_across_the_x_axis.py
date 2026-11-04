@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('u5_hole_across_the_x_axis: a hole of radius 3 drilled along z through a block of 20, an undercut along x (the mould opens along x) asked: across the way it opens, the hole is an undercut and is filled whole')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = difference(box((0, 0, 0), (20, 20, 20)), cylinder(3.0, 24, (10, 10, -2)))
+part = difference(box(20, position=(10, 10, 10)), cylinder(3.0, 24, position=(10, 10, -2)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(undercut_along=(1, 0, 0))
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

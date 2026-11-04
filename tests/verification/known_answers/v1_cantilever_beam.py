@@ -22,9 +22,9 @@ view.set_bounds((-10, -10, -10), (L + 10, b + 10, h + 10), auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 
-beam = box((0, 0, 0), (L, b, h))
-wall = box((-1, -1, -1), (0.01, b + 1, h + 1))                  # the held end: the face at x = 0
-tip = box((L - 0.01, -1, -1), (L + 1, b + 1, h + 1))            # the loaded end: the face at x = L
+beam = box((L, b, h), position=(L / 2, b / 2, h / 2))
+wall = box((1.01, (b + 1) - (-1), (h + 1) - (-1)), position=(-0.495, ((-1) + (b + 1)) / 2, ((-1) + (h + 1)) / 2))                  # the held end: the face at x = 0
+tip = box(((L + 1) - (L - 0.01), (b + 1) - (-1), (h + 1) - (-1)), position=(((L - 0.01) + (L + 1)) / 2, ((-1) + (b + 1)) / 2, ((-1) + (h + 1)) / 2))            # the loaded end: the face at x = L
 result = static_analysis(beam, supports=[fixed(wall)], loads=[force(tip, (0, 0, -P))], material=steel, element_size=1.25, cache=False)
 
 E, nu = steel.E, steel.nu

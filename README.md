@@ -103,7 +103,7 @@ Materials and loads can vary through the part: [`19_graded_material.py`](example
 
 ### Topology optimisation, with the features that must stay
 
-**[Topology optimisation](examples/08_topology_optimization.py)** (the first picture of this page) keeps the material that carries the load and removes the rest: `topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.5'])` is the stiffest bracket in half of the material -- and any other number the analysis measures can be the goal or a limit (`minimize('mass')` under `'max_von_mises <= 90'`, a natural frequency that must be 100 Hz) --, about 100 iterations, cached
+**[Topology optimisation](examples/08_topology_optimization.py)** (the first picture of this page) keeps the material that carries the load and removes the rest: `topology_optimization(stress, conditions=[minimize(compliance_1), keep_below(volume_fraction_1, 0.5)])` is the stiffest bracket in half of the material -- and any other result of the analysis can be the goal or a limit (`minimize(mass_1)` under `keep_below(max_von_mises_1, 90)`, a natural frequency that must be 100 Hz: `keep_between(frequency_1, 100, 100)`) --, about 100 iterations, cached
 so that running the script again is instant. The lug holes and the ring of material round them are **excluded** from the design space (`exclude(space, holes)`): the optimiser reads an excluded region as one
 to keep, and the file's own exact surface is there, whatever is taken away elsewhere. The result on its own is the optimised part coloured by its density; the result card **plays the iterations**, `opt.shape()` is
 the final body as a field you can offset, shell or fill with a lattice, and `opt.verify()` analyses it again as a check. The same call designs a heat conduction (`topology_optimization` of a `thermal_analysis`: the coolest layout for the material it may use, [example 35](examples/35_thermal_topology_optimization.py)), and a body in a flow (below).
@@ -177,8 +177,8 @@ view.set_bounds([-35, -25, -8], [35, 25, 30], auto_scale=True)    # the region t
 view.set_resolution(6)                           # samples per mm
 view.set_quality(8)
 
-plate   = box((-30, -20, 0), (30, 20, var(6)))        # var(...): a number you can drag in the viewport
-anchor  = point(20, 10, 6)                                    # a point is a model, and a value where a coordinate goes
+plate   = box((60, 40, var(6)), position=(0, 0, 3))      # var(...): a number you can drag in the viewport
+anchor  = point(position=(20, 10, 6))                                    # a point is a model, and a value where a coordinate goes
 swell   = ramp(distance_to_point(anchor), (0, 45), (3.0, 0.5))   # 3 mm at the anchor, 0.5 mm 45 mm away: a field
 offset(plate, swell)                                          # a field where a number goes
 ```
@@ -238,6 +238,9 @@ takes a few seconds and is cached next to it.
 | [`35_thermal_topology_optimization.py`](examples/35_thermal_topology_optimization.py) | A heat sink designed: a plate that makes heat all through it and a strip of its edge held at 20 C, with 30 % of the metal laid where it carries the heat best (`topology_optimization` of a `thermal_analysis`) |
 | [`36_meshing_for_cfd.py`](examples/36_meshing_for_cfd.py) | A mesh for another program's solver: the air in a channel round a post, fine at the post and coarse away from it, prism layers on the post, an inlet, an outlet and walls as zones, the quality of the elements, and the mesh written for Gmsh, Fluent, OpenFOAM and ParaView (`mesh_volume`) |
 | [`37_cad_toolbox.py`](examples/37_cad_toolbox.py) | The CAD operations in one part: a flange with a hub (a profile revolved), six countersunk bolt holes (`hole_cutter` and `circular_pattern`), six slots, three gussets (a box cut by a plane), and its volume, surface, sections and distances measured |
+| [`37_analysis_on_your_own_mesh.py`](examples/37_analysis_on_your_own_mesh.py) | A mesh of your own as the part of an analysis: a beam meshed with a size that grows from its surface (`mesh_volume`, `graded_size`) and the static and the modal analysis solving on exactly those tetrahedra |
+| [`38_morph_shapes.py`](examples/38_morph_shapes.py) | Morph shapes, bodies made of points: a body with a symmetry inside it (cut in half by a mirror plane: its right points are images of its left ones, a bump on the plane) and a second symmetry that makes a mirrored clone of the whole body |
+| [`39_mesh_controls_the_simulation.py`](examples/39_mesh_controls_the_simulation.py) | Meshing and simulation in one: a plate with a hole, pulled, meshed coarse, uniform and graded (`mesh_volume`, `graded_size`) and solved on each mesh (`static_analysis(mesh, ...)`), to see how much the mesh changes the peak stress and the displacement, next to a textbook value |
 
 ## Documentation
 

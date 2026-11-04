@@ -19,7 +19,7 @@ from mfgkit import *
 t = Table('x3_gyroid_walls: a gyroid sheet lattice with walls of 1.0 mm in a block 20 x 20 x 10, a wall rule of 1.6 mm: a surface that turns every way, with no flat face anywhere: every wall of the lattice, measured along its own normal at eight places on the surface, comes out 1.6 mm thick, and nothing is cut')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = lattice(box((0, 0, 0), (20, 20, 10)), cell=cell_periodic('gyroid'), cell_size=10, thickness=1.0)
+part = lattice(box((20, 20, 10), position=(10, 10, 5)), cell=cell_periodic('gyroid'), cell_size=10, thickness=1.0)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=1.6)
 lo, hi = (-2, -2, -2), (22, 22, 12)

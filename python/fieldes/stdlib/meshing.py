@@ -537,6 +537,243 @@ def _snap_to_surface(field, points, scales, iterations=3):
     return cur
 
 
+def _point(P, i):
+    return (P[3 * i], P[3 * i + 1], P[3 * i + 2])
+
+
+def _field_gradients(field, points, scales):
+    ''' The value and the gradient of the field at each of the points, by central differences of 2 % of the scale there: [(value, (gx, gy, gz))] '''
+    samples = []
+    steps = []
+    for p, s in zip(points, scales):
+        e = max(1e-7, 0.02 * s)
+        steps.append(e)
+        x, y, z = p
+        samples.extend(((x, y, z), (x + e, y, z), (x - e, y, z), (x, y + e, z), (x, y - e, z), (x, y, z + e), (x, y, z - e)))
+    values = _eval(field, samples)
+    out = []
+    for i, e in enumerate(steps):
+        v = values[7 * i:7 * i + 7]
+        out.append((v[0], ((v[1] - v[2]) / (2 * e), (v[3] - v[4]) / (2 * e), (v[5] - v[6]) / (2 * e))))
+    return out
+
+
+def _solve3(A, b):
+    ''' x of A x = b for a 3 x 3 matrix (Cramer's rule); None when there is no single answer '''
+    def det(m):
+        return (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+    d = det(A)
+    if abs(d) < 1e-18:
+        return None
+    out = []
+    for k in range(3):
+        m = [row[:] for row in A]
+        for r in range(3):
+            m[r][k] = b[r]
+        out.append(det(m) / d)
+    return out
+
+
+def _unit_sum(vectors):
+    sx = sum(v[0] for v in vectors)
+    sy = sum(v[1] for v in vectors)
+    sz = sum(v[2] for v in vectors)
+    length = math.sqrt(sx * sx + sy * sy + sz * sz)
+    return (sx / length, sy / length, sz / length) if length > 1e-12 else (0.0, 0.0, 1.0)
+
+
+def _two_planes(p, A, B):
+    ''' The point of the line where the planes A and B (each (count, normal, offset)) meet that is nearest to `p`; None when they are one plane '''
+    nA, dA, nB, dB = A[1], A[2], B[1], B[2]
+    c = nA[0] * nB[0] + nA[1] * nB[1] + nA[2] * nB[2]
+    det = 1.0 - c * c
+    if det < 1e-6:
+        return None
+    rA = dA - (nA[0] * p[0] + nA[1] * p[1] + nA[2] * p[2])
+    rB = dB - (nB[0] * p[0] + nB[1] * p[1] + nB[2] * p[2])
+    a = (rA - c * rB) / det
+    b = (rB - c * rA) / det
+    return tuple(p[i] + a * nA[i] + b * nB[i] for i in range(3))
+
+
+def _snap_features(P, tets, field, notes, crease=40.0, lean=12.0, rounds=3, floor=0.15, sliver=10.0):
+    ''' The edges and corners of the body that the lattice cut across put back (the user, 2026-11-03: "those weird slops near the edges that has nothing to do with the geometry it came
+        from"): where the lattice does not lie on a sharp edge the nodes stand on the two faces beside it and none on the edge, and the faces between them are a slope the body does not
+        have (a box meshed at 4 mm lost 1.8 % of its volume, and 7 % of its surface was slope).  The boundary faces that lean away from the field -- their normal against its direction in
+        their middle more than `lean` degrees, or their middle off the surface -- name the nodes to look at.  The neighbours of such a node on the surface say which planes meet there (their
+        normals, the field's direction at them, in clusters of `crease` degrees, one plane each; a node on a crease has no single normal and says nothing): the node is moved to the point of the
+        line where two of them meet that is nearest to it, or to the corner of three when that is within an element (a node that is on an edge already moves along it into a corner) -- and put
+        back on the surface along the field's own direction, which at a crease is the bisector of its faces (a curved edge: the rim of a hole).  It stays where it is when that point is not on the
+        surface.  The nodes of the two faces beside an edge stand in turns along it, and only the nodes of one of the faces move (the same one all along the edge: a slope between nodes that
+        are both on the edge would have no area): a node does not move when a node beside it that is of another plane has.  A move that turns a tetrahedron inside out is taken back '''
+    cos_crease = math.cos(math.radians(crease))
+    cos_lean = math.cos(math.radians(lean))
+    moved_total = 0
+    for _ in range(rounds):
+        _, faces = _boundary_edges(tets)
+        if not faces:
+            break
+        near = {}
+        for f in faces:
+            for i in range(3):
+                a, b = f[i], f[(i + 1) % 3]
+                near.setdefault(a, set()).add(b)
+                near.setdefault(b, set()).add(a)
+        length = {}
+        for v, ring in near.items():
+            pv = _point(P, v)
+            length[v] = sum(math.dist(pv, _point(P, u)) for u in ring) / len(ring)
+        mids = [_centroid(P, f) for f in faces]
+        face_scale = [(length[f[0]] + length[f[1]] + length[f[2]]) / 3.0 for f in faces]
+        leaning = set()
+        for f, s, (value, g) in zip(faces, face_scale, _field_gradients(field, mids, face_scale)):
+            gl = math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
+            if gl < 1e-12:
+                continue
+            ax, ay, az = _polygon_area_vector(P, f)
+            al = math.sqrt(ax * ax + ay * ay + az * az)
+            if al <= 0.0:
+                continue
+            if abs(ax * g[0] + ay * g[1] + az * g[2]) / (al * gl) < cos_lean or abs(value) / gl > 0.03 * s:
+                leaning.update(f)
+        if not leaning:
+            break
+        need = set(leaning)
+        for v in leaning:
+            need |= near[v]
+        need = sorted(need)
+        normal = {}
+        strength = {}
+        for v, (value, g) in zip(need, _field_gradients(field, [_point(P, v) for v in need], [length[v] for v in need])):
+            gl = math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
+            if gl > 1e-12:
+                normal[v] = (g[0] / gl, g[1] / gl, g[2] / gl)
+                strength[v] = gl
+        if not strength:
+            break
+        typical = sorted(strength.values())[len(strength) // 2]       # (the gradient of a distance has the length 1 on a face and less on a crease, where the differences straddle it)
+        sure = lambda u: u in normal and strength[u] >= 0.9 * typical
+        found = []
+        for v in sorted(leaning):
+            if v not in normal:
+                continue
+            pv = _point(P, v)
+            on_face = sure(v)
+            clusters = [[normal[v]]] if on_face else []
+            members = [[v]] if on_face else []
+            for u in sorted(near[v]):
+                if not sure(u):
+                    continue
+                n = normal[u]
+                for k, c in enumerate(clusters):
+                    m = _unit_sum(c)
+                    if n[0] * m[0] + n[1] * m[1] + n[2] * m[2] >= cos_crease:
+                        c.append(n)
+                        members[k].append(u)
+                        break
+                else:
+                    clusters.append([n])
+                    members.append([u])
+            if len(clusters) < (2 if on_face else 3):
+                continue                                    # (the planes round it are one plane: no crease)
+            planes = []
+            for c, mem in zip(clusters, members):
+                m = _unit_sum(c)
+                d = sum(m[0] * P[3 * u] + m[1] * P[3 * u + 1] + m[2] * P[3 * u + 2] for u in mem) / len(mem)
+                planes.append((len(mem), m, d))
+            if on_face:
+                own = planes[0]
+                others = sorted(planes[1:], key=lambda t: -t[0])
+            else:
+                own = None
+                others = sorted(planes, key=lambda t: -t[0])
+            x = None
+            if len(others) >= (2 if on_face else 3):
+                three = ([own] if on_face else []) + others
+                solved = _solve3([list(t[1]) for t in three[:3]], [t[2] for t in three[:3]])
+                if solved is not None and math.dist(solved, pv) <= length[v]:
+                    x = tuple(solved)
+            if x is None and on_face:
+                x = _two_planes(pv, own, others[0])
+            if x is None:
+                continue
+            found.append((v, x))
+        if not found:
+            break
+        targets = []
+        for (v, _), x in zip(found, _snap_to_surface(field, [f[1] for f in found], [length[f[0]] for f in found], iterations=3)):
+            x = tuple(x)
+            move = math.dist(x, _point(P, v))
+            if move > length[v] or move < 1e-9 * length[v]:
+                continue
+            targets.append([v, x, move / length[v], normal[v]])
+        if not targets:
+            break
+        checks = _field_gradients(field, [t[1] for t in targets], [length[t[0]] for t in targets])
+        kept = []
+        for t, (value, g) in zip(targets, checks):
+            gl = math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
+            if gl > 1e-12 and abs(value) / gl <= 0.02 * length[t[0]]:
+                kept.append(t)                              # (it is on the surface: an edge or a corner)
+        kept.sort(key=lambda t: (tuple(-round(c, 2) for c in t[3]), round(t[2], 1), t[0]))      # (the same face first all along an edge, then the closest)
+        taken = {}
+        accepted = {}
+        old = {}
+        for v, x, _, n0 in kept:
+            s = length[v]
+            if sure(v) and any(u in accepted and normal[u][0] * n0[0] + normal[u][1] * n0[1] + normal[u][2] * n0[2] < cos_crease for u in near[v]):
+                continue                                    # (a node of the other face beside it is on the edge already)
+            cell = (int(math.floor(x[0] / (0.5 * s))), int(math.floor(x[1] / (0.5 * s))), int(math.floor(x[2] / (0.5 * s))))
+            clash = False
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        for y in taken.get((cell[0] + dx, cell[1] + dy, cell[2] + dz), ()):
+                            if math.dist(x, y) < 0.25 * s:
+                                clash = True
+            if clash:
+                continue
+            taken.setdefault(cell, []).append(x)
+            accepted[v] = n0
+            old[v] = _point(P, v)
+            P[3 * v], P[3 * v + 1], P[3 * v + 2] = x
+        if not old:
+            break
+        moved = set(old)
+        _revert_inverted(P, tets, moved, old)
+        if moved:
+            around = {}
+            for t in tets:
+                for w in t:
+                    if w in moved:
+                        around.setdefault(w, []).append(t)
+            for w in sorted(moved):
+                ts = around.get(w, ())
+                if min((_tet_ratio(P, t) for t in ts), default=1.0) < floor:
+                    P[3 * w], P[3 * w + 1], P[3 * w + 2] = old[w]                # (a move that leaves a sliver is not worth the edge)
+                    moved.discard(w)
+                elif ts:
+                    # (nor is one that makes the smallest dihedral angle of the tetrahedra round the node worse where it is below `sliver` degrees: the mean ratio does not see a sliver that has a good
+                    # shape in its other angles.  Measured on the mesh of examples/36_meshing_for_cfd.py: the smallest dihedral of the mesh was 8.0 degrees ("poor: slivers"), with this rule 13.5 --
+                    # the last commit, before the edge snapping, had 16.8 --, the volume 0.05 % under the exact one and the edges as before: mesh_edge_checks.py passes.  The user, 2026-11-04)
+                    after = min(_tet_min_dihedral(P, t) for t in ts)
+                    if after < sliver:
+                        now = (P[3 * w], P[3 * w + 1], P[3 * w + 2])
+                        P[3 * w], P[3 * w + 1], P[3 * w + 2] = old[w]
+                        before = min(_tet_min_dihedral(P, t) for t in ts)
+                        if after < before:
+                            moved.discard(w)
+                        else:
+                            P[3 * w], P[3 * w + 1], P[3 * w + 2] = now
+            _revert_inverted(P, tets, moved, old)
+        if not moved:
+            break
+        moved_total += len(moved)
+    if moved_total:
+        notes.append('{:,} nodes of the surface were put on the edges and corners of the body that the lattice had cut across'.format(moved_total))
+
+
 def _refine_to_size(P, tets, sizer, field, ratio=1.3, max_passes=30, max_tets=3000000, notes=None):
     ''' The tetrahedra bisected -- the longest edge of one at a time, and of all that share the edge, so that the mesh stays conforming (Rivara's longest-edge
         bisection) -- until their longest edges are no more than `ratio` times the size asked for where they are.  The vertices that the bisection puts on the boundary
@@ -1390,6 +1627,7 @@ def mesh_volume(body, element_size=None, element='tet', boundary_layers=None, zo
         tet_list = _refine_to_size(P, T, sizer, core, notes=notes)
     else:
         tet_list = [tuple(T[4 * i:4 * i + 4]) for i in range(len(T) // 4)]
+    _snap_features(P, tet_list, core, notes)
     if optimize:
         tet_list = _optimize(P, tet_list, core, smooth, notes)
     elif smooth and sizer.uniform is None:
@@ -1540,7 +1778,7 @@ def _display_of(mesh, extra=None):
                     hi = lo + 1.0
                 mean = sum(per.values()) / len(per)
                 constant = body * 0.0 + float(mean)
-                channels.append((name, label + ' - per element, press Elements', field_shape(_lib.libfive_tree_copy(constant.ptr)), lo, hi))
+                channels.append((name, label + ' - per element', field_shape(_lib.libfive_tree_copy(constant.ptr)), lo, hi))
                 values.append(array('f', [per.get(owner[t], 0.0) for t in range(ntets)]).tobytes())
             # the boundary: the faces of the mesh as triangles, each with the tetrahedron it belongs to
             cell_of = {}
@@ -1585,6 +1823,8 @@ def _display_of(mesh, extra=None):
     out._color_fields = channels
     out._color_field_name = name
     out._fea_mesh = fea_mesh
+    out._elements_first = True
+    out._cells_only = True        # (a mesh is its cells: the body that the viewer would mesh from its field is not the mesh -- it cuts corners that the mesh has not -- and is not drawn)
     if fea_mesh is None and note:
         out._fea_elements_note = note
     return out

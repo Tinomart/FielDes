@@ -26,7 +26,7 @@ spot = lambda k: (22.0 * k, 0.0)
 part = None
 for k, g in enumerate(leans):
     cx, oy = spot(k)
-    plate = move(rotate_y(box((cx - 1.0, oy, 0), (cx + 1.0, oy + 12, 8)), math.radians(g), center=(cx, oy + 6, 0)), (0, 0, 1.2))
+    plate = move(rotate_y(box(((cx + 1.0) - (cx - 1.0), (oy + 12) - oy, 8), position=(((cx - 1.0) + (cx + 1.0)) / 2, (oy + (oy + 12)) / 2, 4)), math.radians(g), center=(cx, oy + 6, 0)), (0, 0, 1.2))
     part = plate if part is None else union(part, plate)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45.0, overhang_fix='fill')

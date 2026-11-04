@@ -21,7 +21,7 @@ t = Table('a3_pocket_corners: six square pockets whose inside corners have radiu
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 radii = [0.0, 1.0, 1.8, 2.7, 3.0, 5.0]
-block = box((0, 0, 0), (96, 16, 10))
+block = box((96, 16, 10), position=(48, 8, 5))
 for k, r in enumerate(radii):
     block = difference(block, rounded_pocket(2 + 15.5 * k, 2, 12, 12, r, -1, 11))        # (through the block: a pocket with a floor has a sharp floor edge, which is an inside corner of radius 0 too)
 # (the corner rule reads the VALUE of the field up to the cutter's radius from the surface: a part made by differences of boxes whose cutters overshoot the block has a lower bound of the distance in its

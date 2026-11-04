@@ -27,6 +27,7 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
+import collections
 
 # kind: (the words for it, its colour)
 KINDS = {
@@ -37,6 +38,7 @@ KINDS = {
     'surface':    ('Surface',     '#b583ee'),
     'point':      ('Point',       '#f4b73a'),
     'simulation': ('Simulation',  '#ee6a5e'),
+    'result':     ('Result',      '#d8c15a'),
     'material':   ('Material',    '#c9a66b'),
     'conditions': ('Conditions',  '#e08f58'),
     'cell':       ('Lattice cell', '#d4b43c'),
@@ -57,6 +59,8 @@ DOMAINS = {
     'manufacturing': ('Manufacturing', '#46c37b', '#86d9a8'),
     'mesh':       ('Mesh',       '#b07fe0', '#cfb0ee'),
     'custom':     ('Your solver', '#c586c0', '#dcb0d8'),
+    # (the entries of the Optimization section of the menu: what designs for an analysis of any domain and what an optimization is given -- its own colour, a teal)
+    'optimization': ('Optimization', '#3fb8a0', '#7fd4c2'),
 }
 
 # The domain of what a function makes (an analysis, a condition), by its name: the one list the menus, the model tree and the icons read it from
@@ -71,6 +75,9 @@ DOMAIN_OF_FUNCTION = {
     'manufacturing_constraint': 'manufacturing', 'fff_constraint': 'manufacturing', 'cnc_constraint': 'manufacturing', 'molding_constraint': 'manufacturing',
     'mesh_volume': 'mesh', 'mesh_surface': 'mesh',
     'solve': 'custom',
+    # (the Optimization section of the menu, the user, 2026-11-02: "this should be ordered into its own optimization section here, obviously and get different icons")
+    'topology_optimization': 'optimization', 'parametric_optimization': 'optimization', 'optimization_condition': 'optimization',
+    'keep_below': 'optimization', 'keep_above': 'optimization', 'keep_between': 'optimization', 'minimize': 'optimization', 'maximize': 'optimization',
 }
 
 # ... and of a value, by its class (a subclass is of its parent's domain)
@@ -119,6 +126,8 @@ _BY_CLASS = {
     'SurfaceSelection': 'surface',
     'Regression': 'field', 'FieldFit': 'field',
     'SolverResult': 'simulation',
+    # (one result of an analysis, and what an optimization does with it: stdlib/analysis_results.py -- each in the colour of its analysis's domain)
+    'AnalysisResult': 'result', 'OptimizationCondition': 'conditions',
 }
 
 
@@ -136,6 +145,8 @@ def kind_of(value):
     ''' The kind of a model (see the top of this file): one of the keys of KINDS, or None for a value that is no model '''
     from fieldes.shape import Shape
     if isinstance(value, Shape):
+        if type(value).__name__ == 'AnalysisResult':
+            return 'result'                 # (a result of an analysis is a field to work with and a result in the tree: its own row, with the optimization condition in its menu)
         k = getattr(value, '_kind', None)
         if k in ('point', 'points', 'surface', 'field', 'profile', 'curve', 'lattice', 'symmetry', 'solid'):
             return k                    # ('solid' says it of a body whose field does not depend on z: a half space square to x is no 2D shape)
@@ -175,6 +186,25 @@ def describe_domains():
 # on it and no list anywhere has its name.  A function that says nothing takes any shape.
 SHAPES = frozenset(('solid', 'profile', 'curve', 'import', 'simulation', 'field', 'surface', 'point', 'lattice'))     # (what a geometric operation works on)
 BODIES = frozenset(('solid', 'profile', 'lattice', 'import', 'simulation'))     # (what has an inside, and edges: not a surface, a curve, a point or a field)
+
+
+# What goes into each INPUT of a function, for the menus that write its call from the models selected, in any order: `fn._slots = [slot(...), ...]` next to its definition.  A model goes into the first
+# input that takes its kind (`menu_catalog._tag`: a kind, for a condition the input it is made for, for a material whether it is a fluid), the models of a kind that is repeatable in a row, and what the
+# function needs that was not selected is a placeholder -- the call is written the same for every function that says it, and no name of a function is in the menu.  A function that says nothing of its
+# inputs is written from its template.
+Slot = collections.namedtuple('Slot', 'param tiers many as_list needed keyword')
+
+
+def _kindset(spec):
+    return frozenset((spec,)) if isinstance(spec, str) else frozenset(spec)
+
+
+def slot(param, *tiers, many=False, as_list=False, needed=False, keyword=False):
+    ''' One input of a function: the parameter `param` takes the models of the kinds of the FIRST of `tiers` that has any selected (a tier is a kind or a set of kinds: `slot('edge', 'curve', BODIES)` is the
+        edge that was selected, else the body).  `many`: the models of the kinds in it (`many='curve'`) -- True for all -- are repeatable, in a row, any number of them; `as_list`: written as a list,
+        `param=[a, b]` (the conditions of a simulation); `needed`: a placeholder `param=...` stands there when nothing was selected for it; `keyword`: always written as `param=value` '''
+    many = bool(many) if isinstance(many, bool) else _kindset(many)
+    return Slot(param, tuple(_kindset(t) for t in tiers), True if as_list else many, bool(as_list), bool(needed), bool(keyword) or bool(as_list))
 
 
 def takes(accepts, needs=()):
