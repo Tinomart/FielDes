@@ -1376,7 +1376,9 @@ bool StaticProblem::solve(int maxIterations, double tolerance, std::string& erro
     int it = 0;
     double rel = fnorm > 0 ? std::sqrt(dot(r, r)) / fnorm : 0.0;
     const double rel0 = rel;
+    std::vector<float> residualHistory;           // (the residual at the start and after every iteration: the convergence curve of the result card)
     auto report = [&]() {
+        residualHistory.push_back(float(rel));
         double f = double(it) / std::max(1, maxIterations);
         if (rel0 > tolerance && rel > 0 && std::isfinite(rel))
             f = std::max(f, std::log(rel0 / rel) / std::log(rel0 / tolerance));
@@ -1608,6 +1610,7 @@ bool StaticProblem::solve(int maxIterations, double tolerance, std::string& erro
     R.loadedNodes = m_loadedNodes;
     R.iterations = it;
     R.residual = rel;
+    R.residualHistory = std::move(residualHistory);
     R.compliance = compliance;
     R.reaction = reaction;
     double vol = 0;

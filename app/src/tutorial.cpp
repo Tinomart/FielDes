@@ -151,7 +151,7 @@ protected:
         for (const auto& c : changes)
         {
             QColor fill = accent;
-            fill.setAlpha(int(95 * c.second));
+            fill.setAlpha(int(40 * c.second));          // (faint: a filled amber bar over a line that has just changed hid the text of it)
             p.setPen(Qt::NoPen);
             p.setBrush(fill);
             p.drawRoundedRect(QRectF(c.first).adjusted(-2, -1, 2, 1), 3, 3);
@@ -167,12 +167,12 @@ protected:
             const double f = std::min(1.0, flash);
             QColor glow = accent;
             glow.setAlpha(int(40 + 50 * pulse + 120 * f));
-            p.setPen(QPen(glow, 7 + 4 * f));
+            p.setPen(QPen(glow, 5 + 4 * f));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(r, 8, 8);
             QColor line = accent;
             line.setAlpha(int(170 + 85 * pulse));
-            p.setPen(QPen(line, 2.2));
+            p.setPen(QPen(line, 1.6));
             p.drawRoundedRect(r, 8, 8);
         }
         if (!menuPic.isNull() && !menuRect.isNull())
@@ -185,15 +185,16 @@ protected:
         }
         for (const QRect& h : frames)
         {
-            const QRectF r = QRectF(h).adjusted(-2, -1, 2, 1);
+            // (thin: the frame of lines of the script is round text, and a thick stroke covers it)
+            const QRectF r = QRectF(h).adjusted(-3, -2, 3, 2);
             QColor glow = accent;
-            glow.setAlpha(int(50 + 60 * pulse));
-            p.setPen(QPen(glow, 6));
+            glow.setAlpha(int(30 + 40 * pulse));
+            p.setPen(QPen(glow, 3.5));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(r, 4, 4);
             QColor line = accent;
             line.setAlpha(int(190 + 65 * pulse));
-            p.setPen(QPen(line, 2));
+            p.setPen(QPen(line, 1.3));
             p.drawRoundedRect(r, 4, 4);
         }
         for (const QRect& h : sources)
@@ -2424,7 +2425,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Corner, spline point or round corner");
-        s.text = T("Double-click a point: a corner becomes a spline point (a round dot: the outline goes smoothly through it), the next double click a round corner (an exact arc: drag the arc "
+        s.text = T("Double-click a point: a corner becomes a spline point (a square dot with round corners: the outline goes smoothly through it), the next double click a round corner (a dot with a ring: an exact arc, drag the arc "
                    "to set its radius), and one more a corner again. A selected point has a gizmo: press its dot to move it in the plane of the profile; the gold ring scales it.");
         s.hint = T("The arrow points at a corner. The point says what it is: smooth=True, or radius=var(..). In a sweep along a line, the scale of a point is how thick the sweep is there. "
                    "Or press Show me.");
@@ -5320,12 +5321,25 @@ void Tutorial::refresh()
         if (!calcOnly && script && script->isVisible())
         {
             const QVector<int>& lines = codeLines;
-            for (int line : lines)
+            // (lines that follow each other are ONE frame: a frame to each line put two strokes on every line break, through the text -- the tester of version 1.2.0: "too thick marks in the tutorials, you can hardly
+            // see what the lines say")
+            QVector<int> ordered = lines;
+            std::sort(ordered.begin(), ordered.end());
+            ordered.erase(std::unique(ordered.begin(), ordered.end()), ordered.end());
+            for (int k = 0; k < ordered.size();)
             {
-                const QRect r = scriptLineRect(line);
-                if (r.isEmpty()) continue;
-                layer->lit << r;
-                layer->frames << r;
+                QRect block;
+                int next = k;
+                while (next < ordered.size() && (next == k || ordered[next] == ordered[next - 1] + 1))
+                {
+                    const QRect r = scriptLineRect(ordered[next]);
+                    if (!r.isEmpty()) block = block.isNull() ? r : block.united(r);
+                    ++next;
+                }
+                k = next;
+                if (block.isNull()) continue;
+                layer->lit << block;
+                layer->frames << block;
             }
             const qint64 age = m_changedClock.isValid() ? m_changedClock.elapsed() : 100000;
             const bool glowing = age < 2600 && !m_changed.isEmpty();

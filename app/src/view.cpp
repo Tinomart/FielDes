@@ -1827,6 +1827,7 @@ void View::updateResultPanel()
     st.showFlow = r->showFlowLines();
     st.opacity = r->opacityValue();
     for (const QStringList& row : r->keyResults()) st.keyResults << Units::shownRow(row);
+    st.residuals = r->residualHistory();
     // (the supports of a print are a body of the scene in amber: one more line of the legend of the geometry change, and no card of their own)
     // (its mesh, and not hasMesh(): that is true once the mesh is on the graphics card, at the next paint, and this runs when the mesh arrives)
     for (auto s : shapes) if (s->hasColorField() && s->getMesh() && s->colorMap() == "support") st.supports = true;
@@ -1910,6 +1911,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
             m_wait = WaitGrip{true, 3, 0, 0, QList<int>{}, true, m_insertPressPos, true, true};
             m_waitTimer.start();
             setCursor(Qt::BusyCursor);
+            emit(newPointWait(true));           // (the tree of the run that the point makes is read while the button is down: the drag goes on with the point that it names -- the user, 2026-11-10: "the point gets created but doesnt followed the held down cursor")
             emit(surfaceInsertRequested(body->sourceLine(), m_insertPress));
             setPullVirtual(m_insertPress);          // (the point is drawn where it was pressed at once, the script has it a moment later: the user, 2026-11-02, "the point should at least be created insnatly")
             m_overlay->update();
@@ -3509,19 +3511,19 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
 
 // For a test window: the cursor put, one by one, on junctions that the lattice picture draws, and the node that the pick gives there.  What is hovered exactly on a drawn junction has to be that junction (the
 // user, 2026-10-28: "the junction is not recognized as the closest one"); the report says how many are, and for the ones that are not, where the pick went and why the junction was not a candidate
-QString View::snapSelfCheck(int limit)
+QString View::snapSelfCheck(int limit, bool throughPlace)
 {
     if (!m_snapImageDrawn || m_snapLines.isEmpty()) return QStringLiteral("snapcheck: no lattice picture is drawn (is the snapping mode on, and the lattice shown?)\n");
     const float step = snapStep(), scale = camera.getScale();
     constexpr float eyeV = 4.0f;
     const QMatrix4x4 V = camera.view();
     const QVector3D eye = V.inverted().map(QVector3D(0, 0, -eyeV));
-    const double W = width(), H = height(), reach = 0.5 * std::min(W, H) * 1.12 * 0.8;
+    const double W = width(), H = height();
     struct Junction { QPointF at; QVector3D p; };
     QVector<Junction> junctions;
     QSet<qint64> seen;
     auto add = [&](const QPointF& at, const QVector3D& p) {
-        if (std::hypot(at.x() - 0.5 * W, at.y() - 0.5 * H) > reach) return;                  // (outside the round patch the junctions are faded away)
+        if (at.x() < 0 || at.y() < 0 || at.x() > W || at.y() > H) return;                  // (outside the picture there is nothing to hover)
         const qint64 key = ((qint64(qRound(p.x() * 100.0f)) & 0x1FFFFF) << 42) | ((qint64(qRound(p.y() * 100.0f)) & 0x1FFFFF) << 21) | (qint64(qRound(p.z() * 100.0f)) & 0x1FFFFF);
         if (seen.contains(key)) return;
         seen.insert(key);
@@ -3543,7 +3545,9 @@ QString View::snapSelfCheck(int limit)
         ++tested;
         m_snapStickValid = false;
         bool hit = false;
-        const QVector3D node = snapNodeAlongRay(pos, &hit);
+        QVector3D node;
+        if (throughPlace) { node = snapPlace(pos, nullptr, false); hit = true; }       // (H157: what a hover puts the mark on, with a model under the cursor or not)
+        else node = snapNodeAlongRay(pos, &hit);
         const double truePixels = std::hypot(j.at.x() - pos.x(), j.at.y() - pos.y());
         const QPointF got = toScreen(node);
         const double gotPixels = hit ? std::hypot(got.x() - pos.x(), got.y() - pos.y()) : 1e9;
@@ -3576,7 +3580,7 @@ QString View::snapSelfCheck(int limit)
     auto random01 = [&]() { lcg = lcg * 1664525u + 1013904223u; return double(lcg >> 8) / double(1u << 24); };
     for (int n = 0; n < 400 && !junctions.isEmpty(); ++n)
     {
-        const QPoint pos(int(0.5 * W + (random01() - 0.5) * 2.0 * reach * 0.8), int(0.5 * H + (random01() - 0.5) * 2.0 * reach * 0.8));
+        const QPoint pos(int(random01() * W), int(random01() * H));
         double nearest = 1e30;
         int which = -1;
         for (int i = 0; i < junctions.size(); ++i)
@@ -3588,7 +3592,9 @@ QString View::snapSelfCheck(int limit)
         ++nearTested;
         m_snapStickValid = false;
         bool hit = false;
-        const QVector3D node = snapNodeAlongRay(pos, &hit);
+        QVector3D node;
+        if (throughPlace) { node = snapPlace(pos, nullptr, false); hit = true; }
+        else node = snapNodeAlongRay(pos, &hit);
         const QPointF got = toScreen(node);
         const double gotPixels = hit ? std::hypot(got.x() - pos.x(), got.y() - pos.y()) : 1e9;
         if (hit && ((node - junctions[which].p).lengthSquared() < 1e-6f || gotPixels <= nearest + 0.5)) continue;
@@ -3622,7 +3628,47 @@ QVector3D View::snapPlace(QPoint pos, const Shape* exclude, bool toPoints) const
     if (toPoints && m_snap.snapPoints && pointNear(plane, exclude, dot)) return dot;
     // A model under the cursor: the node nearest the place of its surface that is pointed at -- what is pointed at is put on the model, and not at whatever depth a node of the lattice happens to be
     QVector3D surface;
-    if (surfacePointAt(pos, surface)) return snapPoint(surface, exclude, false);
+    if (surfacePointAt(pos, surface))
+    {
+        // H157 (the user's report, 2026-11-08, "Grid snapping further from the origin is inaccurate ... I expect the highlighted grid sections to have the snapping cursor attach to, instead of others in the
+        // vicinity but further away"): the node nearest the surface point IN SPACE is rounded coordinate by coordinate, and where the face is not on a plane of the lattice it is a node behind the face or in front of it,
+        // not the junction that is lit under the cursor -- the lit one is the nearest ON THE SCREEN (snapNodeAlongRay).  Of the eight nodes of the cell of the lattice that holds the surface point, the one
+        // nearest the cursor on the screen is taken; of two that are as near (within half a pixel), the nearer to the surface point
+        const float step = snapStep();
+        if (step > 0)
+        {
+            const QVector3D low(std::floor(surface.x() / step) * step, std::floor(surface.y() / step) * step, std::floor(surface.z() / step) * step);
+            QVector3D best = snapPoint(surface, exclude, false);
+            double bestPixels = 1e30;
+            float bestSpace = 1e30f;
+            for (int corner = 0; corner < 8; ++corner)
+            {
+                const QVector3D node = low + QVector3D((corner & 1) ? step : 0.0f, (corner & 2) ? step : 0.0f, (corner & 4) ? step : 0.0f);
+                const QPointF drawn = toScreen(node);
+                const double pixels = std::hypot(drawn.x() - double(pos.x()), drawn.y() - double(pos.y()));
+                const float space = (node - surface).lengthSquared();
+                if (pixels < bestPixels - 0.5 || (pixels < bestPixels + 0.5 && space < bestSpace))
+                {
+                    if (pixels < bestPixels) bestPixels = pixels;
+                    bestSpace = space;
+                    best = node;
+                }
+            }
+            // H157 again (the user, 2026-11-09, his picture of the far face of a long box: "WHEN THEY ARE HOVERED, THE GRID LOCK CURSOR IS NOT ON THE GRID JUNCTION THAT IT IS THE CLOSEST TO"): the lattice is drawn over
+            // everything, so the junction that is lit under the cursor is any junction of the slice along the line of sight, in front of the surface or behind it -- not only one of the eight nodes round the surface point.
+            // The junction that is nearest on the screen of ALL the junctions that are drawn (snapNodeAlongRay, the pick that has no model under the cursor) is taken; of two that are as near (within half a pixel), the one nearer to the surface point
+            bool rayHit = false;
+            const QVector3D rayNode = snapNodeAlongRay(pos, &rayHit);
+            if (rayHit)
+            {
+                const QPointF rayDrawn = toScreen(rayNode);
+                const double rayPixels = std::hypot(rayDrawn.x() - double(pos.x()), rayDrawn.y() - double(pos.y()));
+                if (rayPixels < bestPixels - 0.5 || (rayPixels < bestPixels + 0.5 && (rayNode - surface).lengthSquared() < bestSpace)) best = rayNode;
+            }
+            return best;
+        }
+        return snapPoint(surface, exclude, false);
+    }
     bool found = false;
     const QVector3D node = snapNodeAlongRay(pos, &found);
     return found ? node : snapPoint(plane, exclude, false);
@@ -3684,6 +3730,10 @@ void View::announceSnap()
 {
     if (!m_snap.on) m_snapMark.valid = false;
     emit(snapChanged());
+    // H169 (the user, 2026-11-09, "IT IS UFCKING SLOW IT TAKES LIKE 10 SECONDS BEFORE IT APPEARS"): MEASURED in the log of an empty scene -- after `press gridShow` and 1.5 s of an idle event loop there was no "[snap] the grid's draw (shown)" line: it came only
+    // when the next picture forced a paint.  The grid is drawn by the 3D pass; `m_overlay->update()` repaints the 2D overlay only, so showing or hiding the grid, turning the mode on or off, or changing its step repainted the viewport only when
+    // something else did (a mouse move over it).  The viewport is painted now
+    update();
     m_overlay->update();
 }
 
@@ -3776,11 +3826,8 @@ bool View::renderSnapLattice(int& stride) const
     // one is told by its tone and its width.  It is not thicker than its nodes can be told from each other and be counted: what the viewer sees between the two limits is a pyramid of the
     // picture's shape, area (b^3 - a^3) / 12 view units cubed, with a node to every stepV^3 of it, and where that would be more than `cap` nodes both limits are brought in -- at the place looked
     // at there are always a few rows
-    // The lattice is a round patch, not the whole picture (the user, 2026-10-28: "I want to try it not covering the full viewport, but only a circular faded region like it was before (just a little
-    // bigger, so it almost touches the edges)"): a circle round the middle of the picture, as high as the picture, that fades out toward its rim (see the end of this function)
-    constexpr double kCircle = 1.12;
-    const QPointF centre(0.5 * double(W), 0.5 * double(H));
-    const double circle = 0.5 * double(std::min(W, H)) * kCircle;
+    // The lattice fills the whole picture and fades only with the distance of its rows: it has no round patch and no rim (the tester's feedback on version 1.2.0, point 1, and the user, 2026-11-10: the round
+    // outline where the grid stops "looks trippy", "the solution is to remove that outline"; from 2026-10-28 it was a circle round the middle of the picture that faded out toward its rim)
     float hFar = float(m_snap.distance) / 100.0f - 1.0f;
     // (and at least about four rows deep however far the view is zoomed in: a step that is wider than the slice would leave nothing of the lattice to see or to snap to)
     hFar = std::max(hFar, 4.0f * stepV / (1.4f * eyeV));
@@ -3861,9 +3908,6 @@ bool View::renderSnapLattice(int& stride) const
                     // (a line that crosses the picture has both of its ends within a line's length of it: a node farther off is not needed)
                     const float margin = 1.6f * stepV * halfSide / w + 8.0f;
                     if (at.x() < -margin || at.x() > W + margin || at.y() < -margin || at.y() > H + margin) continue;
-                    // (and outside the round patch there is nothing to draw: a node beyond it by more than a line's length is not needed either)
-                    const double rx = at.x() - centre.x(), ry = at.y() - centre.y(), reachOut = circle + double(margin);
-                    if (rx * rx + ry * ry > reachOut * reachOut) continue;
                     nodes[keyOf(i, j, k)] = Node{i, j, k, at, 1.0f - g};
                 }
             }
@@ -3892,11 +3936,10 @@ bool View::renderSnapLattice(int& stride) const
     static const int kAlpha[kBands] = {120, 98, 80, 64, 50, 38, 27, 17};
     static const double kWidth[kBands] = {1.6, 1.4, 1.25, 1.1, 1.0, 0.9, 0.8, 0.7};
     // The lattice is drawn by the graphics card, from the ends of its lines (drawSnapLattice and its shader: the tones by axis and by band, the widths, the beams at the junctions that fade toward the middle of a
-    // line -- the first sixth of it from each end as it was, then half as strong, then a fifth as strong, the middle not at all --, the axes of the world whole, and the round patch that fades toward its rim).
+    // line -- the first sixth of it from each end as it was, then half as strong, then a fifth as strong, the middle not at all --, the axes of the world whole).
     // What is chosen here is which lines there are and how far each one is
     m_latticeVerts.clear();
     m_latticeVerts.reserve(nodes.size() * 4);
-    const double reachSq = circle * circle;
     for (const auto& entry : nodes)
     {
         const Node& a = entry.second;
@@ -3911,9 +3954,6 @@ bool View::renderSnapLattice(int& stride) const
             const bool onAxis = (axis == 0 && a.j == 0 && a.k == 0) || (axis == 1 && a.i == 0 && a.k == 0) || (axis == 2 && a.i == 0 && a.j == 0);
             if (!onAxis)
             {
-                // (a line with both of its junctions out of the round patch is not seen)
-                const double ax = a.at.x() - centre.x(), ay = a.at.y() - centre.y(), bx = b.at.x() - centre.x(), by = b.at.y() - centre.y();
-                if (ax * ax + ay * ay > reachSq && bx * bx + by * by > reachSq) continue;
                 m_snapLines.push_back(SnapLine{a.at, b.at, qint8(axis), qint8(band), qint16(kAlpha[band]), float(kWidth[band]), pa, pb});
             }
             const float flag = onAxis ? 1.0f : 0.0f;
@@ -3931,11 +3971,36 @@ bool View::renderSnapLattice(int& stride) const
 // alone: a model that is dragged, resized or edited does not touch it, and the graphics card draws it at every frame from the lines it has
 void View::ensureSnapLattice()
 {
-    if (!m_snap.on || !m_snap.show || (m_wp.open && m_wp.exists)) return;
+    if (m_wp.open && m_wp.exists) return;
     const QMatrix4x4 M = camera.M();
     const float step = snapStep();
     const qreal ratio = devicePixelRatioF();
     if (m_snapImageKept && M == m_snapImageM && step == m_snapImageStep && m_snap.distance == m_snapImageDistance && size() == m_snapImageSize && ratio == m_snapImageRatio) return;
+    if (!m_snap.on || !m_snap.show)
+    {
+        // H169 (the user, 2026-11-09: "The grid is too slow sometimes. It should be prerendered and cached so that when hidden and unhidden it is there immediately, instead of this delay period."): while the grid is
+        // hidden (or the mode is off) its lines are still chosen for the camera, once the camera has stood still for a moment, so that showing it again finds them ready
+        const unsigned gen = ++m_snapPrerenderGen;
+        QTimer::singleShot(250, this, [this, gen] {
+            if (gen != m_snapPrerenderGen || (m_snap.on && m_snap.show) || (m_wp.open && m_wp.exists)) return;
+            const QMatrix4x4 M2 = camera.M();
+            const float step2 = snapStep();
+            const qreal ratio2 = devicePixelRatioF();
+            if (!(m_snapImageKept && M2 == m_snapImageM && step2 == m_snapImageStep && m_snap.distance == m_snapImageDistance && size() == m_snapImageSize && ratio2 == m_snapImageRatio))
+            {
+                m_snapImageDrawn = renderSnapLattice(m_snapImageStride);
+                m_snapImageM = M2;
+                m_snapImageStep = step2;
+                m_snapImageDistance = m_snap.distance;
+                m_snapImageSize = size();
+                m_snapImageRatio = ratio2;
+                m_snapImageKept = true;
+                m_snapRebuilt = true;
+            }
+            if (!m_latticeWarm) update();               // (one frame to send them to the card and compile the program, see drawSnapLattice)
+        });
+        return;
+    }
     m_snapImageDrawn = renderSnapLattice(m_snapImageStride);
     m_snapImageM = M;
     m_snapImageStep = step;
@@ -3948,7 +4013,7 @@ void View::ensureSnapLattice()
 
 // The lattice's lines are drawn as the quads of two beams to a line (the axes of the world as one quad), made by a geometry shader from the two ends of the line: the width of a line is a number of pixels
 // that a line of the graphics card does not have, and the beams are shorter the farther the layer, so they are made from where the ends are on the screen.  The tone of a beam steps down along it as the picture's
-// beams did (the first part whole, then half, then a fifth), and the round patch -- whole to 0.45 of its radius and then a smoothstep to nothing at the rim -- is a factor of the fragment's place
+// beams did (the first part whole, then half, then a fifth); there is no round patch: the lattice reaches the edges of the picture
 static const char* kLatticeVert = R"GLSL(#version 150
 uniform mat4 M;
 in vec3 pos;
@@ -4025,9 +4090,6 @@ void main()
 )GLSL";
 
 static const char* kLatticeFrag = R"GLSL(#version 150
-uniform vec2 viewDev;
-uniform vec2 centreDev;
-uniform float circleDev;
 in vec2 fAcross;
 in vec4 fStyle;
 out vec4 color;
@@ -4059,17 +4121,15 @@ void main()
         if (strength < 4.5) discard;
         a = strength / 255.0;
     }
-    vec2 p = vec2(gl_FragCoord.x, viewDev.y - gl_FragCoord.y);
-    float r = length(p - centreDev) / circleDev;
-    float u = clamp((r - 0.45) / 0.55, 0.0, 1.0);
-    float inPatch = r >= 1.0 ? 0.0 : 1.0 - u * u * (3.0 - 2.0 * u);
-    color = vec4(rgb, a * cover * inPatch);
+    color = vec4(rgb, a * cover);
 }
 )GLSL";
 
 void View::drawSnapLattice(const QMatrix4x4& m)
 {
-    if (!m_snap.on || !m_snap.show || (m_wp.open && m_wp.exists) || m_latticeFailed || m_latticeVerts.empty()) return;
+    const bool visible = m_snap.on && m_snap.show;
+    // (H169: a grid that is hidden is drawn ONCE with the colours masked, so that the program is built, the lines are in the graphics card and the driver has compiled it when the grid is shown)
+    if ((!visible && (m_latticeWarm || !m_snapImageKept)) || (m_wp.open && m_wp.exists) || m_latticeFailed || m_latticeVerts.empty()) return;
     if (!m_latticeProgram)
     {
         auto* p = new QOpenGLShaderProgram;
@@ -4108,7 +4168,6 @@ void View::drawSnapLattice(const QMatrix4x4& m)
     }
     const qreal ratio = devicePixelRatioF();
     const double W = double(width()) * ratio, H = double(height()) * ratio;
-    constexpr double kCircle = 1.12;                  // (as renderSnapLattice's round patch: a circle round the middle of the picture, as high as the picture and a little more)
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -4116,9 +4175,37 @@ void View::drawSnapLattice(const QMatrix4x4& m)
     m_latticeProgram->setUniformValue("M", m);
     m_latticeProgram->setUniformValue("viewDev", QVector2D(float(W), float(H)));
     m_latticeProgram->setUniformValue("ratio", float(ratio));
-    m_latticeProgram->setUniformValue("centreDev", QVector2D(float(0.5 * W), float(0.5 * H)));
-    m_latticeProgram->setUniformValue("circleDev", float(0.5 * std::min(W, H) * kCircle));
-    glDrawArrays(GL_LINES, 0, m_latticeCount);
+    static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
+    QElapsedTimer drawClock;
+    if (timing) drawClock.start();
+    if (!visible)
+    {
+        // H169 (the user, 2026-11-09, twice: "THE GRID IS STILL SLOW TO LOAD!!!!! MY INSTRUCTION WAS THAT IT IS FUCKING PRERENDERED SO THAT IT ALWAYS APPEARS AND DISAPPEARS INSTANTLY"): the hidden grid is drawn once for real,
+        // with the state of the real draw (blend on, depth off, the same program and lines), into a buffer of 64 x 64 of its own.  The draw with every colour write off, used before, can be left uncompiled by a driver
+        // (a program with nothing to write is not worth its fragment stage), and the first real draw -- the show -- then paid the whole compile: 3.1 s in the timing log of the test
+        GLint prevFbo = 0;
+        GLint vp[4] = {0, 0, 0, 0};
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+        glGetIntegerv(GL_VIEWPORT, vp);
+        if (!m_latticeWarmFbo) m_latticeWarmFbo.reset(new QOpenGLFramebufferObject(64, 64));
+        if (m_latticeWarmFbo && m_latticeWarmFbo->isValid() && m_latticeWarmFbo->bind())
+        {
+            glViewport(0, 0, 64, 64);
+            m_latticeProgram->setUniformValue("viewDev", QVector2D(64.0f, 64.0f));
+            m_latticeProgram->setUniformValue("ratio", 1.0f);
+            glDrawArrays(GL_LINES, 0, m_latticeCount);
+            glBindFramebuffer(GL_FRAMEBUFFER, GLuint(prevFbo));
+            glViewport(vp[0], vp[1], vp[2], vp[3]);
+            m_latticeWarm = true;
+        }
+    }
+    else
+        glDrawArrays(GL_LINES, 0, m_latticeCount);
+    if (timing)
+    {
+        glFinish();
+        std::fprintf(stderr, "[snap] the grid's draw (%s) took %.1f ms, %d vertices\n", visible ? "shown" : "warm-up, hidden", double(drawClock.nsecsElapsed()) / 1.0e6, m_latticeCount);
+    }
     m_latticeProgram->release();
     m_latticeVbo.release();
     m_latticeVao.release();
@@ -4129,9 +4216,11 @@ void View::releaseSnapLattice()
 {
     if (m_latticeVao.isCreated()) m_latticeVao.destroy();
     if (m_latticeVbo.isCreated()) m_latticeVbo.destroy();
+    m_latticeWarmFbo.reset();
     delete m_latticeProgram;
     m_latticeProgram = nullptr;
     m_latticeFailed = false;
+    m_latticeWarm = false;
     m_latticeError.clear();
     m_latticeFresh = true;                           // (sent to the graphics card again)
 }
@@ -4797,7 +4886,7 @@ void View::updateWorkPlaneCursor(QPoint pos)
     }
 }
 
-// A point of what is being drawn, as the points of the script are drawn: a corner of a line is a square, a spline point a circle with a ring round it, a point a
+// A point of what is being drawn, as the points of the script are drawn (see drawPointDots): a corner of a line is a square, a spline point a square with round corners, a point a
 // plain dot (`mode` is the work plane's: 1 line, 2 spline, 3 point; `alpha` less than 1 for the one that only shows where a click would land)
 void View::wpMarker(QPainter& painter, const QPointF& q, int mode, double alpha, bool lit) const
 {
@@ -4809,13 +4898,12 @@ void View::wpMarker(QPainter& painter, const QPointF& q, int mode, double alpha,
         painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
         return;
     }
-    painter.drawEllipse(q, r, r);
     if (mode == 2)
     {
-        painter.setBrush(Qt::NoBrush);
-        painter.setPen(QPen(QColor(238, 232, 213, int(170 * alpha)), 1.0));
-        painter.drawEllipse(q, r + 3.0, r + 3.0);
+        painter.drawRoundedRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r), 0.55 * r, 0.55 * r);
+        return;
     }
+    painter.drawEllipse(q, r, r);
 }
 
 // ---- Symmetry: the symmetry model that is selected (`mirror = symmetry_planes(...)`); what is made while it is in use is made at its images too
@@ -6447,7 +6535,7 @@ bool View::pointOfBody(const Shape* s) const
     // (a body of points has no list of controls to find the point in, as a profile or a line has: it is asked which points it is made of)
     if (!s || !s->isPoint()) return false;
     for (const Shape* b : shapes)
-        if (b->hasMorph() && b->morphUses(s)) return true;
+        if ((b->hasMorph() || b->isPointBody()) && b->morphUses(s)) return true;
     return false;
 }
 
@@ -6510,7 +6598,9 @@ bool View::gizmoFrame(const Shape* s, QVector3D F[3]) const
             QVector3D e;
             e[a] = 1.0f;
             F[a] = R.mapVector(e).normalized();
-            world = world && std::max({std::fabs(F[a].x()), std::fabs(F[a].y()), std::fabs(F[a].z())}) > 0.99999f;
+            // (the frame is the world's only when arrow a lies along +axis a: a part turned 90 degrees about x has every arrow along SOME axis of the world -- x, z, -y -- and its arrows are drawn along
+            // those, so they have to be dragged along them: GitHub issue #3, "dragging the turned positional gizmo still moves in the global coordinate system")
+            world = world && F[a][a] > 0.99999f;
         }
         return !world;
     }
@@ -6718,6 +6808,13 @@ bool View::scaleSelectionByWheel(int delta, QPoint at, bool shift, bool plain)
     // The point whose dot the mouse is on is scaled whether it is selected or not -- the wheel acts on what the mouse is pointing at.  One of several selected points stands for them all
     // (as a drag of its dot moves them all), and a point that is not selected is scaled alone.  Its size, or with Shift its influence; the wheel without Shift acts on a point and on nothing else
     Shape* hovered = pointDotAt(at);
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING"))
+    {
+        int oi = -1;
+        std::vector<libfive::Tree::Id> hv;
+        fprintf(stderr, "[wheel] at (%d, %d) shift %d: dot %s, line %d, controlOwner %d, pointOfBody %d, wheelNumbers %d\n", at.x(), at.y(), int(shift), hovered ? "found" : "none",
+                hovered ? hovered->sourceLine() : -1, hovered ? int(controlOwner(hovered, oi) != nullptr) : 0, hovered ? int(pointOfBody(hovered)) : 0, hovered ? int(wheelNumbers(hovered, shift, hv)) : 0);
+    }
     if (plain && !hovered) return false;
     if (hovered)
     {
@@ -6726,7 +6823,7 @@ bool View::scaleSelectionByWheel(int delta, QPoint at, bool shift, bool plain)
         // getting hovered and scroll wheeled should ever take up the gesture".  A point that the ring of the gizmo does not scale -- the hard corner of a profile, a corner point of a body of points: see
         // gizmoAt -- has nothing for the wheel to turn: the notch zooms the view, and the point is neither selected nor waited for)
         QVector3D wheelPlane;
-        if (hovered->isPoint() && (planarRingNormal(hovered, wheelPlane) || pointOfBody(hovered)) && pointStyleOf(hovered) != 2 && pointStyleOf(hovered) != 3) return false;
+        if (hovered->isPoint() && planarRingNormal(hovered, wheelPlane) && pointStyleOf(hovered) != 2 && pointStyleOf(hovered) != 3) return false;
         // (H98, the window test of 2026-11-03: the wheel over a free point did not zoom and selected it.  A point that nothing uses -- no control of a profile, a line or a spline, no point of a body -- has nothing
         // for the wheel to turn, whatever numbers it could be given: the notch zooms the view, and the point is neither selected nor written to)
         {
@@ -8808,7 +8905,8 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
             any = any || (h.influence && vars.count(h.influence));
             // (the hard corner of a profile has no ring, as it has no rotation ring: its scale is how strongly a spline leaves a spline point, or the radius of a round corner)
-            if (any && extras && !((inPlane || pointOfBody(s)) && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))             // (the radius of a round corner is the factor of this ring)
+            // (the corner point of a BODY has this ring too: its influence, how far its edges are crisp -- the user, 2026-11-09, "The region should be adjustable with a gizmo ... User controllable through the gizmo just like it is for the other point types")
+            if (any && extras && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))             // (the radius of a round corner is the factor of this ring)
             {
                 // (the ring: within a few pixels of the circle round the middle)
                 const double d = std::fabs(std::hypot(at.x() - p0.x(), at.y() - p0.y()) - kUniformRingPx) - 3.5;
@@ -9092,6 +9190,7 @@ void View::cancelWaitingGrip()
     m_wait.on = false;
     m_waitTimer.stop();
     unsetCursor();
+    emit(newPointWait(false));
 }
 
 void View::startWaitingGrip()
@@ -9116,13 +9215,14 @@ void View::startWaitingGrip()
         // (a point put in by a press on the surface of a body: only the point on the line that the script names -- until it names one nothing is grabbed, and a point that was selected before is never the one: H71)
         if (m_wait.fresh ? !m_wait.lines.contains(s->sourceLine()) : (m_wait.selected ? !(s->isSelected() && (s->isPoint() || s->isFlat())) : !m_wait.lines.contains(s->sourceLine()))) continue;
         const GizmoGrip g{s, m_wait.kind, m_wait.axis};
-        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) fprintf(stderr, "[wait] the drag begins on the point at source line %d\n", s->sourceLine());
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) fprintf(stderr, "[at %lld ms] [wait] the drag begins on the point at source line %d\n", static_cast<long long>(QDateTime::currentMSecsSinceEpoch() % 100000000), s->sourceLine());
         // (from where the button went down, when that is known: the point is there, and the hand has moved on while the script ran -- the drag then catches up with the hand at once)
         const bool fromPress = m_wait.pressed && m_wait.press != m_lastPos;
         const QPoint pos = m_wait.pressed ? m_wait.press : m_lastPos;
         m_wait.on = false;
         m_waitTimer.stop();
         unsetCursor();
+        emit(newPointWait(false));
         beginGizmoDrag(g, pos);
         if (fromPress && gizmo_drag)
         {
@@ -9205,24 +9305,34 @@ void View::drawPointDots(QPainter& painter)
         painter.setBrush(on ? QColor(80, 170, 235) : QColor(38, 139, 210));
         const double r = on ? 6.0 : 5.0;
         const int style = pointStyleOf(s);
+        // THE PICTURE OF A KIND OF POINT, THE SAME IN EVERY BODY, PROFILE AND CURVE (the user, 2026-11-11, H173: "right now the sphere is the spline and the rounded square is the sphere point. That makes no intuitive sense. Those should be
+        // switched." and, of the profiles: "I want the profile changed as well for consistency"): a corner is a square -- a hard edge --, a spline point a rounded square -- the curve or the surface goes softly through it --, and a sphere
+        // point or round corner (style 3) a circle with a ring round it: a ball.  What a point IS (style 1 corner, 2 spline point, 3 round corner) is not changed, only how its dot is drawn
         if (style == 1)
         {
-            // a corner of a profile or a curve: a square, a hard edge
+            // a corner: a square, a hard edge
             painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
-        }
-        else if (style == 3)
-        {
-            // a round corner of a profile: a square with round corners -- an arc takes the place of the corner
-            painter.drawRoundedRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r), 0.55 * r, 0.55 * r);
         }
         else if (style == 2)
         {
-            // a spline point: a circle with a ring round it, the curve goes smoothly through it
+            // a spline point: a square with round corners
+            painter.drawRoundedRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r), 0.55 * r, 0.55 * r);
+        }
+        else if (style == 3)
+        {
+            // a sphere point, a round corner: a circle with a ring round it
             painter.drawEllipse(q, r, r);
             painter.setBrush(Qt::NoBrush);
             painter.setPen(QPen(on ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5, 170), 1.0));
             painter.drawEllipse(q, r + 3.0, r + 3.0);
-            // the direction the curve leaves it in, while it is selected (or the mouse is on it): a line through the dot, its rotation turns it
+        }
+        else
+        {
+            painter.drawEllipse(q, r, r);
+        }
+        if (style == 2)
+        {
+            // the direction a spline point leaves it in, while it is selected (or the mouse is on it): a line through the dot, its rotation turns it
             QVector3D tg;
             int controlIndex = -1;
             Shape* owner = on ? controlOwner(s, controlIndex) : nullptr;
@@ -9242,10 +9352,6 @@ void View::drawPointDots(QPainter& painter)
                     painter.drawLine(tip, tip - u * 8.0 - n * 4.0);
                 }
             }
-        }
-        else
-        {
-            painter.drawEllipse(q, r, r);
         }
     }
     painter.restore();
@@ -9827,7 +9933,7 @@ void View::drawGizmo(QPainter& painter)
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
             any = any || (h.influence && vars.count(h.influence));
-            if (any && extras && !((inPlane || pointOfBody(s)) && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))              // (not on the hard corner of a profile: see gizmoAt)
+            if (any && extras && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))              // (not on the hard corner of a profile: see gizmoAt; the corner of a body has the ring of its influence)
             {
                 const GizmoGrip& now = gizmo_drag ? gizmo_active : gizmo_hover;
                 const bool on = now.kind == 2 && now.shape == s;
@@ -9925,6 +10031,8 @@ void View::applyGizmoNumber(libfive::Tree::Id id, float value)
     applyGizmoNumbers({{id, value}});
 }
 
+static QElapsedTimer g_dragClock;           // (H165, 2026-11-09: the time since the press of a gizmo, for the [sync] lines of FIELDES_TIMING)
+
 void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
 {
     static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
@@ -9953,6 +10061,25 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
         emit(renderBusy(true));
         requestSlice();
     }
+    if (timing && gizmo_drag)
+    {
+        // (H165, the user, 2026-11-09: "The running ahead is not fixed. It also happens when rotating ... when using a gizmo element, it lags the object for the first few tenths of a second": for every step of a drag, where the
+        // gizmo stands and where the part is drawn -- the middle of its mesh box moved by the preview -- and how long after the press this step came)
+        for (auto& s : shapes)
+        {
+            if (!s->isSelected() || !s->hasGizmo()) continue;
+            QVector3D lo, hi;
+            const QVector3D p = s->gizmoPivot();
+            if (s->previewBox(lo, hi))
+            {
+                const QVector3D c = (lo + hi) * 0.5f;
+                std::fprintf(stderr, "[sync] %lld ms after the press: pivot (%.3f, %.3f, %.3f), part box middle (%.3f, %.3f, %.3f), difference (%.3f, %.3f, %.3f), preview drawn\n", (long long)g_dragClock.elapsed(),
+                             double(p.x()), double(p.y()), double(p.z()), double(c.x()), double(c.y()), double(c.z()), double(c.x() - p.x()), double(c.y() - p.y()), double(c.z() - p.z()));
+            }
+            else
+                std::fprintf(stderr, "[sync] %lld ms after the press: pivot (%.3f, %.3f, %.3f), no preview (the part is meshed again at each step)\n", (long long)g_dragClock.elapsed(), double(p.x()), double(p.y()), double(p.z()));
+        }
+    }
     if (m_symExists) refreshSymmetry();            // (the numbers that are dragged may be the gizmo of the symmetry: its planes follow)
     // The field the field viewer shows is not a shape that is drawn, so nothing above reached its numbers: when the numbers that are
     // dragged are its own (the gizmo of the field, or a surface of it), the disc shows it from the new ones as they come, not
@@ -9970,7 +10097,16 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
         }
         if (fieldChanged) requestFieldSlice(viewer);
     }
-    m_overlay->update();
+    // H165 (the user, 2026-11-09: "The running ahead is not fixed. It also happens when rotating ... when using a gizmo element, it lags the object for the first few tenths of a second"): the part is painted by the 3D pass and the
+    // gizmo by the overlay, and two requests to repaint (`update()`) are two paints that Qt runs when it likes -- the part can show step N and the gizmo step N-1, or the other way round.  While a gizmo is dragged and a part is drawn
+    // moved, both are painted NOW, one after the other, from the numbers of this step
+    if (gizmo_drag && moved)
+    {
+        repaint();
+        m_overlay->repaint();
+    }
+    else
+        m_overlay->update();
     if (timing)
         std::fprintf(stderr, "[drag] numbers: %.1f ms in all, %.1f ms of it writing the script, the shapes took %.1f ms, the region %.1f ms; %s\n", double(clock.nsecsElapsed()) / 1e6, double(written) / 1e6, double(shapesNs - written) / 1e6, double(regionNs - shapesNs) / 1e6,
                      moved ? (changed ? "some shapes moved, others meshed" : "shapes moved, nothing meshed") : (changed ? "meshed again" : "nothing changed"));
@@ -10217,6 +10353,7 @@ bool View::splitSharedPlane(Shape* plane, const QList<Shape*>& members)
 
 void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
 {
+    g_dragClock.restart();
     m_regionGrown = false;
     gizmo_oriented = false;
     gizmo_frame_shape = nullptr;

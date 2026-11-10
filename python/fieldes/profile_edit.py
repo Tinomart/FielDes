@@ -317,13 +317,35 @@ def _insert_morph(tree, lines, source, name, line, obj, req):
             last += 1
         edits.append([first, 0, last + 1, 0, text])
         shift = text.count('\n') - (last + 1 - first)
-    else:
+    elif not _faces_follow_the_points(faces, where + [press], obj):
         edits[0][4] += _faces_block(faces_name, faces, indent)
     answer_line = assign.lineno - 1 + block_length - 1 + shift
     if __import__('os').environ.get('FIELDES_TIMING'):
-        __import__('sys').__stderr__.write('[insert] new point %s: the line the view is told is %d (the call of the body is at line %d, the block has %d lines, the faces list moved the text by %d)\n' % (new, answer_line, assign.lineno, len(block), shift))
+        __import__('sys').__stderr__.write('[at %d ms] [insert] new point %s: the line the view is told is %d (the call of the body is at line %d, the block has %d lines, the faces list moved the text by %d)\n' % (int(__import__('time').time() * 1000) % 100000000, new, answer_line, assign.lineno, len(block), shift))
         __import__('sys').__stderr__.flush()
     return json.dumps({'edits': edits, 'label': 'Add a point to %s' % name, 'line': answer_line, 'name': new})
+
+
+def _faces_follow_the_points(faces, positions, obj):
+    ''' H164 (the user, 2026-11-09: a morph body has no face logic of its own): True when the faces a body of these places would take by itself -- the hull, with a point inside it pressed in as a dent -- are the
+        faces that were just made, so that no list of faces needs to be written into the script.  Only for a body that is not made symmetric (the images of the new point change the places) '''
+    try:
+        from fieldes.stdlib import morph as M
+        if len(positions) != len(obj._ctrls) + 1:
+            return False
+        own = M._default_faces('body', [tuple(p) for p in positions])
+    except Exception:
+        return False
+
+    def triangles(fs):
+        out = set()
+        for f in fs:
+            for t in range(1, len(f) - 1):
+                tri = (f[0], f[t], f[t + 1])
+                k = tri.index(min(tri))
+                out.add(tri[k:] + tri[:k])
+        return out
+    return triangles(own) == triangles(faces)
 
 
 def _split_for_images(tree, plist, line, press, faces, where, new_index):

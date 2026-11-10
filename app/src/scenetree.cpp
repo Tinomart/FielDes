@@ -3270,11 +3270,9 @@ void ScenePanel::rebuild()
         // by the conditions, and it is not one of the things an analysis takes, so it stands apart at the bottom, and the models, the conditions and the material above it are one block that can be selected
         // from the top to the bottom (the user, 2026-10-28: "I would put all of the surfaces on the bottom when ordering it").  Only the tree is ordered so: the script keeps its order, a condition needs
         // the face above it
-        std::stable_partition(topRows.begin(), topRows.end(), [&](QTreeWidgetItem* r) {
-            if (nested.contains(r)) return true;
-            const QJsonObject o = r->data(COL_NAME, ROLE_ITEM).toJsonObject();
-            return !(o["callee"].toString() == "select_surface" && o.contains("var"));
-        });
+        // (H158, GitHub issue #5, 2026-11-08, the user: "I reported that for one specific tutorial section the surfaces should be together. Now all surfaces are always displayed at the bottom for all part at
+        // all times. That is a complete misunderstanding of what the goal was"; expected: "surfaces objects in the model tree to be freely moveable like every other object"): the rows stand in the order of the script,
+        // the faces of select_surface too -- the partition that put them all at the bottom is gone)
         QList<QTreeWidgetItem*> top;
         int s = -1;
         QTreeWidgetItem* in = nullptr;
@@ -6160,6 +6158,18 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items, bool automatic)
         for (const auto& o : all) gone << keyOf(o);
         for (int i = 0; i < all.size(); ++i)
         {
+            // H154 ("sometimes deleted points did not delete their partner"): a point that is the IMAGE of another (`p2 = symmetry_image(p1, ...)`) goes with its original as the original goes with its images --
+            // a pair of mirrored points is one thing to delete.  (The symmetry it names is no point and stays)
+            if (all[i]["callee"].toString() == "symmetry_image" || all[i]["symmetry_image"].toBool())
+            {
+                for (const QString& name : directInputs(all[i]))
+                {
+                    const QJsonObject original = itemForVar(name);
+                    if (original.isEmpty() || original["callee"].toString() != "point" || gone.contains(keyOf(original))) continue;
+                    all << original;
+                    gone << keyOf(original);
+                }
+            }
             const QString var = all[i]["var"].toString();
             if (var.isEmpty()) continue;
             for (const auto v : m_scene["items"].toArray())

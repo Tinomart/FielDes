@@ -36,7 +36,7 @@ namespace fea {
 namespace {
 
 const char MAGIC[4] = {'F', 'D', 'R', 'S'};
-const uint32_t VERSION = 3;
+const uint32_t VERSION = 4;          // (4: the results keep the residual of their solve after every iteration, for the curve on the result card; a file of version 3 is solved again)
 enum Kind : uint32_t { KIND_TET = 1, KIND_TETTHERMAL = 2, KIND_TETFLOW = 3, KIND_HEX = 4, KIND_HEXTHERMAL = 5 };
 
 #ifdef _WIN32
@@ -245,6 +245,7 @@ void writeMeshResult(Writer& w, const MeshResult& R)
     w.f64(R.residual); w.f64(R.seconds); w.f64(R.volume); w.f64(R.compliance);
     w.vec3(R.totalLoad); w.vec3(R.reaction);
     w.f64(R.heatIn); w.f64(R.heatOutFixed); w.f64(R.heatOutConvection);
+    w.raw(R.residualHistory);
 }
 
 std::shared_ptr<MeshResult> readMeshResult(Reader& r, const std::shared_ptr<const TetMesh>& mesh,
@@ -268,6 +269,7 @@ std::shared_ptr<MeshResult> readMeshResult(Reader& r, const std::shared_ptr<cons
     R->residual = r.f64(); R->seconds = r.f64(); R->volume = r.f64(); R->compliance = r.f64();
     R->totalLoad = r.vec3(); R->reaction = r.vec3();
     R->heatIn = r.f64(); R->heatOutFixed = r.f64(); R->heatOutConvection = r.f64();
+    r.raw(R->residualHistory);
     return r.ok ? R : nullptr;
 }
 
@@ -300,6 +302,7 @@ void writeGrid(Writer& w, const Result& R)
     w.i32(R.looseElements); w.i32(R.iterations);
     w.f64(R.residual); w.f64(R.seconds); w.f64(R.volume); w.f64(R.compliance);
     w.vec3(R.totalLoad); w.vec3(R.reaction);
+    w.raw(R.residualHistory);
 }
 
 std::shared_ptr<Result> readGrid(Reader& r)
@@ -322,6 +325,7 @@ std::shared_ptr<Result> readGrid(Reader& r)
     R->looseElements = r.i32(); R->iterations = r.i32();
     R->residual = r.f64(); R->seconds = r.f64(); R->volume = r.f64(); R->compliance = r.f64();
     R->totalLoad = r.vec3(); R->reaction = r.vec3();
+    r.raw(R->residualHistory);
     return r.ok ? R : nullptr;
 }
 

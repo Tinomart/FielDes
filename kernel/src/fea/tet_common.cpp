@@ -297,8 +297,10 @@ bool cgSolve(const Assembly& A, const std::vector<unsigned char>& fixed, const s
     const double fnorm = std::sqrt(dotProduct(bm, bm));
     out.iterations = 0;
     out.residual = 0;
+    out.history.clear();
     if (!(fnorm > 0)) return true;
     double rel = std::sqrt(dotProduct(r, r)) / fnorm;
+    out.history.push_back(float(rel));
     if (rel < tolerance)
     {
         out.residual = rel;
@@ -332,6 +334,7 @@ bool cgSolve(const Assembly& A, const std::vector<unsigned char>& fixed, const s
             }
         }, 8192);
         rel = std::sqrt(dotProduct(r, r)) / fnorm;
+        out.history.push_back(float(rel));
         if (it % 20 == 0)
         {
             if (progress)

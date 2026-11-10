@@ -231,11 +231,13 @@ public:
      *  (`recipeStart[v]` to `recipeStart[v + 1]` of `recipeControl` and `recipeWeight`), with the triangles between the vertices.  The control points are evaluated once each at every step of a
      *  drag, so the number of vertices costs a sum of a few numbers each and no evaluation: nothing is meshed from the field, which is only made when something else needs it (a union with the body)
      */
-    void setMorph(std::vector<libfive::Tree> controls, std::vector<uint32_t> recipeStart, std::vector<uint32_t> recipeControl, std::vector<double> recipeWeight, std::vector<uint32_t> triangles);
-    bool hasMorph() const { return m_morph_controls.size() >= 9 && m_morph_recipe_start.size() >= 4 && !m_morph_triangles.empty(); }
+    // (H164: `controls` are the three trees to a control point, or -- when a tape is given -- the INPUTS of the tape, one tree each: the numbers of the points; the tape makes the control points from them, see morphDirect)
+    void setMorph(std::vector<libfive::Tree> controls, std::vector<uint32_t> recipeStart, std::vector<uint32_t> recipeControl, std::vector<double> recipeWeight, std::vector<uint32_t> triangles,
+                  std::vector<int32_t> tapeOp = {}, std::vector<int32_t> tapeA = {}, std::vector<int32_t> tapeB = {}, std::vector<double> tapeConst = {}, std::vector<uint32_t> tapeOut = {});
+    bool hasMorph() const { return (m_morph_controls.size() >= 9 || !m_morph_tape_out.empty()) && m_morph_recipe_start.size() >= 4 && !m_morph_triangles.empty(); }
     /*  The vertices of the surface as the numbers of the script are now (false when one of them is not a number)  */
     bool morphNow(const std::map<libfive::Tree::Id, float>& v, std::vector<Eigen::Vector3f>& out) const;
-    bool morphDirect(const std::map<libfive::Tree::Id, float>& v, std::vector<Eigen::Vector3d>& at) const;       // (the numbers of the control points, worked out directly -- see morphNow; the caller holds m_morph_mutex)
+    bool morphDirect(const std::map<libfive::Tree::Id, float>& v, std::vector<Eigen::Vector3d>& at) const;
     /*  The one number (var) an expression of the script's numbers is made of, or null when it has none or several: what moves a point along an axis  */
     static libfive::Tree::Id soleVarOf(const libfive::Tree& expression);
     bool hasControls() const { return !m_controls.empty(); }
@@ -554,6 +556,15 @@ public:
         // A dot that is the image of a point of a path, drawn with the images of the sweep along it (symmetry_images): its dot is pressed and dragged -- the numbers it moves are the
         // original point's -- but it has no gizmo of its own to show, whatever is selected
         bool dotOnly = false;
+        // H165 (the user, 2026-11-09, "THE GIZMO SHOULD ALWAYS RECALCULATE AT ALL TIMES"): the middle of the part as it is now, in the frame it is made in -- BEFORE this gizmo places it -- for a part whose surfaces were dragged (handles).
+        // `about` stays the pivot the placement turns and scales about (gizmoMatrix, symmetryNow ... read it directly); the gizmo is DRAWN, picked and dragged at this point taken through the same placement, so it is on the middle
+        // of the part live, while it is moved, turned and scaled, and the pivot of the preview is not touched.  Not set: the gizmo is where it always was (about + the move)
+        bool hasCentre = false;
+        QVector3D centre;
+        // H165 (the user, 2026-11-09: "The real time drag desync is still not fixed"): while a surface is pulled the script is not run again, so `centre` is the middle of the last run.  For each number of the handles that was
+        // pulled: its id, its value at that run, and how far the middle moves for one unit of it -- the middle now is the one of the run plus slope x (the number now - the number at the run), see gizmoCentreNow
+        struct CentreSlope { libfive::Tree::Id id = nullptr; double v0 = 0.0; double d[3] = {0.0, 0.0, 0.0}; };
+        std::vector<CentreSlope> centreLive;
     };
     void setGizmo(const Gizmo& h) { m_gizmo = h; }
     /*  When the gizmo is shown, as the model tree's gizmo button says (the script does not): see ScenePanel::gizmoModeOfLine  */
@@ -613,6 +624,7 @@ public:
     QVector3D carriedPivotOf(const Gizmo& g) const;
     /*  The numbers now (constants and unknown ones as 0; a scale as 1)  */
     QVector3D gizmoMove() const;
+    QVector3D gizmoCentreNow() const;       // (H165: the middle of the part as the numbers are now: Gizmo::centre plus the slopes of the numbers that were pulled)
     QVector3D gizmoRotate() const;
     QVector3D gizmoScale() const;
     /*
@@ -664,7 +676,7 @@ public:
     /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */
     std::map<libfive::Tree::Id, float> dragWeights() const;
     /*  Where the part turns after the move: the pivot the gizmo sits at  */
-    QVector3D gizmoPivot() const { if (!m_gizmo.present && !m_carried.empty()) return carriedPivot(); const QVector3D p = m_gizmo.about + gizmoMove(); return m_gizmo.present && m_gizmo.mapped ? m_gizmo.map.map(p) : p; }
+    QVector3D gizmoPivot() const { if (!m_gizmo.present && !m_carried.empty()) return carriedPivot(); const QVector3D p = (m_gizmo.present && m_gizmo.hasCentre && !m_gizmo.mapped) ? gizmoMatrix(gizmoMove(), gizmoRotate(), gizmoScale()).map(gizmoCentreNow()) : m_gizmo.about + gizmoMove(); return m_gizmo.present && m_gizmo.mapped ? m_gizmo.map.map(p) : p; }
     /*  The gizmo is an image's (the numbers of the original); the turns and mirror images of the way it was made (without the shift), whether it turns the way round (+1, -1),
         and the part's own axes as the image has them (the original's, taken through the symmetry)  */
     bool gizmoMapped() const { return m_gizmo.present && m_gizmo.mapped; }
@@ -751,6 +763,10 @@ public:
     /*  The key numbers of a result -- label, text, unit of each (fieldes.stdlib.exporting.key_results): the result card prints them  */
     void setKeyResults(const QList<QStringList>& rows) { m_keyResults = rows; }
     const QList<QStringList>& keyResults() const { return m_keyResults; }
+    /*  A static analysis: the residual of its solve after every iteration, relative to the load (at most 400 numbers): the result card draws it as the curve of the convergence
+     *  (the tester of version 1.2.0: "residual plot missing")  */
+    void setResidualHistory(std::vector<float> history) { m_residualHistory = std::move(history); }
+    const std::vector<float>& residualHistory() const { return m_residualHistory; }
     /*  What the shown values are, said by the script (`_value_note` of the result's display; empty says nothing): for a result that is no solver's -- the card says
      *  "nodal average" of the elements' values otherwise, which a map of what changed, or of where a rule is broken, is not  */
     void setValueNote(const QString& note) { m_valueNote = note; m_hasValueNote = true; }
@@ -1025,10 +1041,16 @@ protected:
     bool sweepNow(const std::map<libfive::Tree::Id, float>& v, SweepNumbers& out) const;
     static std::unique_ptr<libfive::Mesh> sweepMesh(const SweepNumbers& in);
     std::vector<libfive::Tree> m_morph_controls;          // (three trees to a control point: x, y, z)
+    std::vector<int32_t> m_morph_tape_op, m_morph_tape_a, m_morph_tape_b;   // (H164: the tape of plain operations that makes the control points from the inputs, one entry for each operation; an input is OP 0, a constant OP 1: see morph_num.py)
+    std::vector<double> m_morph_tape_const;
+    std::vector<uint32_t> m_morph_tape_out;               // (the tape entry of each number of the control points: three to a control point)
     std::vector<uint32_t> m_morph_recipe_start;           // (vertex v is the sum over [start[v], start[v + 1]) of weight x control point; one more than there are vertices)
     std::vector<uint32_t> m_morph_recipe_control;
     std::vector<double> m_morph_recipe_weight;
     std::vector<uint32_t> m_morph_triangles;              // (three vertex numbers to a triangle)
+    // H164 (the user, 2026-11-11, the sharp edges of a body of points: "I can literally run a smooth operation on the current body and it is the output that I want, just way too slow"): the surface that is drawn is SMOOTHED by a
+    // few passes of an average with the vertices next to each vertex (Taubin: a step in and a slightly longer step out, so that nothing shrinks), the vertices that are at the points held, see morphNow.  It reaches a few cells
+    // and no further, so that a point that is moved still changes the body only near it.  Python says whether it is done: not for a body that has a sharp corner point
     // The numbers of the control points are read with ONE evaluator that is kept between the steps of a drag (see morphNow): a tree of its own for each of them was built and zeroed again at every step,
     // 425 to 620 ms for a body of eight spline points (the user, 2026-11-02: "Dragging points still just lags everything and does not work in real time")
     mutable std::mutex m_morph_mutex;
@@ -1061,6 +1083,7 @@ protected:
     bool force_low = false;
     QString m_exactKey;
     QList<QStringList> m_keyResults;
+    std::vector<float> m_residualHistory;
     QString m_valueNote;
     bool m_hasValueNote = false;
 
@@ -1293,6 +1316,7 @@ private:
     GizmoNumbers m_meshGizmo, m_runGizmo;
     QMatrix4x4 m_previewXform;
     bool m_previewShown = false;                 // the mesh is shown moved (m_previewXform is not the identity)
+    bool m_gizmoHeld = false;                    // a gizmo of this shape is held down and the mesh is drawn moved by it (H165): a mesh that a render finishes meanwhile is not taken in, see Shape::previewGizmoVars
     GizmoNumbers gizmoNumbersIn(const std::map<libfive::Tree::Id, float>& v) const;
     void refreshPreview();                       // the matrix from what the mesh was made with to the numbers now
     QMatrix4x4 previewed(const QMatrix4x4& M) const { return m_previewShown ? M * m_previewXform : M; }

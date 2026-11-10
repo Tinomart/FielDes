@@ -203,8 +203,11 @@ public slots:
      *  continued (as F8 does).  A script that reports nothing runs to its end first.  */
     void togglePause();
 
-    /*  Runs the script again from the beginning: the run in flight, if any, is terminated first  */
+    /*  Runs the script again from the beginning, from nothing (every cache is wiped: see wipeCaches): the run in flight, if any, is terminated first  */
     void retryRun();
+
+    /*  The Python library forgets what it kept in memory, and the window is asked to delete the caches on disk (cachesWipeRequested)  */
+    void wipeCaches();
 
     /*  Ends the script that is running (does nothing when none is): the solvers give up, the script is interrupted, and what the run
      *  made is not shown.  A step that cannot be interrupted (an import, a lattice layout, a meshing) finishes first  */
@@ -222,6 +225,9 @@ public slots:
      */
     void onDragStart();
     void onDragEnd();
+    /*  A press on the surface of a body made of points has put a point into the script and the drag waits for it to be a model of the tree (it is selected, and
+     *  the drag goes on with it): the tree is read when the run is done even while the button is down, see refreshOutline  */
+    void wantOutline(bool on);
 
 signals:
     /*  The user moved the text cursor in the script (see Script::userCursorMoved)  */
@@ -262,6 +268,9 @@ signals:
 
     /*  A run has ended (whatever it ended in)  */
     void runFinished();
+    /*  H166 (the user, 2026-11-08): the restart button of the script is a clean wipe.  The window deletes what the caches of the program kept on disk (the render cache, the field cache, the result cache);
+     *  what they hold in memory (the Python library's) is wiped by the editor itself  */
+    void cachesWipeRequested();
 
     /*  The script has an error: the last line of its traceback, and the 0-based line it is on (-1: not known); or it has none
      *  (an empty text).  The viewport and the model tree show it, after a moment  */
@@ -422,6 +431,7 @@ protected:
     // that moment, and when it was done it put its numbers back over the ones being dragged -- the scale 'went back' by a step at every pause of the wheel -- so no run begins
     // while a drag goes (the edit is remembered: one run follows the drag), and a run that was on its way when it began is not shown
     bool m_dragActive = false;
+    bool m_outlineWanted = false;           // (the drag waits for the tree of the run: see wantOutline)
     bool m_textChangedDuringDrag = false;
     QTimer m_dragGuard;                     // (a drag that does not say it has ended is ended after a while: the text would never run again)
     QMap<libfive::Tree::Id, float> m_pendingDragVars;        // (the numbers of a drag that are not written into the text yet: see setVarValues)
@@ -456,6 +466,7 @@ protected:
     // `try` of the script swallowed the first.  m_retryAfter: a run is to begin when this one is over (Retry on a running script)
     bool m_terminating = false;
     bool m_retryAfter = false;
+    bool m_wipeOnRetry = false;                 // (H166: the run that Retry begins starts from nothing: see wipeCaches)
     int m_terminateSends = 0;
     QTimer m_terminateRepeat;
 

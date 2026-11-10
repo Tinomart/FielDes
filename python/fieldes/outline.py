@@ -445,6 +445,7 @@ def finish(source, gs, out):
         shapes, within a time budget (the rest is measured when the script has run again) -- are laid down with the facts, and the
         fields the section viewer can show are listed '''
     import time as _time
+    _t_finish = _time.time()
     try:
         tree = ast.parse(source)
         src = A._Source(source)
@@ -506,6 +507,7 @@ def finish(source, gs, out):
                 shapes = _display_shapes(v) if facts is not None else []
                 if shapes:
                     measure.append((0, None, text, shapes, dict(facts, _has_var=False, _own=isinstance(v, Shape)), facts))
+        _t_facts = _time.time()
         deadline = _time.time() + A._BOUNDS_SECONDS
         for _, name, text, shapes, view, facts in sorted(measure, key=lambda m: m[0]):
             # (only a body has an extent to search for: a field has none -- its viewer's bounds are the box of its origin --, a point or a line has no inside, and a 2D shape goes on
@@ -518,6 +520,7 @@ def finish(source, gs, out):
         # the loop used to stop at the end of one budget for all of them, and a shape it did not reach had no count, so it was never given handles.  Past the budget the count is not
         # skipped but left to the moment the shape is selected, when the library counts it for good (handles_text); only what cannot have handles by what it is, which needs no
         # measurement, is told so.  The user, 2026-11-03: "no state of the script can keep them from being created, for any shape")
+        _t_bounds = _time.time()
         deadline = _time.time() + 4 * A._BOUNDS_SECONDS
         for _, name, text, shapes, view, facts in sorted(measure, key=lambda m: m[0]):
             if view.get('_has_var') or facts.get('colored') or not view.get('_own') or getattr(shapes[0], '_no_handles', False):
@@ -534,6 +537,10 @@ def finish(source, gs, out):
             facts['handle_cap'] = A._MAX_HANDLES
             # (the numbers are the two ends of an extrusion of a 2D shape that has handles of its own: the sides are pulled by those, see profile.extrude)
             facts['ends_only'] = A._handles_ends_only(shapes[0])
+        if os.environ.get('FIELDES_TIMING'):
+            __import__('sys').__stderr__.write('[outline] finish: the facts of the statements %.0f ms, the boxes %.0f ms, the counts of handles %.0f ms (%d statements with shapes)\n'
+                                               % (1000.0 * (_t_facts - _t_finish), 1000.0 * (_t_bounds - _t_facts), 1000.0 * (_time.time() - _t_bounds), len(measure)))
+            __import__('sys').__stderr__.flush()
     except Exception:
         if os.environ.get('FIELDES_OUTLINE_DEBUG'):
             import traceback

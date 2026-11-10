@@ -102,6 +102,69 @@ def _centre_of(shape):
     return tuple(0.5 * (float(b[0][i]) + float(b[1][i])) for i in range(3))
 
 
+def _centre_now(shape):
+    ''' H165 (the user, 2026-11-09): the middle of the box of a shape AS IT IS NOW, in the frame it is made in -- measured from the shape itself, by the numbers it has in this run.  `_centre_of` is the PIVOT (where the shape was
+        before its surfaces were dragged: nothing about it may change); this is only where a gizmo is drawn.  app_support._estimate_bounds is not used first: it reads the `_bounds` a dragged part CARRIES from before it was dragged,
+        which is the old middle.  Kept by the expression, as _estimate_bounds keeps its own.  Raises when the box cannot be found (the caller then leaves the gizmo where it was) '''
+    import time
+    from fieldes.app_support import _search_extent
+    from fieldes.stdlib.content_cache import cache_for, shape_key
+    memory = cache_for('scene_bounds_now', 256)
+    key = None
+    try:
+        key = shape_key(shape)
+    except Exception:
+        key = None
+    hit, kept = memory.get(key) if key is not None else (False, None)
+    if hit:
+        b = kept
+    else:
+        b = _search_extent(shape, time.time() + 3.0)
+        if b is None:
+            b = _search_extent(shape, time.time() + 3.0)        # (the first search of a process can run past its first limit, 0.4 s, while the evaluator is cold: it is looked for once more)
+        if b is not None and key is not None:
+            memory.put(key, b)
+    if not b:
+        raise ValueError('the box of the shape is not known')
+    return tuple(0.5 * (float(b[0][i]) + float(b[1][i])) for i in range(3))
+
+
+def _centre_slopes(shape, c0):
+    ''' H165: for each number of the handles of `shape` that is a var() -- a surface that can be pulled --, (the var, its number in this run, how far the middle of the part moves for one unit of it, three numbers): the
+        middle of the part is measured again with that one number a little larger.  At most eight numbers '''
+    from fieldes.stdlib.curves import value_of
+    data = getattr(shape, '_handle_numbers', None)
+    if not data:
+        return None
+    values, wrapped, original, base = data
+    n = len(values)
+    if len(original) != n:
+        return None
+    now = _var_numbers(wrapped)
+    if now is None or len(now) != n:
+        return None
+    out = []
+    for i in range(n):
+        # (every number that is a var() is a surface that can be pulled -- the first pull changes a number that is still what the part was made with --, so each has its slope; at most eight)
+        if _is_number(values[i]):
+            continue
+        if len(out) >= 8:
+            break
+        # (MEASURED 2026-11-09 on a placed box whose centre moves by exactly 1 per unit of its centre number: a step of 0.02 of the number gave slopes of 1.62, 0.76 and 0.12, because the search for the box of the part is
+        # only good to about 0.02 mm; a step of half the number, at least half a unit, makes that error one or two per cent, and a box (a centre that is linear in its numbers) loses nothing by it)
+        step = 0.5 * max(1.0, abs(float(now[i])))
+        moved = [float(x) for x in now]
+        moved[i] += step
+        ws = [Shape.wrap(x) for x in moved]
+        arr = (ctypes.c_void_p * max(1, n))(*[w.ptr for w in ws])
+        p = lib.libfive_tree_expose(base.ptr, arr, n)
+        if not p:
+            continue
+        c1 = _centre_now(Shape(p))
+        out.append((values[i], float(now[i]), tuple((float(c1[k]) - float(c0[k])) / step for k in range(3))))
+    return out
+
+
 _PRISM = ('_prism_pos', '_prism_rot', '_prism_flag', '_prism_scale', '_prism_influence', '_prism_radius', '_prism_default', '_prism_a', '_prism_b')
 
 
@@ -141,7 +204,13 @@ def _placed_box(box, centre, move, rotate, scale):
         number cannot be read '''
     nums = _var_numbers(list(move) + list(rotate) + list(scale) + list(centre))
     if nums is None:
-        return None
+        # (a part that is not a primitive is moved by "the position less its pivot", an expression of the position's var() and no var() itself: its number is what it is worth now, as the box is the box of the part as it is now.  Without
+        # that the box of every such part -- a union with a position, a path extrusion -- was lost, and the run searched for it with interval arithmetic after every run: 2.4 s on sheep_horn, and the search found none, 2026-11-10)
+        try:
+            from fieldes.stdlib.curves import values_of
+            nums = values_of(list(move) + list(rotate) + list(scale) + list(centre))
+        except Exception:
+            return None
     m, r, s, c = nums[0:3], nums[3:6], nums[6:9], nums[9:12]
     lo = [c[i] + (float(box[0][i]) - c[i]) * s[i] for i in range(3)]
     hi = [c[i] + (float(box[1][i]) - c[i]) * s[i] for i in range(3)]
@@ -366,6 +435,20 @@ def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None,
     # what FielDes draws the gizmo from
     g_about, g_move = (c, move) if gizmo is None else gizmo
     out._gizmo = (mode, tuple(float(v) for v in g_about), tuple(g_move), tuple(rotate), tuple(scale))
+    # H165 (the user, 2026-11-09, "THE GIZMO SHOULD ALWAYS RECALCULATE AT ALL TIMES"): a part whose surfaces were dragged (handles) keeps its pivot (`about`, above: the preview of a turn and a scale reads it) but its gizmo is DRAWN at the
+    # middle of the part as it is now -- sent separately, so that a program that does not read it still draws the gizmo where it always did (the tuple above stays five long).  The viewport places this point through the same move, turn and
+    # scale (Shape::gizmoPivot), so it stays on the middle live
+    if getattr(shape, '_pivot_shape', None) is not None:
+        try:
+            centre_now = tuple(float(v) for v in _centre_now(shape))
+            out._gizmo_centre = centre_now
+            # (H165, the user, 2026-11-09: "The real time drag desync is still not fixed": while a surface is pulled the script is not run again, so the middle above is the one of the last run and the gizmo stayed where it was until
+            # the release.  The middle moves with each pulled number by a slope measured here -- the middle of the part with that number a little larger --, and the viewport adds slope x (the number now - the number at this run))
+            slopes = _centre_slopes(shape, centre_now)
+            if slopes:
+                out._gizmo_centre_live = slopes
+        except Exception:
+            pass
     _note_gizmo_vars(shape, g_move, rotate, scale)
     # (the axis the sides of the shape are pulled away from is turned and scaled with it)
     if getattr(shape, '_pull_axis', None) is not None:
@@ -698,6 +781,8 @@ def handles(shape, values=None, **removed):
             pass
     # (what the shape was before its numbers were edited: the pivot of a gizmo that turns or scales it is the middle of this one's box)
     out._pivot_shape = getattr(shape, '_pivot_shape', None) or shape
+    # (H165: what the gizmo needs to follow a pulled surface live -- the numbers as they were given, the ones the shape was made with, and the shape they were put into: see _centre_slopes)
+    out._handle_numbers = (list(values), wrapped, handle_values(shape), shape)
     # an offset, a shell or a thickening of it (fields._dist) uses the exact distance of the part
     get = getattr(shape, '_distance_of', None)
     if get is not None:

@@ -301,6 +301,23 @@ try:
 except AttributeError:
     pass    # an older library: no surface selection
 
+try:
+    # THE LEVELS OF A CATMULL-CLARK SUBDIVISION as weights (morph.py _subdiv_level): the handle is an integer, the arrays are filled by libfive_cc_copy
+    lib.libfive_cc_levels.argtypes = [ctypes.c_int32, ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int32, ctypes.c_void_p, ctypes.c_int32]
+    lib.libfive_cc_levels.restype = ctypes.c_void_p
+    lib.libfive_cc_sizes.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32)]
+    lib.libfive_cc_sizes.restype = None
+    lib.libfive_cc_copy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    lib.libfive_cc_copy.restype = None
+    lib.libfive_cc_free.argtypes = [ctypes.c_void_p]
+    lib.libfive_cc_free.restype = None
+    # THE CONTROL POINTS OF A BODY OF POINTS as weights (morph.py _subdiv_topology): the result is read like the levels
+    lib.libfive_cc_controls.argtypes = [ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                        ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
+    lib.libfive_cc_controls.restype = ctypes.c_void_p
+except AttributeError:
+    pass    # an older library: the body of points cannot be drawn (it ships with the program)
+
 lib.libfive_import_mesh_last_message.argtypes = []
 lib.libfive_import_mesh_last_message.restype = ctypes.c_char_p
 

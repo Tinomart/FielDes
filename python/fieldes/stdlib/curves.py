@@ -136,6 +136,10 @@ class Control:
             gizmo = getattr(item, '_gizmo', None)
             if gizmo is not None:
                 rotation = tuple(gizmo[3])
+            # (the image of a point in a symmetry: its rotation is the original's through the map, see symmetries.symmetry_image, H154)
+            image_rotation = getattr(item, '_image_rotation', None)
+            if image_rotation is not None:
+                rotation = tuple(image_rotation)
         self.item = item
         self.expr = vec(xyz)
         self.pos = tuple(value_of(c) for c in self.expr)
@@ -199,6 +203,20 @@ class Control:
     @property
     def rounded(self):
         return self.radius > 0.0
+
+
+def expand_points(points):
+    ''' The points of a curve, a profile or a body as a list: the mirrored points of a point (`p_images = symmetry_images(p, symmetry)`, the set that FielDes writes when a point is mirrored) stand in it for
+        the images they are -- each one a point that follows its original -- so that a mirrored point is a point like any other (H162, the user's report, 2026-11-08: "Mirrored Points cannot be used
+        to create a spline ... the spline just ignored the selected mirrored point"; "For mirrored points to be able to be used for any operation just like any regular point") '''
+    out = []
+    for p in points:
+        images = None if hasattr(p, 'xyz') else getattr(p, '_image_points', None)
+        if images:
+            out.extend(images)
+        else:
+            out.append(p)
+    return out
 
 
 def controls(points, rounds=False, radius_default=0.0, smooth_default=False):
@@ -567,7 +585,7 @@ def _linear_in(n, off):
 
 
 def _make(points, default, closed):
-    items = list(points)
+    items = expand_points(points)
     ctrls = controls(items, smooth_default=default)         # (the line's default: whether a point that says nothing is a spline point -- its gizmo ring is then its scale, and its influence is its own number)
     mark(ctrls, default, 'curve')
     if len(ctrls) < 2:

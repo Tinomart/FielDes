@@ -16,6 +16,7 @@ of the License, or (at your option) any later version.
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
+#include <QPolygonF>
 #include <QSlider>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -102,6 +103,63 @@ void ColorBar::paintEvent(QPaintEvent*)
         p.drawText(QRect(bar.right() + 8, y - fm.height() / 2, width() - bar.right() - 8, fm.height()),
                    Qt::AlignLeft | Qt::AlignVCenter, QString::number(v, 'g', 4));
     }
+}
+
+ResidualGraph::ResidualGraph(QWidget* parent)
+    : QWidget(parent)
+{
+    setAttribute(Qt::WA_TransparentForMouseEvents);       // (a click on the card, anywhere, drags it)
+}
+
+void ResidualGraph::setHistory(const std::vector<float>& history)
+{
+    m_history = history;
+    update();
+}
+
+void ResidualGraph::paintEvent(QPaintEvent*)
+{
+    if (m_history.size() < 2) return;
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QFont font = p.font();
+    font.setPointSizeF(7);
+    p.setFont(font);
+    const QFontMetrics fm(font);
+    // (the residual on a log scale, from the whole decade above the first value to the whole decade below the last)
+    auto decades = [](float v) { return std::log10(std::max(1e-16, double(v))); };
+    double top = decades(m_history.front()), bottom = top;
+    for (float v : m_history)
+    {
+        top = std::max(top, decades(v));
+        bottom = std::min(bottom, decades(v));
+    }
+    top = std::ceil(top - 1e-9);
+    bottom = std::floor(bottom + 1e-9);
+    if (top - bottom < 1.0) bottom = top - 1.0;
+    const int labelWidth = fm.horizontalAdvance("1e-00") + 4;
+    const QRectF g(labelWidth + 2, fm.height() / 2.0 + 2.0, width() - labelWidth - 6, height() - fm.height() - 4.0);          // (room above and below for the numbers of the first and the last decade)
+    // (a line and a number at every decade; many decades: every second one, so that the numbers do not touch)
+    const int span = int(top - bottom);
+    const int every = std::max(1, int(std::ceil(span * double(fm.height()) * 1.2 / std::max(1.0, g.height()))));
+    for (int e = int(bottom); e <= int(top); ++e)
+    {
+        const double y = g.bottom() - g.height() * (double(e) - bottom) / (top - bottom);
+        p.setPen(QPen(QColor(0x93, 0xa1, 0xa1, 55), 1));
+        p.drawLine(QPointF(g.left(), y), QPointF(g.right(), y));
+        if ((e - int(bottom)) % every != 0) continue;
+        p.setPen(QColor(0x93, 0xa1, 0xa1));
+        p.drawText(QRectF(0, y - fm.height() / 2.0, labelWidth, fm.height()), Qt::AlignRight | Qt::AlignVCenter, e == 0 ? QString("1") : QString("1e%1").arg(e));
+    }
+    QPolygonF line;
+    for (size_t i = 0; i < m_history.size(); ++i)
+        line << QPointF(g.left() + g.width() * double(i) / double(m_history.size() - 1),
+                        g.bottom() - g.height() * (decades(m_history[i]) - bottom) / (top - bottom));
+    p.setPen(QPen(QColor(0x9a, 0xd0, 0xf0), 1.5));
+    p.drawPolyline(line);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0xee, 0xe8, 0xd5));
+    p.drawEllipse(line.last(), 2.5, 2.5);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -254,6 +312,21 @@ ResultPanel::ResultPanel(QWidget* parent)
         });
     }
     layout->addWidget(m_info);
+    {
+        // The residual of the solve after every iteration, as a curve on a log scale (the tester of version 1.2.0: "residual plot missing"); only a static analysis has one
+        m_residualRow = new QWidget;
+        m_residualGraph = new ResidualGraph;
+        auto title = new QLabel(T("Residual"));
+        title->setToolTip(T("How far the solver was from balancing the loads, as a share of the load, after each iteration, on a log scale. It falls until it is below the tolerance, and then the solve stops."));
+        auto column = new QVBoxLayout(m_residualRow);
+        column->setContentsMargins(0, 0, 0, 0);
+        column->setSpacing(2);
+        column->addWidget(title);
+        column->addWidget(m_residualGraph);
+        m_residualRow->setToolTip(title->toolTip());
+        m_residualRow->hide();
+        layout->addWidget(m_residualRow);
+    }
     {   // (a design tool, not a certified solver: said on the card that shows the numbers, where they are read -- and where the checks of the program are)
         auto notice = new QLabel(T("Not validated for safety-critical use"));
         notice->setObjectName("resultDisclaimer");
@@ -368,6 +441,7 @@ void ResultPanel::setState(const State& s)
         m_fields->addItems(s.labels);
     }
     m_fields->setCurrentIndex(s.current);
+    m_fields->setToolTip(s.noteHelp.isEmpty() ? T("Field shown") : T("Field shown") + QString("\n") + s.noteHelp);        // (what the values are, and for a principal stress why it can be below zero)
     m_bar->setSupports(s.supports);
     m_bar->setRange(s.lo, s.hi, s.map);
     m_deformRow->setVisible(s.hasDeform);
@@ -408,6 +482,8 @@ void ResultPanel::setState(const State& s)
     }
     m_info->setText(s.elementInfo);
     m_info->setVisible(!s.elementInfo.isEmpty());
+    m_residualGraph->setHistory(s.residuals);
+    m_residualRow->setVisible(s.residuals.size() > 1);
     m_updating = false;
     adjustSize();
 }

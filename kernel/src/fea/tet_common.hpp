@@ -82,6 +82,7 @@ struct CgResult
 {
     int iterations = 0;
     double residual = 0;
+    std::vector<float> history;         // (the residual, relative to the load, at the start and after every iteration: the curve of the convergence that the result card draws)
 };
 
 /*  Preconditioned conjugate gradients for K u = b, u the starting guess and the answer; the

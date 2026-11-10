@@ -216,6 +216,28 @@ def _frame_of(sym):
     return tuple(_add(float(about[i]), move[i]) for i in range(3)), _turn_matrix(rotate)
 
 
+def _frame_matrix(sym, k):
+    ''' What the image numbered `k` of a symmetry is, worked out ONCE for the symmetry and kept on it: (the centre, the turn of its gizmo, the image's matrix, all three as expressions of the
+        numbers of its gizmo, then the matrix and the centre as the numbers they are now).  Every image of every point and every shape that is mirrored asks for it again -- a script of a hundred
+        points asked for the same matrix hundreds of times, each a few dozen products of fields.  The symmetry is made again by every run (its numbers are var()s), so what it keeps is only the run's;
+        a gizmo or a definition that is put on it later is another one: it is worked out again '''
+    g = getattr(sym, '_gizmo', None)
+    definition = sym._symmetry_def
+    kept = sym.__dict__.get('_frame_cache')
+    if kept is None or kept[0] is not g or kept[1] is not definition:
+        kept = (g, definition, {})
+        sym.__dict__['_frame_cache'] = kept
+    got = kept[2].get(k)
+    if got is None:
+        from fieldes.stdlib.curves import value_of
+        c, turn = _frame_of(sym)
+        m = _matmul_expr(turn, _matmul_expr(base_elements(definition)[k - 1], _transpose(turn)))
+        mn = [[value_of(m[i][j]) for j in range(3)] for i in range(3)]
+        cn = tuple(value_of(v) for v in c)
+        got = kept[2][k] = (c, turn, m, mn, cn)
+    return got
+
+
 def symmetry_count(symmetry):
     ''' How many images a symmetry makes of what is made with it: they are numbered 1 .. symmetry_count(symmetry) (see symmetry_image) '''
     if getattr(symmetry, '_symmetry_def', None) is None:
@@ -435,15 +457,13 @@ def symmetry_image(shape, symmetry, index=1):
     if callable(getattr(shape, '_remake', None)) and getattr(shape, 'points', None):
         # What is made of points -- a profile, a polyline, a spline -- has its image through the images of its points, like any shape has its image
         return _outline_image(shape, sym, k)
-    c, turn = _frame_of(sym)
-    # (the image's matrix in the world: the element, in the symmetry's own axes, taken to where its gizmo has put them)
-    m = _matmul_expr(turn, _matmul_expr(elements[k - 1], _transpose(turn)))
+    # (the image's matrix in the world: the element, in the symmetry's own axes, taken to where its gizmo has put them; a place of the image is the place of the shape that the way back -- the
+    # transpose, the matrix is a turn or a mirror image -- takes it from: `mn` and `cn` are the matrix and the centre as numbers.  All five are the symmetry's, kept on it: see _frame_matrix)
+    from fieldes.stdlib.curves import value_of
+    c, turn, m, mn, cn = _frame_matrix(sym, k)
+    mn = [list(row) for row in mn]
     X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
     d = [_add(V, _mul(-1.0, c[i])) for i, V in enumerate((X, Y, Z))]
-    # A place of the image is the place of the shape that the way back -- the transpose, the matrix is a turn or a mirror image -- takes it from
-    from fieldes.stdlib.curves import value_of
-    mn = [[value_of(m[i][j]) for j in range(3)] for i in range(3)]
-    cn = tuple(value_of(v) for v in c)
     # A sweep is drawn natively from the numbers of its path (its field has none of them: it is made of numbers), so its image is drawn the same way, and its field is the original's
     # taken through the turn or mirror image AS IT IS NOW -- a field of thousands of terms, with the symmetry's numbers in every one of them, was minutes to mesh and seconds to key
     native = _native_sweep(shape)
@@ -461,14 +481,33 @@ def symmetry_image(shape, symmetry, index=1):
         if name in shape.__dict__:
             out.__dict__[name] = shape.__dict__[name]
     if native:
-        _sweep_image(out, shape, mn, cn)
+        if _sweep_image(out, shape, mn, cn):
+            # H155 (the user's report, 2026-11-08: "Broken result of union with a mirrored pair ... The mirrored field looks exactly like the original, without strange render spikes"): the original sweep's
+            # field is the exact distance field of the mesh it is drawn from (profile._native); the image's was that field asked at the mirrored places, and a union meshed it ragged at the ends and at the
+            # root.  The image has its own mirrored numbers (above), so its field is made the same way: the exact distance field of the mesh of the image
+            from fieldes.stdlib.profile import _native
+            out = _native(out)
     if hasattr(shape, 'xyz'):
         # A point is the point its image is: its coordinates follow the original's (numbers, or the expressions of its var()s)
         from fieldes.stdlib.points import Point
         p = tuple(shape.xyz)
         q = tuple(_add(c[i], _add(_add(_mul(m[i][0], _add(p[0], _mul(-1.0, c[0]))), _mul(m[i][1], _add(p[1], _mul(-1.0, c[1])))),
                                   _mul(m[i][2], _add(p[2], _mul(-1.0, c[2]))))) for i in range(3))
-        out = Point(q[0], q[1], q[2], smooth=getattr(shape, '_smooth', None), radius=getattr(shape, '_radius', None))
+        # (H154, "Scaling influence of mirrored points of a mirrored morph body did not scale them properly": the influence of the original goes with the image -- the very number the ring of the original's
+        # gizmo drags -- as it does in points.py for a copy of a point; the image said none, so a curve or a body took its scale for it instead)
+        out = Point(q[0], q[1], q[2], smooth=getattr(shape, '_smooth', None), radius=getattr(shape, '_radius', None), influence=getattr(shape, '_influence', None))
+        # (H154, "Mirroed, scaling ...": the rotation of a point turns the plane its surface leaves it in, and the rotation of the image is the original's through the map -- for a mirror across a plane of the axes the angles
+        # about the other two axes change their sign: M R M -- not the original's numbers as they are.  The image's own gizmo stays the original's (pulling it pulls the original); only the shape of a body or a curve reads this)
+        g0 = getattr(shape, '_gizmo', None)
+        if g0 is not None and len(g0) > 3:
+            try:
+                def _number_of(v):
+                    return value_of(v) if isinstance(v, Shape) else float(v)
+                turned = _image_turns([tuple(g0[3])], mn, _number_of, [])[0]
+                if turned is not None:
+                    out._image_rotation = tuple(turned)
+            except Exception:
+                pass
         out._kind = getattr(shape, '_kind', 'point')
         out._symmetry_linear = mn            # (the turn or mirror image: what a shift the original is drawn with becomes -- see points.weld_shift_of)
     box = getattr(shape, '_bounds', None)
@@ -507,8 +546,7 @@ _FAST_BODY_IMAGE = True        # (False: the image of a body is made again throu
 
 def _image_mapper(sym, k):
     """ The map of the image numbered `k` as expressions -- a place p goes to c + M (p - c), M and c of the symmetry with its numbers in them -- for the control points of the surface of a body (see morph.remake_mapped) """
-    c, turn = _frame_of(sym)
-    m = _matmul_expr(turn, _matmul_expr(base_elements(sym._symmetry_def)[k - 1], _transpose(turn)))
+    c, turn, m, _mn, _cn = _frame_matrix(sym, k)
 
     def mapper(p):
         d = [_add(p[i], _mul(-1.0, c[i])) for i in range(3)]
@@ -518,8 +556,7 @@ def _image_mapper(sym, k):
 
 def _image_field(shape, sym, k):
     """ The field of the image numbered `k` of `shape`: the shape asked at the places the way back of the image takes it from -- what symmetry_image makes of any shape (a call, the shape kept once) """
-    c, turn = _frame_of(sym)
-    m = _matmul_expr(turn, _matmul_expr(base_elements(sym._symmetry_def)[k - 1], _transpose(turn)))
+    c, turn, m, _mn, _cn = _frame_matrix(sym, k)
     d = [_add(V, _mul(-1.0, c[i])) for i, V in enumerate((Shape.X(), Shape.Y(), Shape.Z()))]
     pre = tuple(_add(c[i], _add(_add(_mul(m[0][i], d[0]), _mul(m[1][i], d[1])), _mul(m[2][i], d[2]))) for i in range(3))
     return Shape.wrap(shape)(*[Shape.wrap(q) for q in pre])
@@ -560,10 +597,8 @@ def _outline_image(part, sym, k):
 def _numeric_map(sym, k):
     ''' The image numbered `k` of the symmetry as it is now, in numbers: (the matrix, rows, and the centre it turns or mirrors about) -- the place the image takes `p` to is
         c + M (p - c), and the place its way back takes it from is c + Mt (p - c) '''
-    from fieldes.stdlib.curves import value_of
-    c, turn = _frame_of(sym)
-    m = _matmul_expr(turn, _matmul_expr(base_elements(sym._symmetry_def)[k - 1], _transpose(turn)))
-    return [[value_of(m[i][j]) for j in range(3)] for i in range(3)], tuple(value_of(v) for v in c)
+    c, turn, m, mn, cn = _frame_matrix(sym, k)
+    return [list(row) for row in mn], tuple(cn)
 
 
 def _distinct_by_key(shape, images):
@@ -753,6 +788,7 @@ def symmetry_images(shape, symmetry, only=None, distinct=False):
         places = [tuple(float(c) for c in im._point_pos) for im in images]
         nearest = min([math.dist(a, b) for i, a in enumerate(places) for b in places[i + 1:]] or [1.0])
         out = PointSet(places, nearest if nearest > 0 else 1.0)
+        out._image_points = list(images)         # (the points they are, each following its original: a curve, a profile or a body that is given this set is made of them -- see curves.expand_points, H162)
         out._display = shown
     else:
         field = images[0]

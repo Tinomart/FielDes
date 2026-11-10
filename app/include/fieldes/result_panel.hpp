@@ -15,6 +15,8 @@ of the License, or (at your option) any later version.
 */
 #pragma once
 
+#include <vector>
+
 #include <QFrame>
 #include <QStringList>
 
@@ -40,6 +42,20 @@ protected:
     float m_lo = 0, m_hi = 1;
     QString m_map = "turbo";
     bool m_supports = false;
+};
+
+/*  The residual of a solve after every iteration, relative to the load, on a log scale: the curve of the convergence (the tester of version 1.2.0: "residual plot missing")  */
+class ResidualGraph : public QWidget
+{
+public:
+    ResidualGraph(QWidget* parent=nullptr);
+    void setHistory(const std::vector<float>& history);
+    QSize sizeHint() const override { return QSize(200, 88); }
+    QSize minimumSizeHint() const override { return QSize(120, 64); }
+protected:
+    void paintEvent(QPaintEvent* e) override;
+private:
+    std::vector<float> m_history;
 };
 
 class ResultPanel : public QFrame
@@ -71,6 +87,7 @@ public:
         bool showFlow = true;        // ...drawn over it
         float opacity = 1;           // how opaque the flow is drawn (a lower one shows the body in it)
         QList<QStringList> keyResults;   // the key numbers of the result: label, text, unit of each
+        std::vector<float> residuals;    // a static analysis: the residual of its solve after every iteration (a curve under the key numbers); none: no curve
         bool supports = false;           // the scene has the supports of a print (a body of its own, amber): one more class of the legend, and no card of its own
     };
     void setState(const State& s);
@@ -118,6 +135,8 @@ protected:
     QLabel* m_note;
     QLabel* m_info;
     QLabel* m_keys = nullptr;
+    QWidget* m_residualRow = nullptr;
+    ResidualGraph* m_residualGraph = nullptr;
     State m_state;
     bool m_updating = false;
 };

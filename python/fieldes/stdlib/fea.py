@@ -639,6 +639,7 @@ class Result(FieldResult):
         self.unknowns = int(stat(2))
         self.iterations = int(stat(3))
         self.residual = stat(4)
+        self.residual_history = [stat(100 + k) for k in range(int(stat(20)))]      # (the residual after every iteration, relative to the load, at most 400 numbers: the result card draws it as the curve of the convergence)
         self.seconds = stat(5)
         self.volume = stat(6)
         self.compliance = stat(7)
@@ -989,6 +990,7 @@ class TetResult(Result):
         self.unknowns = int(stat(2))
         self.iterations = int(stat(3))
         self.residual = stat(4)
+        self.residual_history = [stat(100 + k) for k in range(int(stat(20)))]      # (the residual after every iteration, relative to the load, at most 400 numbers: the result card draws it as the curve of the convergence)
         self.seconds = stat(5)
         self.volume = stat(6)
         self.compliance = stat(7)
@@ -1499,8 +1501,8 @@ class TopologyResult(FieldResult):
     def _cut_field(self, density, threshold):
         ''' The part cut from a density field at a level: where the field is above it -- scaled to roughly mm near the level so that offsets behave
             (the density rises from 0 to 1 over about two filter widths) -- within what the design may fill (`domain`): the part, or where the
-            design may grow what it may grow into.  The density goes on beyond its mesh as it is at the mesh's edge, as every result field does, so
-            the part has a face of its own wherever the design is bounded -- the part's, the clear space round a support or a load, the limit '''
+            design may grow what it may grow into.  The density is void beyond its mesh (a design field is defined on its elements and nowhere else),
+            and the part has a face of its own wherever the design is bounded by something else -- the part's, the clear space round a support or a load, the limit '''
         width = 2.0 * (self.settings['filter_radius'] or 1.5 * self.element_size)
         out = (threshold - density) * width
         return out if self.domain is None else out.max(self.domain)
@@ -1514,6 +1516,9 @@ class TopologyResult(FieldResult):
         while n > 1 and t > 0.06:
             t = max(0.05, t - max(0.01, 0.08 * t))
             n = int(count(ptr, t, margin))
+        if __import__('os').environ.get('FIELDES_FEA_DEBUG'):
+            __import__('sys').__stderr__.write('[cut] _join: the cut began at %.4f, ends at %.4f, pieces %d\n' % (first, t, n))
+            __import__('sys').__stderr__.flush()
         if n > 1:
             self._keep_threshold = first
             return int(count(ptr, first, margin))
@@ -1564,9 +1569,10 @@ class TopologyResult(FieldResult):
                 sources = [(ptr, k) for k in range(len(densities))]
             drawn = bool(getattr(lib, 'libfive_tetfea_density_at', None))
             for k, d in enumerate(densities):
-                step = {'label': _tr('iteration %d of %d') % (k + 1, len(densities)),
+                final = k + 1 == len(densities) and getattr(self, '_final_in_steps', False)
+                step = {'label': _tr('the result') if final else _tr('iteration %d of %d') % (k + 1, len(densities) - (1 if getattr(self, '_final_in_steps', False) else 0)),
                         'channels': [('density', _tr('density'), d, 0.0, 1.0)]}
-                if k + 1 < len(densities):
+                if k + 1 < len(densities) or getattr(self, '_final_in_steps', False):
                     body = self._cut_field(d, threshold)
                     body._bounds = self.bounds
                     step['shape'] = body
@@ -1617,6 +1623,9 @@ class TopologyResult(FieldResult):
                     self._verify_error = message
                     return
                 self._keep_threshold = max(0.05, t - max(0.02, 0.1 * t))
+        if __import__('os').environ.get('FIELDES_FEA_DEBUG'):
+            __import__('sys').__stderr__.write('[cut] _verify_into: the cut began at %.4f, ends at %.4f\n' % (first, self.keep_threshold()))
+            __import__('sys').__stderr__.flush()
         if self.keep_threshold() != first:
             self._cut = ((cut_before or (first, first))[0], self.keep_threshold())
         results = results if isinstance(results, list) else [results]
@@ -1723,7 +1732,58 @@ def _condition_places(supports, loads):
     return inside
 
 
-def _face_columns(places, part, h):
+def _in_millimetres(part, lo, hi, h):
+    ''' The distance of a part as a field in MILLIMETRES.  H159 (the user's report, 2026-11-08, "Grow topology optimization seemingly broken ... incredibly slow ... grows to over 200% volume at the first optimization
+        step"): the field of a part that is placed with `scale=` -- a box with scale=(8.39, 8.39, 8.39) -- has the values of the unscaled box, a distance divided by the scale, and `_dist` gave it as it is, so a skin of 180 mm
+        round his rifle was one of 1500 mm: 591 of 600 random points of the render box lay inside the design space (measured on his file), the mesh had 828,618 elements outside the part against 1,163 inside it, and
+        the empty skin alone held 13 times the volume of the part at the first iteration.  A field whose gradient at the surface is about 1 is a distance (as it was); any other is replaced by the exact distance to the mesh
+        of its surface (importing.tessellate: a quarter of an element between samples, at least 400 along its longest side), which is in millimetres whatever the placement.  An imported part has its own exact distance already '''
+    from fieldes.stdlib.fields import evaluate, _dist
+    raw = _dist(part)
+    if getattr(part, '_distance_of', None) is not None or getattr(part, '_tessellated_import', False):
+        return raw
+    try:
+        import random
+        size = max(float(hi[i]) - float(lo[i]) for i in range(3)) or 1.0
+        rng = random.Random(7)
+        pts = [tuple(float(lo[i]) + rng.random() * (float(hi[i]) - float(lo[i])) for i in range(3)) for _ in range(4000)]
+        vals = evaluate(part, pts)
+        ins = [p for p, v in zip(pts, vals) if v < 0.0]
+        out = [p for p, v in zip(pts, vals) if v > 0.0]
+        if not ins or not out:
+            return raw
+        a, b = ins[0], out[0]
+        for _ in range(50):
+            m = tuple(0.5 * (a[i] + b[i]) for i in range(3))
+            if evaluate(part, [m])[0] < 0.0:
+                a = m
+            else:
+                b = m
+        p = tuple(0.5 * (a[i] + b[i]) for i in range(3))
+        delta = max(1e-4 * size, 1e-3)
+        probes = []
+        for i in range(3):
+            up, down = list(p), list(p)
+            up[i] += delta
+            down[i] -= delta
+            probes += [tuple(up), tuple(down)]
+        v = evaluate(part, probes)
+        g = math.sqrt(sum(((v[2 * i] - v[2 * i + 1]) / (2.0 * delta)) ** 2 for i in range(3)))
+        if 0.8 <= g <= 1.25:
+            return raw
+        from fieldes.stdlib.importing import tessellate
+        res = 1.0 / max(0.25 * h, size / 400.0)
+        return tessellate(part, bounds=(tuple(float(c) for c in lo), tuple(float(c) for c in hi)), resolution=res)
+    except Exception as e:
+        try:
+            from fieldes.stdlib.result_cache import _log
+            _log("fieldes: the distance of this part in millimetres could not be made (%s); its own field is used\n" % e)
+        except Exception:
+            pass
+        return raw
+
+
+def _face_columns(places, part, h, metric=None):
     ''' The wall behind the flat faces of the part that the supports and loads act on: (the columns, the space behind the planes) -- two fields, each
         negative inside.  What holds the part (or pushes on it) lies on the far side of a face's plane, and nothing of the design can be there.  The
         COLUMNS are the outline of each face carried out from it, away from the part, along its normal: the hole the mesh has, so that the face is a
@@ -1823,14 +1883,14 @@ def _face_columns(places, part, h):
         outline = part.remap(*axes).max(wide.remap(*axes))
         column = outline.max((coord - inner) * float(-way))
         # (how far a point of the face's plane lies from the face's outline: its distance to the part there, and to the places)
-        near = (_dist(part).remap(*axes) - reach).max(wide.remap(*axes) - reach)
+        near = ((metric if metric is not None else _dist(part)).remap(*axes) - reach).max(wide.remap(*axes) - reach)
         beyond = near.max((coord - face) * float(-way))
         zone = column if zone is None else zone.min(column)
         behind = beyond if behind is None else behind.min(beyond)
     return zone, behind
 
 
-def _hole_of_places(supports, loads, part, h):
+def _hole_of_places(supports, loads, part, h, metric=None):
     ''' What a design that may grow leaves empty at the places where the supports and loads act, as a field (negative inside): nothing is added
         there, so that a load acts on the part's own surface and the load case is the one that was given.  The columns over the flat faces they
         act on (_face_columns); where the places have no such face (a bolt hole that carries a load stays open) the places themselves.  None when
@@ -1838,14 +1898,14 @@ def _hole_of_places(supports, loads, part, h):
     inside = _condition_places(supports, loads)
     if inside is None:
         return None
-    found = _face_columns(inside, part, h)
+    found = _face_columns(inside, part, h, metric)
     return (inside, None) if found is None else found
 
 
-def _skin_space(part, distance, clear):
+def _skin_space(part, distance, clear, metric=None):
     ''' The part and the part offset by `distance` mm -- except where the field `clear` is positive (see _hole_of_places: `clear` is its negative) '''
     from fieldes.stdlib.fields import _dist
-    skin = _dist(part) - distance
+    skin = (metric if metric is not None else _dist(part)) - distance
     if clear is not None:
         skin = skin.max(clear)
     return part.min(skin)
@@ -2090,7 +2150,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
                        material=material, element_size=element_size, bounds=bounds, program=program.key(), start=start,
                        iterations=int(iterations), filter_radius=filter_radius, keep=keep, avoid=avoid, grow=free, grow_limit=limit,
                        extrude=extrude, penalty=float(penalty), sharpness=float(sharpness), max_iterations=max_iterations,
-                       tolerance=tolerance, algorithm=16) if cache else None        # (what the optimiser gives for the same problem: bumped when it changes -- 3: the steps that make the design worse are taken back; 4: the stress relaxation, the sharpening that waits; 5: material is held when it joins a support; 6: the stress exponent from the penalty, the cut that keeps one piece; 7: the cut volume counted exactly, free growth; 8: free growth without a zone round the supports and loads and without a cap of design spaces; 9: the design space follows the design inside one run; 10: the supports and loads act on the part only, not on the walls of the holes the grown space has round them; 11: every design space has the mesh lattice of the first; 12: the held elements do not count in the density filter; 13: the hole at a support or a load is the column over its face, not the box it was drawn as; 14: (a half-space behind the face's plane: tried, taken out); 15: a support holds the face only -- the nodes on the surface of the mesh -- not the slab of the part behind it; 16: the space behind the plane of the face, beside the plate, is held empty and the part is cut within it)
+                       tolerance=tolerance, algorithm=17) if cache else None        # (what the optimiser gives for the same problem: bumped when it changes -- 3: the steps that make the design worse are taken back; 4: the stress relaxation, the sharpening that waits; 5: material is held when it joins a support; 6: the stress exponent from the penalty, the cut that keeps one piece; 7: the cut volume counted exactly, free growth; 8: free growth without a zone round the supports and loads and without a cap of design spaces; 9: the design space follows the design inside one run; 10: the supports and loads act on the part only, not on the walls of the holes the grown space has round them; 11: every design space has the mesh lattice of the first; 12: the held elements do not count in the density filter; 13: the hole at a support or a load is the column over its face, not the box it was drawn as; 14: (a half-space behind the face's plane: tried, taken out); 15: a support holds the face only -- the nodes on the surface of the mesh -- not the slab of the part behind it; 16: the space behind the plane of the face, beside the plate, is held empty and the part is cut within it)
     if ekey is not None and ekey in _topo_cache:
         _topo_cache.move_to_end(ekey)
         cached = _topo_cache[ekey]
@@ -2117,7 +2177,8 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
     # costs is what its material costs, not what a shell of some thickness round the whole part would
     skin = 3.0 * element_size                   # (the skin round the part that the design may put material into at once)
     reach = 4.0 * element_size                  # (how far past the material the next design space goes)
-    hole = _hole_of_places(all_supports, all_loads, part, element_size) if free else None
+    metric = _in_millimetres(part, lo, hi, element_size) if free else None        # (the distance of the part in mm: see _in_millimetres, H159)
+    hole = _hole_of_places(all_supports, all_loads, part, element_size, metric) if free else None
     zone, behind = hole if hole is not None else (None, None)
     clear = None if zone is None else -zone                     # (the hole the mesh has: the wall itself, over the face)
     # What the part is cut within: that, and the space behind the plane of the face, beside the plate -- what holds the part (or pushes on it) is there.
@@ -2128,7 +2189,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
     held = None                                 # (where the edge of a design space is held in, and is not made larger against: see below)
     if free:
         from fieldes.stdlib.fields import _dist
-        origin = _dist(part)                    # (what lies outside the part, and how far: the field of an imported part is only a bound of the distance)
+        origin = metric                         # (what lies outside the part, and how far, in millimetres)
         # The edge of a design space is moved outwards, as the design reaches it, nearly everywhere.  It is held in only by the hole the supports and
         # loads have in it (the columns over the faces they act on: nothing is added there) and by the limit, when one is given: material that
         # stands against those does not call for a larger space, since there is none to make there
@@ -2144,7 +2205,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
         if not free:
             return part, list(lo), list(hi)
         d = skin if limit is None else min(skin, limit)
-        space = _skin_space(part, d, clear)
+        space = _skin_space(part, d, clear, metric)
         lo_, hi_ = [lo[i] - d for i in range(3)], [hi[i] + d for i in range(3)]
         if design is not None:
             surface, slo, shi = design
@@ -2152,8 +2213,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
             if clear is not None:
                 near = near.max(clear)
             if limit is not None:
-                from fieldes.stdlib.fields import _dist
-                near = near.max(_dist(part) - limit)
+                near = near.max(metric - limit)
             space = space.min(near)
             lo_ = [min(lo_[i], slo[i] - reach) for i in range(3)]
             hi_ = [max(hi_[i], shi[i] + reach) for i in range(3)]
@@ -2174,17 +2234,13 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
             load acts on (see _hole_of_places), and within `grow_limit` of the part when one is given.  The part of the design is cut from its density within
             this, as the part of a design that may not grow is cut within the part: its faces are those of the part, of the places of the conditions and
             of the limit, fields with a normal of their own -- not the edge of the mesh, which the density has no face at.  Nothing else bounds it: no
-            wall.  Only when the iterations ran out while the design still reached the edge of its design space (`fenced`: it is said) the part is
-            cut at the box of that space -- what the design had room for -- because a density goes on beyond its mesh as it is at its edge '''
+            wall.  The density is void outside its mesh, so the part ends at the edge of its design space by itself, `fenced` or not '''
         region = part.min(clear_cut) if clear_cut is not None else None
         if limit is not None:
-            from fieldes.stdlib.fields import _dist
-            bound = _dist(part) - limit
+            bound = metric - limit
             region = bound if region is None else region.max(bound)
-        if fenced:
-            from fieldes.stdlib.shapes import box
-            fence = box(tuple(space_lo), tuple(space_hi))
-            region = fence if region is None else region.max(fence)
+        # H160 (the user, 2026-11-09, "NOT FUCKING BANDAIDING A CUTOFF CODE AFTER, BUT FUCKING FIXING IT"): no box is cut from the part here any more.  The density is void (0) outside the elements of the design -- the kernel's
+        # design field is defined on the tetrahedra and nowhere else (TetLocator::locateInside, MeshFieldOracle) --, so a part that reaches the edge of its design space ends there by its own field and nothing has to cut it
         return region
 
     def design_surface(ptr, level=0.2):
@@ -2204,7 +2260,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
         b = info.bounds
         return Shape(tree), (b.X.lower, b.Y.lower, b.Z.lower), (b.X.upper, b.Y.upper, b.Z.upper)
 
-    def stage_data(p):
+    def stage_data(p, final=False):
         ''' What the kernel calculated at each iteration of one problem: its objective, every measure and every output, and the density after each '''
         hist = (ctypes.c_double * 1000)()
         m = fn('history')(p, hist, 1000)
@@ -2220,7 +2276,9 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
             outs[j] = [buf[i] for i in range(n)]
         densities = []
         at = getattr(lib, 'libfive_tetfea_density_at', None)
-        for k in range(len(history)):
+        # (the last stage also has the design that was given back, one entry after its last iteration: the kernel keeps it so that it is drawn from its own surface -- a result read back from an older
+        # file has none, and the loop ends at the first the kernel does not have)
+        for k in range(len(history) + (1 if final else 0)):
             f = at(p, k) if at else None
             if not f:
                 break
@@ -2237,7 +2295,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
         history, bases, outs, densities = [], [[] for _ in program.measures], [[] for _ in outputs], []
         sources = []
         for p, _h in list(earlier) + [(ptr, handle)]:
-            h, b, o, d = stage_data(p)
+            h, b, o, d = stage_data(p, p is ptr)
             history += h
             for j in range(len(bases)):
                 bases[j] += b[j]
@@ -2262,6 +2320,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
         result.grow_limit = limit
         result.densities = densities
         result._step_sources = sources
+        result._final_in_steps = len(densities) > len(history)          # (the design given back is the last step: see stage_data)
         result._stage_handles = [h for _p, h in earlier]        # (their problems are what the steps of the design are drawn from: kept)
         result._set_problem(analyses, outputs, program, bases, outs, goal)
         # The planes the design was kept symmetric about: {'x': [position, how]} -- asked for (1), or found (2: and then said)

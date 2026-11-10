@@ -388,7 +388,11 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
         m_centre[i]->setRange(-1e6, 1e6);
         m_centre[i]->setKeyboardTracking(false);
         m_centre[i]->setButtonSymbols(QDoubleSpinBox::NoButtons);
-        m_centre[i]->setPrefix(QString(axes[i]) + " ");
+        // H168 (the user, 2026-11-09: "the way the x y z are defined in the symmetry where you can change it is super weird. I can select and mark the x, y, z and delete them. Obviously they should not
+        // be a part of the input but outside: in the input should only be the number"): the letter is a label of its own before the field, not the prefix of the number in it
+        auto axisLabel = new QLabel(QString(axes[i]));
+        axisLabel->setToolTip(T("Where the planes cross"));
+        centreRow->addWidget(axisLabel);
         m_centre[i]->setToolTip(T("Where the planes cross"));
         centreRow->addWidget(m_centre[i], 1);
         connect(m_centre[i], QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) {

@@ -125,6 +125,86 @@ bool TetLocator::forTetsIn(const Vec3& lower, const Vec3& upper, F&& fn) const
     return inside;
 }
 
+double TetLocator::outsideDistance(const Vec3& lower, const Vec3& upper) const
+{
+    double sq = 0;
+    for (int a = 0; a < 3; ++a)
+    {
+        const double d = std::max(0.0, std::max(m_lo[a] - upper[a], lower[a] - m_hi[a]));
+        sq += d * d;
+    }
+    return std::sqrt(sq);
+}
+
+void TetLocator::buildClasses() const
+{
+    const size_t nCells = size_t(m_n[0]) * m_n[1] * m_n[2];
+    m_cellClass.assign(nCells, 2);                   // (unknown is the cautious class: it only costs pruning)
+    const TetMesh& mesh = *m_mesh;
+    const size_t nt = mesh.tets.size(), nv = mesh.pos.size();
+    if (nt == 0 || nv >= (size_t(1) << 21)) return;
+    // The faces that belong to one tetrahedron only are the boundary of the mesh: a cell that holds none of them and whose middle is inside lies wholly inside, one whose middle is outside lies wholly outside
+    struct Face { uint64_t key; uint32_t tet; uint8_t drop; };
+    std::vector<Face> faces;
+    faces.reserve(4 * nt);
+    for (size_t t = 0; t < nt; ++t)
+        for (int drop = 0; drop < 4; ++drop)
+        {
+            uint32_t v[3];
+            int n = 0;
+            for (int q = 0; q < 4; ++q)
+                if (q != drop) v[n++] = uint32_t(mesh.tets[t][size_t(q)]);
+            std::sort(v, v + 3);
+            faces.push_back({(uint64_t(v[0]) << 42) | (uint64_t(v[1]) << 21) | uint64_t(v[2]), uint32_t(t), uint8_t(drop)});
+        }
+    std::sort(faces.begin(), faces.end(), [](const Face& a, const Face& b) { return a.key < b.key; });
+    std::vector<uint8_t> cls(nCells, 0);
+    for (size_t i = 0; i < faces.size(); ++i)
+    {
+        const bool sameBefore = i > 0 && faces[i - 1].key == faces[i].key;
+        const bool sameAfter = i + 1 < faces.size() && faces[i + 1].key == faces[i].key;
+        if (sameBefore || sameAfter) continue;       // (a face of two tetrahedra is inside)
+        Vec3 bmin = Vec3::Constant(std::numeric_limits<double>::max()), bmax = Vec3::Constant(-std::numeric_limits<double>::max());
+        for (int q = 0; q < 4; ++q)
+        {
+            if (q == faces[i].drop) continue;
+            const Vec3& p = mesh.pos[size_t(mesh.tets[faces[i].tet][size_t(q)])];
+            bmin = bmin.cwiseMin(p);
+            bmax = bmax.cwiseMax(p);
+        }
+        int l[3], h[3];
+        cellRange(bmin, bmax, l, h);
+        for (int k = l[2]; k <= h[2]; ++k)
+            for (int j = l[1]; j <= h[1]; ++j)
+                for (int a = l[0]; a <= h[0]; ++a) cls[cellIndex(a, j, k)] = 2;
+    }
+    for (int k = 0; k < m_n[2]; ++k)
+        for (int j = 0; j < m_n[1]; ++j)
+            for (int a = 0; a < m_n[0]; ++a)
+            {
+                uint8_t& c = cls[cellIndex(a, j, k)];
+                if (c == 2) continue;
+                const Vec3 centre = m_lo + m_cell * Vec3(a + 0.5, j + 0.5, k + 0.5);
+                double lam[4];
+                c = locateInside(centre, lam) >= 0 ? 1 : 0;
+            }
+    m_cellClass = std::move(cls);
+}
+
+bool TetLocator::boxMayHaveVoid(const Vec3& lower, const Vec3& upper) const
+{
+    if (m_list.empty()) return true;
+    if ((lower.array() < m_lo.array() - 1e-9).any() || (upper.array() > m_hi.array() + 1e-9).any()) return true;
+    std::call_once(m_classOnce, [this] { buildClasses(); });
+    int l[3], h[3];
+    cellRange(lower, upper, l, h);
+    for (int k = l[2]; k <= h[2]; ++k)
+        for (int j = l[1]; j <= h[1]; ++j)
+            for (int a = l[0]; a <= h[0]; ++a)
+                if (m_cellClass[cellIndex(a, j, k)] != 1) return true;
+    return false;
+}
+
 int TetLocator::locate(const Vec3& p, double lambda[4]) const
 {
     if (m_list.empty()) return -1;
@@ -255,13 +335,14 @@ namespace {
 class MeshFieldOracle : public OracleStorage<>
 {
 public:
-    MeshFieldOracle(std::shared_ptr<const MeshResult> r, int f) : res(std::move(r)), field(f) {}
+    MeshFieldOracle(std::shared_ptr<const MeshResult> r, int f, bool v) : res(std::move(r)), field(f), voidOutside(v) {}
 
     float sample(const Eigen::Vector3f& q, Eigen::Vector3f* grad = nullptr) const
     {
         const Vec3 p = q.cast<double>();
         double lam[4];
-        const int t = res->locator->locate(p, lam);
+        // (a design field -- a density -- is void where no tetrahedron holds the point; any other field continues as the value of the nearest one, see TetLocator)
+        const int t = voidOutside ? res->locator->locateInside(p, lam) : res->locator->locate(p, lam);
         if (t < 0)
         {
             if (grad) grad->setZero();
@@ -289,6 +370,11 @@ public:
         bool ok = false;
         size_t count = 0;
         const Vec3 lo = lower.cast<double>(), hi = upper.cast<double>();
+        if (voidOutside && res->locator->outsideDistance(lo, hi) > 0.0)
+        {
+            out = Interval(0.0f, 0.0f);                      // (H160: a design field is void outside the mesh's box: the mesher prunes the whole box)
+            return;
+        }
         if (res->locator->forTetsIn(lo, hi, [&](int) { ++count; }) && count > 0 && count < 60000)
         {
             res->locator->forTetsIn(lo, hi, [&](int t) {
@@ -310,6 +396,12 @@ public:
                 mn = std::min(mn, x);
                 mx = std::max(mx, x);
             }
+        }
+        // (a box that may hold a point outside every tetrahedron holds the void's 0 too; one that lies wholly inside the mesh does not, so the inside of the part is still pruned)
+        if (voidOutside && res->locator->boxMayHaveVoid(lo, hi))
+        {
+            mn = std::min(mn, 0.0f);
+            mx = std::max(mx, 0.0f);
         }
         out = Interval(mn, mx);
     }
@@ -335,35 +427,37 @@ public:
 private:
     std::shared_ptr<const MeshResult> res;
     int field;
+    bool voidOutside = false;
 };
 
 class MeshFieldClause : public OracleClause
 {
 public:
-    MeshFieldClause(std::shared_ptr<const MeshResult> r, int f) : res(std::move(r)), field(f) {}
+    MeshFieldClause(std::shared_ptr<const MeshResult> r, int f, bool v) : res(std::move(r)), field(f), voidOutside(v) {}
     std::unique_ptr<Oracle> getOracle() const override
     {
-        return std::make_unique<MeshFieldOracle>(res, field);
+        return std::make_unique<MeshFieldOracle>(res, field, voidOutside);
     }
-    std::string name() const override { return "tetfea_field_" + std::to_string(field); }
+    std::string name() const override { return "tetfea_field_" + std::to_string(field) + (voidOutside ? "_void" : ""); }
     std::string contentKey() const override
     {
         char buf[64];
-        snprintf(buf, sizeof(buf), "tetfea#%llu#%d", static_cast<unsigned long long>(res->serial), field);
+        snprintf(buf, sizeof(buf), "tetfea#%llu#%d%s", static_cast<unsigned long long>(res->serial), field, voidOutside ? "v" : "");
         return buf;
     }
 
 private:
     std::shared_ptr<const MeshResult> res;
     int field;
+    bool voidOutside = false;
 };
 
 }   // anonymous namespace
 
-Tree meshFieldTree(std::shared_ptr<const MeshResult> result, int field)
+Tree meshFieldTree(std::shared_ptr<const MeshResult> result, int field, bool voidOutside)
 {
     if (!result || !result->locator || field < 0 || field >= Result::FIELD_COUNT) return Tree::invalid();
-    return Tree(std::make_unique<MeshFieldClause>(std::move(result), field));
+    return Tree(std::make_unique<MeshFieldClause>(std::move(result), field, voidOutside));
 }
 
 void MeshResult::elementValues(int field, std::vector<float>& out) const
@@ -1257,6 +1351,7 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
     res->looseElements = m_looseElements;
     res->iterations = it;
     res->residual = rel;
+    res->residualHistory = std::move(cg.history);
     res->compliance = compliance;
     res->reaction = reaction;
     res->totalLoad = m_totalLoad;
@@ -1938,6 +2033,9 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
     m_baseHistory = res.baseHistory;
     m_outputHistory = res.outputHistory;
     m_densityHistory = res.densityHistory;
+    // (the design given back is the last entry of the density history, one after the last iteration, as the flow and thermal problems keep it: the result is then drawn from the kernel's own
+    // surface of it, as every iteration is, and not meshed from a field -- the user, 2026-11-09, the rifle: "The render for the rifle is taking AGES ... the individual runs render so quickly")
+    m_densityHistory.push_back(res.nodal);
     m_mirrorsUsed = res.mirrorsUsed;
     m_topDensity.assign(na, 0.0f);
     for (size_t a = 0; a < na; ++a) m_topDensity[a] = float(res.xPhys[a]);
@@ -2426,6 +2524,7 @@ bool TetProblem::solveQuad(int maxIterations, double tolerance, std::string& err
     res->looseElements = m_looseElements;
     res->iterations = it;
     res->residual = rel;
+    res->residualHistory = std::move(cg.history);
     res->compliance = compliance;
     res->reaction = reaction;
     res->totalLoad = m_totalLoad;

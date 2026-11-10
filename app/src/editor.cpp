@@ -927,8 +927,9 @@ void Editor::refreshOutline(bool runDone)
     if (!m_language) return;
     // (a drag writes numbers into the text and changes nothing that the tree shows: the rows are read when it is over, by the run that follows it.  Reading them now, on this thread, is 3 to 5 seconds for a script of a thousand points
     // -- and the timer of 80 ms after a text change fires between the writes of a drag now that they are 100 ms apart --, H90, the user: "it lags at the beginning heavily and ... freezes for like 30 seconds")
-    if (m_dragActive)
+    if (m_dragActive && !m_outlineWanted)
     {
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[outline] not read: a drag is active" << (runDone ? " (a run is done)" : "") << std::endl;
         m_outlineRunDone = m_outlineRunDone || runDone;          // (a run that ended during the drag is read when the drag is over)
         return;
     }
@@ -997,14 +998,16 @@ void Editor::onInterpreterDone(Result r)
     // (a run that ended in an exception after the red dot was pressed was terminated by it; one that got to its end anyway shows its result)
     const bool terminated = m_terminating && !r.okay;
     const bool again = m_retryAfter;            // (Retry on a running script: the run that was in flight is over, the next one begins)
+    const bool wipe = m_wipeOnRetry;
     m_terminating = false;
     m_retryAfter = false;
+    m_wipeOnRetry = false;
     m_terminateRepeat.stop();
     m_pauseWanted = false;
     libfive::run_progress::requestPause(false);
     m_runText.clear();
     updateControls();
-    if (again) QTimer::singleShot(0, this, [this] { m_textChangedDebounce.start(); });
+    if (again) QTimer::singleShot(0, this, [this, wipe] { if (wipe) wipeCaches(); m_textChangedDebounce.start(); });
     if (m_runRow->isVisible() && qEnvironmentVariableIsSet("FIELDES_TIMING"))
         std::cerr << "[bar-script] " << std::fixed << QDateTime::currentMSecsSinceEpoch() / 1000.0
                   << " done after " << m_runClock.elapsed() / 1000.0 << " s" << std::endl;
@@ -1507,15 +1510,31 @@ void Editor::togglePause()
     if (m_runRow->isVisible()) onSpinner();
 }
 
+// H166 (the user, 2026-11-08: "I want restarting a script to clear caches. Because there needs to be a simple way for a clean wipe and pressing on the restart button on the script feels like that reset"):
+// the Python library forgets what it kept in memory (the content caches, the field cache, the solved analyses and optimisations, the imported meshes), and the window deletes what the program kept on
+// disk (see Window::clearCaches).  Nothing of the user's is touched: no script, no setting, no file he made
+void Editor::wipeCaches()
+{
+    if (m_language)
+    {
+        QString error;
+        m_language->callSupport("wipe_caches", QString(), &error);
+        if (!error.isEmpty()) std::cerr << "wipe_caches: " << error.toStdString() << std::endl;
+    }
+    emit cachesWipeRequested();
+}
+
 void Editor::retryRun()
 {
     if (m_scriptRunning)
     {
-        // The run in flight is ended first; the next one begins when it is over (onInterpreterDone)
+        // The run in flight is ended first; the next one begins when it is over (onInterpreterDone), from nothing
         m_retryAfter = true;
+        m_wipeOnRetry = true;
         terminateRun();
         return;
     }
+    wipeCaches();
     m_textChangedDebounce.start();
 }
 
@@ -1544,8 +1563,15 @@ void Editor::continueRun()
     m_language->resume();
 }
 
+void Editor::wantOutline(bool on)
+{
+    m_outlineWanted = on;
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[outline] a new point is awaited: " << (on ? "the tree is read when a run is done" : "no longer") << std::endl;
+}
+
 void Editor::onDragStart()
 {
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[drag] starts" << std::endl;
     // (a script that is disabled loses the keyboard: it is given back after the drag only if it had it)
     m_scriptHadFocus = script->hasFocus();
     script->setEnabled(false);
@@ -1560,6 +1586,7 @@ void Editor::onDragStart()
 
 void Editor::onDragEnd()
 {
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[drag] ends" << std::endl;
     flushDragVars();                                    // (the numbers of the last moves are in the text before it runs again)
     m_dragWriteClock.invalidate();
     // (the numbers of the drag are in the text now and the run that follows reads the rows when it is done: the timer that a text change started would read them once more before it, 3 to 5 seconds on this thread for a thousand points -- outline timer stop)

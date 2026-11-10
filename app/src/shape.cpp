@@ -343,7 +343,8 @@ void Shape::buildField()
     es.reserve(8);
     for (unsigned i = 0; i < 8; ++i) es.emplace_back(libfive::Evaluator(tree, vars));
     if (std::getenv("FIELDES_TIMING"))
-        fprintf(stderr, "[shape] eight evaluators in %.0f ms\n", 1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tEval).count());
+        fprintf(stderr, "[shape] eight evaluators in %.0f ms (line %d, point %d, image %d, morph %d, sweep %d, prism %d)\n", 1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tEval).count(),
+                sourceLine(), int(m_isPoint), int(isSymmetryImage()), int(hasMorph()), int(hasSweep()), int(hasPrism()));
     m_deps_known = false;
     m_field_ready.store(true);
 }
@@ -937,8 +938,14 @@ bool Shape::sweepNow(const std::map<libfive::Tree::Id, float>& v, SweepNumbers& 
     return true;
 }
 
-void Shape::setMorph(std::vector<libfive::Tree> controls, std::vector<uint32_t> recipeStart, std::vector<uint32_t> recipeControl, std::vector<double> recipeWeight, std::vector<uint32_t> triangles)
+void Shape::setMorph(std::vector<libfive::Tree> controls, std::vector<uint32_t> recipeStart, std::vector<uint32_t> recipeControl, std::vector<double> recipeWeight, std::vector<uint32_t> triangles,
+                     std::vector<int32_t> tapeOp, std::vector<int32_t> tapeA, std::vector<int32_t> tapeB, std::vector<double> tapeConst, std::vector<uint32_t> tapeOut)
 {
+    m_morph_tape_op = std::move(tapeOp);
+    m_morph_tape_a = std::move(tapeA);
+    m_morph_tape_b = std::move(tapeB);
+    m_morph_tape_const = std::move(tapeConst);
+    m_morph_tape_out = std::move(tapeOut);
     m_morph_controls = std::move(controls);
     m_morph_recipe_start = std::move(recipeStart);
     m_morph_recipe_control = std::move(recipeControl);
@@ -970,6 +977,7 @@ struct MorphPlan
     std::vector<std::pair<int, libfive::Tree::Id>> vars;       // (the node of each variable, and its id)
     std::vector<int> output;                                   // (the node of each number of the control points: three to a control point)
     std::vector<double> value;
+    std::vector<double> tape;                                  // (H164: the value of each operation of the tape)
 };
 
 // The nodes of the expression `root` that are not in `slot` yet, leaves first, each once.  The walk goes only into nodes that are new, so the part that the expressions of many control points have in common
@@ -1111,6 +1119,41 @@ bool Shape::morphDirect(const std::map<libfive::Tree::Id, float>& v, std::vector
             default: return false;
         }
     }
+    if (!m_morph_tape_out.empty())
+    {
+        // (H164: the numbers just worked out are the INPUTS of the tape -- the numbers of the points --; the control points are made from them by the tape's plain operations)
+        const size_t ops = m_morph_tape_op.size();
+        if (plan.tape.size() != ops) plan.tape.assign(ops, 0.0);
+        double* t = plan.tape.data();
+        for (size_t i = 0; i < ops; ++i)
+        {
+            const int a = m_morph_tape_a[i], b = m_morph_tape_b[i];
+            switch (m_morph_tape_op[i])
+            {
+                case 0: { const size_t k = size_t(a); if (k >= plan.output.size()) return false; t[i] = val[plan.output[k]]; break; }
+                case 1: t[i] = m_morph_tape_const[size_t(a)]; break;
+                case 2: t[i] = t[a] + t[b]; break;
+                case 3: t[i] = t[a] - t[b]; break;
+                case 4: t[i] = t[a] * t[b]; break;
+                case 5: t[i] = t[a] / t[b]; break;
+                case 6: t[i] = t[a] < t[b] ? t[a] : t[b]; break;
+                case 7: t[i] = t[a] > t[b] ? t[a] : t[b]; break;
+                case 8: t[i] = std::sqrt(t[a] > 0.0 ? t[a] : 0.0); break;
+                case 9: t[i] = t[a] * t[a]; break;
+                case 10: t[i] = -t[a]; break;
+                case 11: t[i] = std::sin(t[a]); break;
+                case 12: t[i] = std::cos(t[a]); break;
+                default: return false;
+            }
+        }
+        for (size_t k = 0; k < m_morph_tape_out.size(); ++k)
+        {
+            const double x = t[m_morph_tape_out[k]];
+            if (!std::isfinite(x)) return false;
+            at[k / 3][int(k % 3)] = x;
+        }
+        return true;
+    }
     for (size_t k = 0; k < plan.output.size(); ++k)
     {
         const double x = val[plan.output[k]];
@@ -1127,7 +1170,7 @@ bool Shape::morphNow(const std::map<libfive::Tree::Id, float>& v, std::vector<Ei
     // (what colours or bends the shape is not a body of points' to draw)
     if (color_field.is_valid() || has_result || !m_channels.empty()) return false;
     // (each control point of the patches is worked out once; a vertex of the surface is a sum of a few of them, each times its weight)
-    const size_t controls = m_morph_controls.size() / 3;
+    const size_t controls = m_morph_tape_out.empty() ? m_morph_controls.size() / 3 : m_morph_tape_out.size() / 3;
     std::vector<Eigen::Vector3d> at(controls);
     {
         // All the numbers of all the control points are the places (k, 0, 0) of ONE tree: the sum over k of hat(x - k) times number k, hat(d) = max(0, 1 - |d|), which is 1 at the whole number k and 0 at every
@@ -1135,6 +1178,7 @@ bool Shape::morphNow(const std::map<libfive::Tree::Id, float>& v, std::vector<Ei
         // of the evaluator's width.  What was done before -- an evaluator for each number, built and zeroed again at each step -- cost 425 to 620 ms for a body of eight spline points.
         std::lock_guard<std::mutex> lock(m_morph_mutex);
         const bool direct = morphDirect(v, at);
+        if (!direct && !m_morph_tape_out.empty()) return false;      // (H164: a body made on a tape has no graph for the evaluator below)
         if (!direct)
         {
         using Evaluator = libfive::ArrayEvaluator;
@@ -2162,7 +2206,9 @@ int Shape::sweepControlOf(const Shape* point) const
 // Whether a point is one of the points a body of points -- morph_polyhedron, morph_body -- is made of: a number its gizmo moves is one of the numbers the control points of the body are made of
 bool Shape::morphUses(const Shape* point) const
 {
-    if (!point || !hasMorph()) return false;
+    // (H164, measured 2026-11-09 in the window: a body meshed from its field has no drawing data, so hasMorph() is false for it, and then no point was "a point of a body": the wheel over a point zoomed the view
+    // instead of changing its influence.  A body of points says so itself -- `_morph_faces` -> isPointBody -- and the numbers its points move are in its field)
+    if (!point || !(hasMorph() || isPointBody())) return false;
     const auto& g = point->gizmo();
     for (int a = 0; a < 3; ++a)
     {
@@ -2348,6 +2394,19 @@ QVector3D Shape::gizmoMove() const
 {
     return QVector3D(gizmoNumber(vars, m_gizmo.move[0]), gizmoNumber(vars, m_gizmo.move[1]),
                      gizmoNumber(vars, m_gizmo.move[2]));
+}
+
+QVector3D Shape::gizmoCentreNow() const
+{
+    QVector3D c = m_gizmo.centre;
+    for (const auto& s : m_gizmo.centreLive)
+    {
+        const auto it = s.id ? vars.find(s.id) : vars.end();
+        if (it == vars.end()) continue;
+        const double dv = double(it->second) - s.v0;
+        c += QVector3D(float(s.d[0] * dv), float(s.d[1] * dv), float(s.d[2] * dv));
+    }
+    return c;
 }
 
 QVector3D Shape::gizmoScale() const
@@ -2613,12 +2672,14 @@ bool Shape::previewGizmoVars(const std::map<libfive::Tree::Id, float>& changed, 
         if (it != vars.end()) it->second = kv.second;
     }
     refreshPreview();
+    m_gizmoHeld = true;
     if (m_unsigned && std::getenv("FIELDES_TIMING")) fprintf(stderr, "[preview] previewGizmoVars accepted (surface)\n");
     return true;
 }
 
 void Shape::endGizmoPreview()
 {
+    m_gizmoHeld = false;
     if (!m_previewShown || !m_geometry_known) return;
     // (the numbers are in `vars`: the render takes them, and the mesh that is shown goes on being shown moved until the new one is there)
     startRender(RenderSettings { m_last_settings, MESH_DIV_NEW_VARS, m_last_alg });
@@ -2985,7 +3046,10 @@ int Shape::sizedDivFor(const Settings& s)
     const double L = std::max(size.x(), std::max(size.y(), size.z()));
     if (!(L > 1e-6)) return s.defaultDiv();
     const double across = autoResolution(s) * L;            // (samples across the shape at the finest level)
-    return std::max(0, int(std::lround(std::log2(std::max(1.0, across / 64.0)))));
+    // (H164, the user, 2026-11-09: "THERE IS NO COARSE LEVEL RENDER WHEN DRAGGING A POINT OUT OF A SURFACE. IT IS JUST FROZEN FOR LIKE 15 SECONDS": measured on a body of 26 points -- the first picture at 64 cells across took
+    // 1.2 s, the finest 8.5 s, and a body with more points costs more at every level.  A body of points starts at 16 cells across, two levels coarser: its first picture comes in about a tenth of a second, as the
+    // drag of a point does, and the finer levels follow one after the other)
+    return std::max(0, int(std::lround(std::log2(std::max(1.0, across / (isPointBody() ? 16.0 : 64.0))))));
 }
 
 bool Shape::ownRegion(const Settings& s, const QVector3D& box_lo, const QVector3D& box_hi, float side,
@@ -4219,13 +4283,24 @@ QString Shape::valueNoteHelp() const
 {
     if (!has_result || m_channel < 0 || size_t(m_channel) >= m_channels.size()) return QString();
     if (m_hasValueNote) return QString();
-    const bool solved = solvedAtNodes(m_channels[size_t(m_channel)].name);
+    const QString& name = m_channels[size_t(m_channel)].name;
+    const bool solved = solvedAtNodes(name);
+    QString help;
     if (m_show_elements && hasElements())
-        return solved ? T("Each element's value at its centre, from its solved node values.")
+        help = solved ? T("Each element's value at its centre, from its solved node values.")
                       : T("Each element's own value, not averaged.");
-    return solved ? T("The solver's values at the nodes, interpolated between them.")
-                  : T("The elements' values averaged at each node and interpolated between them. "
-                    "Peaks are lower than the elements' own: switch on Elements to see those.");
+    else
+        help = solved ? T("The solver's values at the nodes, interpolated between them.")
+                      : T("The elements' values averaged at each node and interpolated between them. "
+                        "Peaks are lower than the elements' own: switch on Elements to see those.");
+    // (the tester of version 1.2.0: "how can the stress be negative there?" -- the largest principal stress is below zero where the part is pressed in every direction)
+    if (name == "max_principal")
+        help += T("\n\nThe maximum principal stress is the largest of the three principal stresses at a point. "
+                  "It is below zero where the part is pressed together in every direction there, as at a support or under a load that presses.");
+    else if (name == "min_principal")
+        help += T("\n\nThe minimum principal stress is the smallest of the three principal stresses at a point: "
+                  "below zero where the material is pressed, above zero only where it is pulled in every direction.");
+    return help;
 }
 
 QString Shape::probeLabel() const
@@ -4364,6 +4439,9 @@ bool Shape::updateFrom(Shape* other)
     m_locked = other->m_locked;
     m_linked = other->m_linked;
     m_isPoint = other->m_isPoint;
+    // (what kind of point it is -- a corner, a spline point, a round corner: the picture of its dot -- is what the script says NOW.  A double click on a dot changes the kind in the text, the run makes a new shape that
+    // stands for this one, and this one kept the kind it had: the dot changed only when the file was closed and opened -- the user, 2026-11-11, H172: "The point type icon does not change in real time")
+    m_point_style = other->m_point_style;
     m_hasPointPos = other->m_hasPointPos;
     m_pointPos = other->m_pointPos;
     m_liveTerms = other->m_liveTerms;
@@ -4475,8 +4553,17 @@ void Shape::buildDeps() const
         // (the field of a sweep or a prism that is not made is not walked: the numbers it is made of are the ones of its points, which are below)
         if (m_field_ready.load() || !(hasSweep() || hasPrism() || hasMorph()))
         {
-            ensureField();
-            add(tree);
+            // (a point is not drawn from its field: the numbers its tree is made of are read from the tree as it was made, without the optimized tree and the eight evaluators, 1 to 3 ms each -- 50 of them, the images
+            // of the points of the horn, were made after every run that changed a number, the user, 2026-11-10: putting a point in a body takes seconds.  The tree as it was made has every number the optimized one has)
+            if (m_isPoint && !m_field_ready.load())
+            {
+                add(built_tree);
+            }
+            else
+            {
+                ensureField();
+                add(tree);
+            }
         }
         // (a body of points: the numbers its control points are made of.  They are read from the plan of the direct reading, which walks every node once: a tree for each of the 2241 numbers of a mesh of 747
         // points was flattened and walked one by one, which is what the first step of a drag waited for, 714 ms in the log of the window, H90.  A control that has an operation the plan does not do -- an oracle --
@@ -5296,6 +5383,14 @@ void Shape::onFutureFinished()
             sm.disp = std::move(bm.disp);
             step_meshes[step_rendering] = std::move(sm);
         }
+        bm.mesh = nullptr;
+    }
+    // H165 (the user, 2026-11-09, with the log of his own hand test: "THE TASK STATES TAHT WHILE MOVING THE GIZMO THIS HAPPENS AND WHEN YOU LET GO IT SNAPS BACK TO THE RIGHT POSITON"): the part and the pivot of its gizmo were the same
+    // to 0.000 until a render that had been running when the gizmo was pressed finished in the middle of the drag; from then on the part was 7.8 mm from the pivot for as long as the gizmo was held, and the render after the
+    // release put it right.  While a gizmo is held the mesh that is drawn moved is exact, and that mesh is of numbers that the render did not know: it is not replaced.  The render at the release takes the new numbers
+    if (bm.mesh != nullptr && m_gizmoHeld && mesh)
+    {
+        delete bm.mesh;
         bm.mesh = nullptr;
     }
     if (bm.mesh != nullptr)

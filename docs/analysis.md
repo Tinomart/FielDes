@@ -214,8 +214,9 @@ part, supports that do not hold it in place).
 components `sxx … szx`, `max_principal`, `min_principal`, `strain_energy`.
 
 **Numbers:** `max_von_mises`, `max_displacement`, `safety_factor` (if the material has a yield strength),
-`elements`, `iterations`, `seconds`, `reaction` (the support force), and `range(field)` /
-`element_range(field)`.
+`elements`, `iterations`, `seconds`, `reaction` (the support force), `residual` (the last) and `residual_history` (the
+residual after every iteration, relative to the load, at most 400 numbers: the result card draws it as a curve on a log scale),
+and `range(field)` / `element_range(field)`.
 
 **Smooth or per element.** The smooth field is coloured by node values: displacements as solved, stresses
 averaged over the elements at each node. The stress in a tetrahedron is constant, so the *element* peak is

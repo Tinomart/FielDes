@@ -454,7 +454,10 @@ def _publish_partial(out, lines, running_line=-1):
         import _fieldes_host as host
         publish = getattr(host, 'partial_shapes', None)
         if publish is not None:
+            import time
+            started = time.time()
             publish(list(out), list(lines), running_line)
+            _tlog('the shapes so far were handed to the viewport in %.0f ms (%d of them, before the line %d)' % (1000.0 * (time.time() - started), len(out), running_line + 1))
     except Exception:
         pass
 
@@ -465,7 +468,7 @@ class _PartialScenes:
         once a statement has been running for DELAY seconds -- so a script whose statements are all quick says nothing until it is done.
         It runs beside the script, in a thread of its own, and only tells: the script is not slowed by it. '''
     DELAY = 0.15
-    SHOW_AFTER = 0.4        # a statement still going after this long -- whatever it is -- has what the statements before it show drawn
+    SHOW_AFTER = 1.0        # a statement still going after this long -- whatever it is -- has what the statements before it show drawn (it was 0.4: the hand-over of 110 shapes to the viewport is 70 to 115 ms of the same Python, measured on sheep_horn, and a body of points takes 0.4 to 0.6 s, so it was paid at every run for a picture that was on the screen already)
 
     def __init__(self, state, host):
         import threading

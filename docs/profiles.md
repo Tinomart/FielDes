@@ -75,8 +75,8 @@ its row in the tree or of its line in the script, all the same menu: the line wr
 - **Pull a point out of an edge.** Press on an edge of a profile (every 2D shape has its edges drawn **blue**, and the blue line brightens under the mouse) and drag: a new point comes out of the edge and follows the
   mouse, drawn at once. Let go and it is written: a model of its own above the profile, put in its list in the right place (`plate = profile([a, p5, b, c, d])`). On a line **press the line and drag**; a click on a
   line only selects it.
-- **Double-click a point** of a profile and it goes from a **corner** (a **square** dot: a hard edge) to a **spline point** (a **round** dot with a ring: the curve goes smoothly through it) to a **round corner**
-  (a **square with round corners**: an arc takes the place of the corner, see below) and back to a corner; on a line it changes between corner and spline point. What is written is `smooth=True` / `smooth=False`
+- **Double-click a point** of a profile and it goes from a **corner** (a **square** dot: a hard edge) to a **spline point** (a **square dot with round corners**: the curve goes smoothly through it) to a **round corner**
+  (a **round dot with a ring**: an arc takes the place of the corner, see below) and back to a corner; on a line it changes between corner and spline point. What is written is `smooth=True` / `smooth=False`
   or `radius=` on the point; a point that says nothing is what its profile or line says. The dot always shows what the point is **in its profile or line**; a point that is in neither is a plain round dot.
 - **Double-click a profile** to frame it: the view also **turns to face the plane of the profile**.
 - **The default is a hard edge** for a profile and a polyline, a smooth curve for a spline: `profile(points, smooth=False)`. With `smooth=True` every point is a spline point, except where a point says `smooth=False`.

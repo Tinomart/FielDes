@@ -68,6 +68,7 @@ struct Result
     int looseElements = 0;                  // material not connected to any support: left out
     int iterations = 0;
     double residual = 0, seconds = 0;
+    std::vector<float> residualHistory;     // (the residual after every iteration of the solve, relative to the load: the convergence curve)
     double volume = 0, compliance = 0;
     Eigen::Vector3d totalLoad = Eigen::Vector3d::Zero();
     Eigen::Vector3d reaction = Eigen::Vector3d::Zero();

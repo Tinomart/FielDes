@@ -1024,7 +1024,19 @@ def _morph_faces_after_removal(tree, var, call, names, start_of, end_of, source)
     except (ValueError, SyntaxError, TypeError):
         return [], None
     from fieldes.stdlib import morph
-    filled = morph._fill_holes(faces, gone)
+    from fieldes import runner
+    # (the places of the points as the last run had them: the holes are closed by faces of points that are near each other, not by a fan from whichever point comes first -- H171.  When the place of a point is not
+    # known -- the script has not run -- `where` is None, and only a hole of three or four is closed; any other leaves the faces to be those of the points: the list is None)
+    gs = runner.last_globals if isinstance(runner.last_globals, dict) else {}
+    where = []
+    for e in items:
+        got = gs.get(e.id) if isinstance(e, ast.Name) else None
+        place = getattr(got, '_point_pos', None)
+        if place is None:
+            where = None
+            break
+        where.append(tuple(float(v) for v in place))
+    filled = morph._fill_holes(faces, gone, where)
     lines = source.split('\n')
     # (THE LINES STAY WHERE THEY ARE: the model tree writes the lines from the faces down to the call back one to one, and cuts the lines of the deleted point's own statements at the numbers they had.  Text
     # that has more or fewer lines than the list it replaces moves everything under it and the cut takes the wrong lines -- the user, 2026-11-03, after deleting a point: the closing bracket of the list and its end mark
@@ -2326,6 +2338,41 @@ def edit_in_place(new_text):
         if plan == 'defer':
             runner.stop_after_statement()
         return plan
+
+
+def wipe_caches(arg=None):
+    ''' H166 (the user, 2026-11-08: "I want restarting a script to clear caches. Because there needs to be a simple way for a clean wipe"): the library forgets everything it kept in MEMORY -- the content caches (imported
+        meshes, tessellations, ...), the field cache, the solved analyses, optimisations and flows.  What the caches keep on disk is deleted by the window (Window::clearCaches).  Returns JSON {what: how many entries} '''
+    import json
+    import importlib
+    cleared = {}
+    try:
+        from fieldes.stdlib import content_cache
+        cleared['content caches'] = sum(v[0] for v in content_cache.cache_info().values())
+        content_cache.clear_caches()
+    except Exception as e:
+        cleared['content caches'] = 'error: %s' % e
+    try:
+        from fieldes import field_cache
+        cleared['field cache'] = len(getattr(field_cache, '_memory', {}))
+        field_cache.clear()
+    except Exception as e:
+        cleared['field cache'] = 'error: %s' % e
+    for module, names in (('fieldes.stdlib.fea', ('_cache', '_early', '_modal_cache', '_topo_cache')),         # (`_early`: whole problems by their content -- H166 test 2026-11-09: the restart took a static analysis from it in 99 ms, so it was not a clean run)
+                          ('fieldes.stdlib.fluid', ('_cache', '_density_cache')),
+                          ('fieldes.stdlib.thermal', ('_cache', '_topo_cache'))):
+        try:
+            mod = importlib.import_module(module)
+            count = 0
+            for name in names:
+                held = getattr(mod, name, None)
+                if held is not None:
+                    count += len(held)
+                    held.clear()
+            cleared[module.rsplit('.', 1)[-1]] = count
+        except Exception as e:
+            cleared[module] = 'error: %s' % e
+    return json.dumps(cleared)
 
 
 def outline_json(arg):

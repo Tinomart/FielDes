@@ -365,6 +365,45 @@ static QWidget* closeButtonOf(QWidget* card)
     return nullptr;
 }
 
+void Window::clearCaches(bool announce)
+{
+    qint64 bytes = 0;
+    for (const auto& f : QDir(Shape::renderCacheDir()).entryInfoList({"*.fdmesh"}, QDir::Files))
+        bytes += f.size();
+    const int n = Shape::clearRenderCache();
+    // the field cache (field_cache.py) sits beside the render cache: a file or two to a field
+    int fields = 0;
+    const QDir fieldDir(QFileInfo(Shape::renderCacheDir()).absolutePath() + "/field-cache");
+    for (const auto& f : fieldDir.entryInfoList({"*.fdtree", "*.fdfield", "*.part"}, QDir::Files))
+    {
+        bytes += f.size();
+        if (f.suffix() == "fdfield") ++fields;
+        QFile::remove(f.absoluteFilePath());
+    }
+    // the result cache (result_cache.py: the solved problems, a file or two to each; the manufacturing results of manufacturing_store.py in folders of their own inside it) sits
+    // there as well.  What comes with the program is in the program's own folder (seed-cache) and stays
+    const QByteArray resultEnv = qgetenv("FIELDES_RESULT_CACHE_DIR");
+    const QDir resultDir(!resultEnv.isEmpty() ? QString::fromLocal8Bit(resultEnv) : QFileInfo(Shape::renderCacheDir()).absolutePath() + "/result-cache");
+    for (const auto& f : resultDir.entryInfoList({"*.fdresult", "*.json", "*.part"}, QDir::Files))
+    {
+        bytes += f.size();
+        QFile::remove(f.absoluteFilePath());
+    }
+    for (const auto& d : QDir(resultDir.absoluteFilePath("manufacturing")).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
+    {
+        QDirIterator files(d.absoluteFilePath(), QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext())
+        {
+            files.next();
+            bytes += files.fileInfo().size();
+        }
+        QDir(d.absoluteFilePath()).removeRecursively();
+    }
+    if (announce)
+        statusBar()->showMessage(T("Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted")
+                                     .arg(n).arg(fields).arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 1), 8000);
+}
+
 Window::Window(Arguments args)
     : QMainWindow()
     , view(new View)
@@ -470,6 +509,7 @@ Window::Window(Arguments args)
     // the script while dragging in the 3D viewport
     connect(view, &View::dragStart, editor, &Editor::onDragStart);
     connect(view, &View::dragEnd, editor, &Editor::onDragEnd);
+    connect(view, &View::newPointWait, editor, &Editor::wantOutline);
 
     // Escape cancels any in-progress render, as an escape hatch for a
     // shape that's too expensive to mesh at the current resolution/bounds
@@ -1484,41 +1524,10 @@ Window::Window(Arguments args)
     clear_cache->setToolTip(T("Delete every mesh the render cache kept, every field the field cache kept and every solved problem the result cache kept (they are made again "
                             "the next time they are needed, and kept again; the ones that come with the program stay)"));
     connect(clear_cache, &QAction::triggered, this, [this]{
-        qint64 bytes = 0;
-        for (const auto& f : QDir(Shape::renderCacheDir()).entryInfoList({"*.fdmesh"}, QDir::Files))
-            bytes += f.size();
-        const int n = Shape::clearRenderCache();
-        // the field cache (field_cache.py) sits beside the render cache: a file or two to a field
-        int fields = 0;
-        const QDir fieldDir(QFileInfo(Shape::renderCacheDir()).absolutePath() + "/field-cache");
-        for (const auto& f : fieldDir.entryInfoList({"*.fdtree", "*.fdfield", "*.part"}, QDir::Files))
-        {
-            bytes += f.size();
-            if (f.suffix() == "fdfield") ++fields;
-            QFile::remove(f.absoluteFilePath());
-        }
-        // the result cache (result_cache.py: the solved problems, a file or two to each; the manufacturing results of manufacturing_store.py in folders of their own inside it) sits
-        // there as well.  What comes with the program is in the program's own folder (seed-cache) and stays
-        const QByteArray resultEnv = qgetenv("FIELDES_RESULT_CACHE_DIR");
-        const QDir resultDir(!resultEnv.isEmpty() ? QString::fromLocal8Bit(resultEnv) : QFileInfo(Shape::renderCacheDir()).absolutePath() + "/result-cache");
-        for (const auto& f : resultDir.entryInfoList({"*.fdresult", "*.json", "*.part"}, QDir::Files))
-        {
-            bytes += f.size();
-            QFile::remove(f.absoluteFilePath());
-        }
-        for (const auto& d : QDir(resultDir.absoluteFilePath("manufacturing")).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
-        {
-            QDirIterator files(d.absoluteFilePath(), QDir::Files, QDirIterator::Subdirectories);
-            while (files.hasNext())
-            {
-                files.next();
-                bytes += files.fileInfo().size();
-            }
-            QDir(d.absoluteFilePath()).removeRecursively();
-        }
-        statusBar()->showMessage(T("Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted")
-                                     .arg(n).arg(fields).arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 1), 8000);
+        editor->wipeCaches();              // (the Python library's memory too: it asks the window for the disk by cachesWipeRequested)
     });
+    // H166: the restart button of the script wipes the same caches (Editor::retryRun)
+    connect(editor, &Editor::cachesWipeRequested, this, [this]{ clearCaches(true); });
 
     // The messages that were hidden with "Do not show this again" come back
     settings_menu->addSeparator();
@@ -2475,9 +2484,13 @@ Window::Window(Arguments args)
             send(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
         });
         // snapcheck [how many misses to list]: the cursor put on each junction that the lattice picture draws (the snapping mode on, the picture painted), and what the pick gives there
+        // (snapcheck place [n]: the same through View::snapPlace, the pick of a hover with a model under the cursor or not -- H157)
         a->add("snapcheck", [=](const QString& args){
-            const int shown = args.trimmed().isEmpty() ? 12 : args.trimmed().toInt();
-            std::cerr << view->snapSelfCheck(shown).toStdString() << std::flush;
+            QString rest = args.trimmed();
+            const bool place = rest.startsWith("place");
+            if (place) rest = rest.mid(5).trimmed();
+            const int shown = rest.isEmpty() ? 12 : rest.toInt();
+            std::cerr << view->snapSelfCheck(shown, place).toStdString() << std::flush;
         });
         // winmouse <move|press|drag|release> <x> <y>: a left-button mouse event at a place of the WINDOW (the coordinates of a picture of it), delivered the way a real one is: to the
         // widget that is on top there -- the tour's blocker and layer, the card, whatever stands over the viewport -- and, once a button is down, to the widget that took the press

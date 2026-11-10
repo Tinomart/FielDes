@@ -410,9 +410,26 @@ bool runDensityDesign(const TetMesh& mesh, const std::vector<double>& vol, doubl
                 if (!(vals[a] < 0)) startVals[a] = 0.0f;
         }
     }
+    // H159 (the user's report, 2026-11-08, "Grow topology optimization seemingly broken ... it grows to over 200% volume at the first optimization step, when the restriction is 40%"; his picture: "material 236.9 % of
+    // the part" at iteration 1): the elements outside the part each start with 0.02, and a design space round a thin part holds many times the part's volume, so the skin alone was more material than the
+    // design may have.  What lies outside starts with no more than a tenth of what the part itself starts with, in all of it: 0.02 where that is less than that, less where there is a lot of it (never under
+    // 0.001: material put in nothing grows only where the neighbours' strain says so)
+    double outsideStart = 0.02;
+    if (grown && s.startField.is_valid() == false)
+    {
+        double insideVolume = 0, outsideVolume = 0;
+        for (size_t a = 0; a < na; ++a)
+        {
+            if (state[a]) continue;
+            (outside[a] ? outsideVolume : insideVolume) += vol[a];
+        }
+        if (outsideVolume > 0 && insideVolume > 0)
+            outsideStart = std::max(0.001, std::min(0.02, 0.1 * s.startDensity * insideVolume / outsideVolume));
+        if (debug) fprintf(stderr, "[tetopt] grown design space: what lies outside the part starts at %.4f (%.3g of the volume of the part lies outside it)\n", outsideStart, insideVolume > 0 ? outsideVolume / insideVolume : 0.0);
+    }
     for (size_t a = 0; a < na; ++a)
     {
-        if (outside[a]) x[a] = 0.02;            // (a little: material put in nothing grows only where the neighbours' strain says so)
+        if (outside[a]) x[a] = outsideStart;    // (a little: material put in nothing grows only where the neighbours' strain says so)
         if (!startVals.empty()) x[a] = std::min(1.0, std::max(0.02, double(startVals[a])));
         if (state[a]) x[a] = state[a] == 1 ? 1.0 : 0.0;
     }
@@ -937,6 +954,114 @@ bool runDensityDesign(const TetMesh& mesh, const std::vector<double>& vol, doubl
     {
         if (best.valid) x = best.x;
         physical(x, xPhys);
+        // H160 (the user, 2026-11-08, his rifle: every iteration clean and the result torn into pieces; 2026-11-09, again: "THERE IS STILL RANDOM BULLSHIT GARBAGE OUTSIDE" -- MEASURED on the design given back: the surface of its
+        // density had 8 connected pieces, the part and seven islands of 270 to 4 triangles).  The loose-material rule only pushes a piece down by one move per iteration, so the design given back still holds scraps, and
+        // what no support holds carries nothing: it is taken out of the design that is given back.  WHICH material is held has to be asked of the set the design IS -- the part is where the NODAL density is above the level
+        // that gives the volume of the design (TetProblem::cutThreshold) --, not of the elements above 0.3: two elements that share a face are two pieces of that set where the nodal average of the neck between them lies below
+        // the level, and the old test, made on the elements, called them one part and left the island.  So: the level, the tetrahedra that hold a point above it, two of them joined when the face between them does, held
+        // when joined to a tetrahedron that holds a support; the rest is taken out, and since the nodal averages change with it the test is made again until nothing more goes
+        if (!supported.empty())
+        {
+            static const int cornerOf[4][3] = {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
+            // (the share of a tetrahedron's volume where the field that is linear through v[0..3] is above `level`, as TetProblem::cutThreshold has it)
+            auto shareAbove = [](const double* v, double level) {
+                double up[4], down[4];
+                int nu = 0, nd = 0;
+                for (int i = 0; i < 4; ++i)
+                {
+                    if (v[i] > level) up[nu++] = v[i] - level;
+                    else down[nd++] = level - v[i];
+                }
+                (void)nd;
+                switch (nu)
+                {
+                case 0: return 0.0;
+                case 4: return 1.0;
+                case 1: return up[0] * up[0] * up[0] / ((up[0] + down[0]) * (up[0] + down[1]) * (up[0] + down[2]));
+                case 3: return 1.0 - down[0] * down[0] * down[0] / ((down[0] + up[0]) * (down[0] + up[1]) * (down[0] + up[2]));
+                default:
+                {
+                    const double pp = up[0], qq = up[1], uu = down[0], ww = down[1];
+                    const double below = (pp * qq * (uu * uu + uu * ww + ww * ww) + (pp + qq) * uu * ww * (uu + ww) + uu * uu * ww * ww) / ((pp + uu) * (qq + uu) * (pp + ww) * (qq + ww));
+                    return 1.0 - below;
+                }
+                }
+            };
+            size_t removed = 0;
+            for (int pass = 0; pass < 8; ++pass)
+            {
+                std::vector<float> nd;
+                nodal(xPhys, nd);
+                double design = 0;
+                for (size_t a = 0; a < na; ++a) design += vol[a] * xPhys[a];
+                if (!(design > 0)) break;
+                auto volumeAbove = [&](double level) {
+                    double sum = 0;
+                    for (size_t t = 0; t < na; ++t)
+                    {
+                        const double v[4] = {double(nd[size_t(mesh.tets[t][0])]), double(nd[size_t(mesh.tets[t][1])]), double(nd[size_t(mesh.tets[t][2])]), double(nd[size_t(mesh.tets[t][3])])};
+                        sum += vol[t] * shareAbove(v, level);
+                    }
+                    return sum;
+                };
+                double lo = 0.0, hi = 1.0;
+                for (int i = 0; i < 40; ++i)
+                {
+                    const double mid = 0.5 * (lo + hi);
+                    if (volumeAbove(mid) > design) lo = mid;
+                    else hi = mid;
+                }
+                const double level = 0.5 * (lo + hi);
+                std::vector<char> holds(na, 0);                 // (the tetrahedron has a point above the level)
+                for (size_t t = 0; t < na; ++t)
+                    for (int c = 0; c < 4; ++c)
+                        if (double(nd[size_t(mesh.tets[t][size_t(c)])]) > level) holds[t] = 1;
+                std::vector<int32_t> parent(na);
+                std::iota(parent.begin(), parent.end(), 0);
+                auto root = [&](int32_t a) {
+                    while (parent[size_t(a)] != a)
+                    {
+                        parent[size_t(a)] = parent[size_t(parent[size_t(a)])];
+                        a = parent[size_t(a)];
+                    }
+                    return a;
+                };
+                for (size_t t = 0; t < na; ++t)
+                {
+                    if (!holds[t]) continue;
+                    for (int q = 0; q < 4; ++q)
+                    {
+                        const int32_t b2 = across[t][size_t(q)];
+                        if (b2 < 0 || !holds[size_t(b2)]) continue;
+                        // (the face between them holds a point above the level)
+                        bool joined = false;
+                        for (int c = 0; c < 3 && !joined; ++c) joined = double(nd[size_t(mesh.tets[t][size_t(cornerOf[q][c])])]) > level;
+                        if (!joined) continue;
+                        const int32_t r0 = root(int32_t(t)), r1 = root(b2);
+                        if (r0 != r1) parent[size_t(r1)] = r0;
+                    }
+                }
+                std::vector<char> anchored(na, 0);
+                for (size_t t = 0; t < na; ++t)
+                {
+                    if (!supported[t]) continue;
+                    // (held when it joins a tetrahedron that holds a support -- or one that lies against it: the support's own tetrahedron may lie just under the level)
+                    if (holds[t]) anchored[size_t(root(int32_t(t)))] = 1;
+                    for (int q = 0; q < 4; ++q)
+                    {
+                        const int32_t b2 = across[t][size_t(q)];
+                        if (b2 >= 0 && holds[size_t(b2)]) anchored[size_t(root(b2))] = 1;
+                    }
+                }
+                size_t here = 0;
+                for (size_t t = 0; t < na; ++t)
+                    if (state[t] == 0 && holds[t] && xPhys[t] > 0.0 && !anchored[size_t(root(int32_t(t)))]) { xPhys[t] = 0.0; ++here; }
+                removed += here;
+                if (debug) fprintf(stderr, "[tetopt] pass %d: level %.4f, %zu elements of material that no support holds taken out\n", pass, level, here);
+                if (here == 0) break;
+            }
+            if (debug) fprintf(stderr, "[tetopt] %zu elements that no support holds were taken out of the design given back\n", removed);
+        }
     }
     if (debug)
     {

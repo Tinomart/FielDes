@@ -12,7 +12,7 @@ A body made of points: `morph_polyhedron` and `morph_body` -- the 3D equivalent 
     cube = morph_polyhedron([a, b, c, d, e, f, g, h])        # flat faces and sharp corners, unless a point says smooth=True or radius=r
     blob = morph_body([a, b, c, d, e, f, g, h])        # the same eight points, every point a spline point unless it says smooth=False or radius=r
 
-The surface of the body is a cage of faces whose corners are the points -- without a list of faces named after the body the faces of the convex hull of the points (the six quads of a cube for the eight points above; four
+The surface of the body is a cage of faces whose corners are the points -- without a list of faces named after the body the faces made of the points at every run (`morph_faces`) (the six quads of a cube for the eight points above; four
 points or more that are not all in one plane; a flat piece of four corners is one face of four, any other face is a triangle).  `faces=` says them when they are not the hull's -- after a press on
 the surface has put a point there, or for a body that is not convex: three or four point numbers each, counterclockwise seen from outside.  PRESS THE SURFACE AND DRAG, as you press the outline of a profile: a new point is put where you pressed, the face that was there is split round it, and
 the point goes where you drag it -- out of the surface (a bump) or into it (a dent).  The points are ordinary points (`point(position=(x, y, z))`, dragged with their gizmo).  Each is one of three kinds, as
@@ -42,7 +42,9 @@ import array
 import ctypes
 import gc
 import math
+import os
 import sys
+import time
 
 from fieldes import ffi
 from fieldes.ffi import lib
@@ -65,7 +67,9 @@ def _field_segments(cage):
     faces = len(cage)
     return 12 if faces <= 12 else 10 if faces <= 24 else 8 if faces <= 64 else 4
 # The least a patch goes across an edge between two spline points, as a part of the vector across it (see row_core in _morph): the faces on the two sides of an edge cannot fold over each other
-_ALPHA_MIN = 0.1
+# The most a patch goes across an edge between two spline points, as a part of the vector across it.  The raw value is 0.8 to 2.2 on every edge of a cube of eight spline points with two points dragged out; with the limit at 1 it was cut
+# down on every one of them and the patch turned in a narrow band beside the edge (the worst 1 per cent of the pieces away from the points turned 14.7 degrees against a median of 1.2: the line along the face that is seen); at 3
+# the worst 1 per cent turn 9.9 degrees (measured 2026-11-10 on private copies of this file)
 # How far the radius of a sphere point can go, as a part of the shortest edge of the cage at the point: the radius that is used is r itself, up to this much of the shortest edge and no further however far the
 # scale is turned up -- half an edge is where the roundings at the two ends of an edge meet, and a cube whose eight points have it is a sphere (the user, 2026-11-02: "the Radius still does not make the
 # shape end in a proper sphere")
@@ -75,24 +79,50 @@ _SPHERE_DEPTH = math.sqrt(3.0) - 1.0
 # How deep a sphere point may cut a corner, in radii, however narrow the corner is (a ball in a wedge sits r / sin(half the angle) behind the corner), and the weight of the old normal in the solution of its faces (see _morph)
 _SPHERE_DEPTH_MAX = 3.0
 _SPHERE_FACES_RIDGE = 0.01
-# How far each edge that leaves a sphere point leaves it in the plane across the normal, as a part of the radius used (about the distance from the corner at which a sphere of that radius touches the
-# faces of a box): after that the edge is on its own line again, so that the rounding is where the corner is and does not dent the whole edge
-_SPHERE_REACH = 0.6        # (was 1.0: with a neighbour a few millimetres away -- a point dragged out of the surface of a body of sphere points -- the edges that leave a sphere point reached across the next point and the surface crumpled; 0.6 does not, and a cube of eight sphere points is the same ball: the user, 2026-11-04, H126)
-# Between two sphere points the faces meet in one tangent plane all along the edge, as they do at a spline, in the measure that the radius is what is possible there (see smooth_row: rho = the radius used as a
-# part of half the shortest edge; the weight is rho to the power 4, so that a small radius leaves the edge an edge with flat faces and the full one makes the sphere), and the face leaves the edge
-# 1 + this x rho times as strongly as a spline's does (the factor on alpha in row_core).  Measured against a true sphere, a cube of 40 whose eight points have radius 20 passes through the sphere at its
-# corners and the middles of its edges, and without the factor it dips about 2 at the middles of its faces and 1 in between; at 1.7 it is within 0.55 everywhere (measured at 1.0 / 1.5 / 1.75 / 2.0 / 3.0:
-# the middle of a face 1.96 / 0.51 / -0.21 / -0.90 / -3.47 off, the directions in between 0.96 / 0.66 / 0.53 / 0.41 / 0.03)
-_SPHERE_GAIN = 0.7
-# Along an edge between a corner point and a sphere point the crease of the corner fades out toward the sphere point and is gone at its middle, where the faces have one tangent plane (the user, 2026-11-02:
-# "way too sutble letting the edge point affect it and showing a clear side up until the very center of its influence"): how far from the sphere point the smooth row reaches, as this many radii used,
-# as a part of the edge (see fade_row in _morph); a spline point has no radius, its smooth row reaches all the way.  Measured on a cube of 5 with one point pulled out (the angle between the two faces
-# along the edge from a corner point to the sphere point, in eight pieces, a sharp edge being 89): without the fade 89 89 89 89 87 85 77 37 for a radius of 1; at 2 radii 89 88 86 84 80 75 65 31; at 8
-# 88 86 82 75 62 52 34 16, as a spline point at the end has it (88 84 77 70 61 46 37 23): the crease is gone toward the middle of the sphere point's influence
-_SPHERE_FADE = 8.0
-# How much of the smooth row the edge between two sphere points takes: rho to this power (rho: the radius as a part of what the point can show).  The user, 2026-11-02, of this logic in the build: "The sphere point does
-# actually work almost perfectly the way I want" -- what he found wrong was the DEFAULT radius (see profile_edit._toggle), so the weight stays as it was and is not tuned here
-_SPHERE_EDGE_POWER = 4
+# The least influence a sphere point gets from the smallness of its radius against its edges (see _morph)
+_SPHERE_K_MIN = 0.4
+
+# H164 step 1b (the user, 2026-11-09: "ON SMALLER FILES IT SHOULD LEGIT TAKE NO TIME AT ALL"): the code that makes the patches can run on plain numbers (morph_num.Num) instead of building a graph of expression nodes;
+# _NUMERIC is set only by morph_numbers(), the reference the native port is compared against -- the viewport still uses the graph
+_NUMERIC = [False]
+
+
+_INFO = {}           # (what the run on numbers leaves for the one that finishes the body: its controls, its faces, whether it is a flat polyhedron)
+_FIELD_RUN = [False]  # (H164: the run on numbers that makes the FIELD's tessellation, not the drawn one)
+_NO_TAPE = [False]
+_TRACE = [None]      # (H164 step 2) the list of the inputs of a run that is TRACED into a tape: (expression, number of the input); None otherwise
+
+
+def _wrap(v):
+    from fieldes.stdlib import morph_num
+    if _TRACE[0] is not None:
+        return morph_num.wrap_trace(v)
+    return morph_num.wrap(v) if _NUMERIC[0] else Shape.wrap(v)
+
+
+def _input(expr):
+    ''' A leaf of the tape that is an expression of the point (one of its numbers, a rotation, a radius): the same expression is one input '''
+    from fieldes.stdlib import morph_num
+    table = _TRACE[0]
+    got = table.get(id(expr))
+    if got is None:
+        got = (expr, len(table))
+        table[id(expr)] = got
+    return morph_num.Tr.input(got[1])
+
+
+def _val(expr):
+    ''' An expression of the point as it is used here: itself, or its number when the code runs on numbers '''
+    if not _NUMERIC[0] or expr is None:
+        return expr
+    from fieldes.stdlib import morph_num
+    if _TRACE[0] is not None:
+        if isinstance(expr, (tuple, list)):
+            return tuple(_input(e) for e in expr)
+        return _input(expr)
+    if isinstance(expr, (tuple, list)):
+        return tuple(morph_num.Num(C.value_of(e)) for e in expr)
+    return morph_num.Num(C.value_of(expr))
 
 
 def _sub(a, b):
@@ -130,6 +160,12 @@ def _native_field(controls, vertices, triangles):
         control points of the patches (three expressions each), `vertices[v]` the vertex v as a list of (the number of a control point, its weight), `triangles` three vertex numbers each '''
     flat = C.values_of([c[a] for c in controls for a in range(3)])          # (all together: see curves.values_of)
     numbers = [tuple(flat[3 * k:3 * k + 3]) for k in range(len(controls))]
+    return _native_field_numbers(numbers, vertices, triangles)
+
+
+def _native_field_numbers(numbers, vertices, triangles):
+    ''' The same field from the control points as three numbers each (H164: a body made on numbers has no expressions to read them from) '''
+    numbers = [tuple(float(v) for v in p) for p in numbers]
     xyz = array.array('f')
     for terms in vertices:
         x = y = z = 0.0
@@ -157,15 +193,57 @@ def _face_normal(P, face):
 
 
 def _normals(P, cage):
-    ''' The normal at each point: across the plane that the faces that meet there make together (the faces weighed by their area), facing out '''
+    ''' The normal at each point, facing out: the unit sum of the normals that the cross-section circles of its edges want at it -- for each edge i -> j with two faces, the circle through the point and the far corner of each of the faces (the other neighbour of i in a face of four, the apex of a face of three), in the plane across
+        the chord: its normal at the point, facing the way the two faces face.  A corner of a box gives its diagonal; a narrow face and a wide face share the turn in proportion to their widths by the geometry of the circle.  A point whose edges all have one face keeps the unit normals of its faces weighted by one over their area '''
+    faces_of = {}
+    for f in cage:
+        for k in range(len(f)):
+            a, b = f[k], f[(k + 1) % len(f)]
+            faces_of.setdefault((min(a, b), max(a, b)), []).append(f)
     out = []
     for i in range(len(P)):
         total = None
-        for face in cage:
-            if i in face:
-                n = _face_normal(P, face)
-                total = n if total is None else _add(total, n)
-        out.append(_unit(total) if total is not None else (Shape.wrap(0.0), Shape.wrap(0.0), Shape.wrap(1.0)))
+        for (lo, hi), fs in faces_of.items():
+            if i not in (lo, hi) or len(fs) != 2:
+                continue
+            j = hi if i == lo else lo
+            O = P[i]
+            tau = _unit(_sub(P[j], O))
+            nbar = _add(_unit(_face_normal(P, fs[0])), _unit(_face_normal(P, fs[1])))
+            m = _unit(_sub(nbar, _scale(_dot(nbar, tau), tau)))
+            g = _unit(_cross(tau, m))
+            pts_ = []
+            for f in fs:
+                if len(f) == 4:
+                    k = f.index(i)
+                    prev_, next_ = f[k - 1], f[(k + 1) % 4]
+                    far = P[prev_] if next_ == j else P[next_]
+                else:
+                    far = P[[v for v in f if v not in (i, j)][0]]
+                d = _sub(far, O)
+                d = _sub(d, _scale(_dot(d, tau), tau))
+                pts_.append((_dot(d, g), _dot(d, m)))
+            (xa, ya), (xb, yb) = pts_
+            sa, sb = xa * xa + ya * ya, xb * xb + yb * yb
+            Ng, Nm = sa * yb - sb * ya, xa * sb - xb * sa
+            Nn = (Ng * Ng + Nm * Nm).sqrt() + 1e-12
+            sgn = Nm / (Nm * Nm + 1e-12).sqrt()
+            nd = _add(_scale(Ng / Nn * sgn, g), _scale(Nm / Nn * sgn, m))
+            total = nd if total is None else _add(total, nd)
+        if total is None:
+            vecs = [_face_normal(P, face) for face in cage if i in face]
+            if not vecs:
+                out.append((_wrap(0.0), _wrap(0.0), _wrap(1.0)))
+                continue
+            s2 = [v[0].square() + v[1].square() + v[2].square() for v in vecs]
+            top = s2[0]
+            for q in s2[1:]:
+                top = top.max(q)
+            floor = top * 0.02 + 1e-18
+            for v, q in zip(vecs, s2):
+                term = _scale(1.0 / (q + floor), v)
+                total = term if total is None else _add(total, term)
+        out.append(_unit(total))
     return out
 
 
@@ -184,31 +262,69 @@ def _turn(v, rotation):
     return (x, y, z)
 
 
-def _bernstein(t):
-    s = 1.0 - t
-    return (s * s * s, 3.0 * t * s * s, 3.0 * t * t * s, t * t * t)
+def _cage_turn(places, cage):
+    ''' How much the surface turns across a face of the cage, in degrees, the most over all the faces: the angle between the normals at the corners of a face, taken at the numbers of the points (the normal of a point as `_morph`
+        makes it: the faces that meet there, and where its neighbours are all on one side -- a point pulled out -- the axis they leave along).  A face of a flat body turns 0, a face of a cube of spline points 55, the faces at the tip
+        of a horn 90 and more: the number of pieces a face is drawn in follows it (see _drawn_segments) '''
+    n = len(places)
+
+    def sub(a, b): return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+    def cross(a, b): return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+    def unit(a):
+        l = math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+        return (a[0] / l, a[1] / l, a[2] / l) if l > 1e-300 else (0.0, 0.0, 1.0)
+    total = [(0.0, 0.0, 0.0)] * n
+    around = [set() for _ in range(n)]
+    for f in cage:
+        fn = unit(cross(sub(places[f[1]], places[f[0]]), sub(places[f[2]], places[f[0]])))
+        for k in range(len(f)):
+            v = f[k]
+            total[v] = (total[v][0] + fn[0], total[v][1] + fn[1], total[v][2] + fn[2])
+            around[v].add(f[(k + 1) % len(f)])
+            around[v].add(f[k - 1])
+    normals = []
+    for i in range(n):
+        nv = unit(total[i])
+        if len(around[i]) >= 2:
+            mean = [0.0, 0.0, 0.0]
+            for j in around[i]:
+                e = unit(sub(places[j], places[i]))
+                mean = [mean[0] + e[0], mean[1] + e[1], mean[2] + e[2]]
+            mean = [c / len(around[i]) for c in mean]
+            length = math.sqrt(sum(c * c for c in mean))
+            if length > 1e-9:
+                m = min(1.0, length)
+                nv = unit(tuple(nv[a] * (1.0 - m) - (mean[a] / length) * m for a in range(3)))
+        normals.append(nv)
+    worst = 0.0
+    for f in cage:
+        for a in range(len(f)):
+            for b in range(a + 1, len(f)):
+                d = sum(normals[f[a]][k] * normals[f[b]][k] for k in range(3))
+                worst = max(worst, math.degrees(math.acos(max(-1.0, min(1.0, d)))))
+    return worst
 
 
-def _combine(terms):
-    ''' The sum of `weight * point` over (weight, point) pairs, the weights plain numbers '''
-    out = []
-    for k in range(3):
-        total = None
-        for weight, point in terms:
-            if abs(weight) < 1e-12:
-                continue
-            term = point[k] * weight
-            total = term if total is None else total + term
-        out.append(total if total is not None else Shape.wrap(0.0))
-    return tuple(out)
-
-
-def _drawn_segments(cage):
+def _drawn_segments(cage, rounded=False, turn=0.0):
     ''' How many pieces each edge of the cage is drawn in.  The viewport shades every triangle flat -- the normal is the triangle's own --, so a rounded body only looks smooth when its triangles are
         small: a turn of two or three degrees from one to the next.  A cage of more faces gets fewer pieces to a face, so that what is drawn stays a few thousand triangles.  What it costs a drag
         step does not depend on it: the surface is evaluated at the control points of its patches (see _tessellate), and every vertex is a sum of those '''
     faces = len(cage)
     base = 20 if faces <= 12 else 16 if faces <= 24 else 10 if faces <= 64 else 6
+    # H161 (the user's report, 2026-11-08, "Morph shapes with sphere points get wrinkly"): measured on his script -- 20 pieces to an edge turned neighbouring triangles by up to 20.2 degrees where a sphere
+    # point rounds its corner, the creases of his picture, and the surface itself is smooth (40 pieces: 12.8 degrees at most, 60: 9.4).  A body with a rounded corner is drawn in twice as many pieces
+    # (only a small body: a body of many faces is drawn in as few pieces as it was -- a run of its statement costs more with more pieces, and a drag runs it again at every step, H154)
+    if rounded and faces <= 12:
+        base = 80
+    # H164 (the user, 2026-11-10, of a horn made by pulling out a corner of the basic body: "garbage unorganic faces in all their glory"; measured on the drawn surface: with 48 pieces to an edge the angle between neighbouring triangles is at
+    # most 12 degrees except within 3 mm of the tip, with 20 -- what a body of six faces was drawn in -- up to 45 and the ridge of the horn showed as a line): a face that turns a great deal is drawn in more pieces: one for every
+    # 2.5 degrees of the turn across the faces, so that neighbouring triangles turn a few degrees and the flat shading does not show them.  A body of many faces is held to a number of triangles that a drag can bear (about 60,000)
+    if turn:
+        wanted = int(math.ceil(turn / 2.5))
+        cap = max(6, int(math.sqrt(60000.0 / (2.0 * faces))))
+        base = max(base, min(wanted, cap))
     # The number follows the resolution of the view, as everything that is drawn does (the user, 2026-11-02: "It does not appear to respond to the resolution when you set it"): the pieces above are
     # the ones at the resolution 10, and a resolution of 5 draws half as many, one of 20 twice as many -- at least 4 to an edge, at most 40, an even number
     try:
@@ -217,306 +333,245 @@ def _drawn_segments(cage):
     except Exception:
         res = None
     n = int(round(base * res / 10.0)) if res else base
-    n = max(4, min(40, n))
+    n = max(4, min(100 if rounded else 64, n))
     return n + (n & 1)
-
-
-_PATCH_TERMS = {}
-
-
-def _patch_terms(pieces, keys):
-    ''' The weights of the vertices of ONE patch of four, `pieces` to an edge: for each place (k, l) of it the terms (slot, weight) -- a slot is 3 * (4 * i + j) + which, where (i, j) is a control point
-        of the net and `which` is 0 for the net's own point and 1 or 2 for the two versions of an inner one (see `gregory`); `keys` are the (i, j) that have two versions.  They depend on the number of
-        pieces and on which points have two versions, and not on the patch (the user, 2026-11-02, H70: a point put into a smooth body took 1.2 s, and the first call of _tessellate was 650 ms of it, the
-        weights worked out again for every vertex of every patch), so they are worked out once per number of pieces '''
-    key = (pieces, keys)
-    table = _PATCH_TERMS.get(key)
-    if table is None:
-        table = {}
-        for l in range(pieces + 1):
-            for k in range(pieces + 1):
-                u, v = k / float(pieces), l / float(pieces)
-                bu, bv = _bernstein(u), _bernstein(v)
-                # (how near the place is to each of the two edges at a corner: the version for an edge counts u / (u + v) there, v / (u + v) for the other -- where it is 1 on that edge)
-                near = {(1, 1): (u, v), (2, 1): (1.0 - u, v), (2, 2): (1.0 - u, 1.0 - v), (1, 2): (u, 1.0 - v)}
-                out = []
-                for i in range(4):
-                    for j in range(4):
-                        w = bu[i] * bv[j]
-                        if abs(w) <= 1e-12:
-                            continue
-                        if (i, j) in keys:
-                            s, t = near[(i, j)]
-                            wa, wb = (0.5, 0.5) if s + t < 1e-12 else (s / (s + t), t / (s + t))
-                            out.append((3 * (4 * i + j) + 1, w * wa))
-                            out.append((3 * (4 * i + j) + 2, w * wb))
-                        else:
-                            out.append((3 * (4 * i + j), w))
-                table[(k, l)] = tuple(out)
-        _PATCH_TERMS[key] = table
-    return table
-
-
-def _tessellate(cage, V, edge, n, gregory, triangle):
-    ''' The surface of the cage as triangles between vertices, every edge of the cage drawn in `n` pieces (an even number).  `V` are the places of the points, `edge(i, j)` the control point next to
-        point i on the cubic curve from i to j.  A face of four is a bicubic Gregory patch -- see `gregory` in _morph: the curves of its four edges, and inside them the surface that leaves each
-        edge in the plane the face on the other side leaves it in --, and a face of three is three such patches, one at each of its corners (`triangle` in _morph): the face is cut by the lines from
-        the middle of each of its edges to its middle, so that all that is drawn is patches of four.  The curve of an edge is the same from both faces that share it, so the surface has no crack.
-        Returns (controls, vertices, triangles): `controls` are the distinct control points the patches are made of (three expressions each), `vertices[v]` the vertex v as a list of
-        (the number of a control point, its weight) -- the vertex is the sum of weight x control point --, and the triangles three vertex numbers each.  A control point is worked out once, whatever
-        the number of vertices that are made of it '''
-    controls, where = [], {}
-    verts, index, tris = [], {}, []
-    q = n // 2                                                   # (the pieces of the half of an edge, which is where the patches of a face of three meet the edge)
-
-    def control(point):
-        # (by the identity of the point: the same tuple is the same control point -- the ones in `controls` stay alive, so that no identity is taken twice)
-        if id(point) not in where:
-            where[id(point)] = len(controls)
-            controls.append(point)
-        return where[id(point)]
-
-    def vertex(key, make):
-        if key not in index:
-            index[key] = len(verts)
-            verts.append(make())
-        return index[key]
-
-    def edge_key(a, b, t):
-        return ('e', a, b, t) if a < b else ('e', b, a, n - t)
-
-    def emit(fi, net, versions, ckeys, ekeys, pieces):
-        ''' The vertices and triangles of one patch of four, `pieces` to an edge: the net of its sixteen control points, the two versions of each of its four inner ones (see `gregory`), the keys of
-            its four corners and of the vertices along its four edges (a to b, b to c, d to c, a to d -- the same keys from both faces that share an edge) '''
-        # (the weights of the vertices are the same for every patch of this number of pieces: see _patch_terms; the control points of THIS patch are put in their slots once, and not found again for every term
-        # of every vertex)
-        table = _patch_terms(pieces, tuple(sorted(versions)))
-        slots = [None] * 48
-        for i in range(4):
-            for j in range(4):
-                if (i, j) in versions:
-                    slots[3 * (4 * i + j) + 1] = control(versions[(i, j)][0])
-                    slots[3 * (4 * i + j) + 2] = control(versions[(i, j)][1])
-                else:
-                    slots[3 * (4 * i + j)] = control(net[i][j])
-
-        def place(k, l):
-            if (k, l) == (0, 0):
-                key = ckeys[0]
-            elif (k, l) == (pieces, 0):
-                key = ckeys[1]
-            elif (k, l) == (pieces, pieces):
-                key = ckeys[2]
-            elif (k, l) == (0, pieces):
-                key = ckeys[3]
-            elif l == 0:
-                key = ekeys[0](k)
-            elif k == pieces:
-                key = ekeys[1](l)
-            elif l == pieces:
-                key = ekeys[2](k)
-            elif k == 0:
-                key = ekeys[3](l)
-            else:
-                key = ('f', fi, k, l)
-            tpl = table[(k, l)]
-            return vertex(key, lambda: [(slots[s], w) for s, w in tpl])
-
-        grid = [[place(k, l) for k in range(pieces + 1)] for l in range(pieces + 1)]
-        for l in range(pieces):
-            for k in range(pieces):
-                p00, p10, p11, p01 = grid[l][k], grid[l][k + 1], grid[l + 1][k + 1], grid[l + 1][k]
-                # (the diagonal of a cell runs the other way in the cell next to it, so that the mesh of a face looks the same from either side of its middle -- a symmetric cage is a symmetric field)
-                if (k + l) % 2 == 0:
-                    tris.append((p00, p10, p11))
-                    tris.append((p00, p11, p01))
-                else:
-                    tris.append((p00, p10, p01))
-                    tris.append((p10, p11, p01))
-
-    for fi, face in enumerate(cage):
-        if len(face) == 4:
-            a, b, c, d = face
-            net = [[None] * 4 for _ in range(4)]
-            net[0][0], net[3][0], net[3][3], net[0][3] = V[a], V[b], V[c], V[d]
-            net[1][0], net[2][0] = edge(a, b), edge(b, a)
-            net[3][1], net[3][2] = edge(b, c), edge(c, b)
-            net[2][3], net[1][3] = edge(c, d), edge(d, c)
-            net[0][2], net[0][1] = edge(d, a), edge(a, d)
-            # (inside: the surface that has no twist at the corners -- each of the four inner control points makes a parallelogram with the two edge control points next to its corner; the Gregory
-            # versions below replace them)
-            net[1][1] = _sub(_add(net[1][0], net[0][1]), net[0][0])
-            net[2][1] = _sub(_add(net[2][0], net[3][1]), net[3][0])
-            net[2][2] = _sub(_add(net[2][3], net[3][2]), net[3][3])
-            net[1][2] = _sub(_add(net[1][3], net[0][2]), net[0][3])
-            emit(fi, net, gregory(face), (('c', a), ('c', b), ('c', c), ('c', d)),
-                 (lambda j, a=a, b=b: edge_key(a, b, j), lambda j, b=b, c=c: edge_key(b, c, j), lambda j, d=d, c=c: edge_key(d, c, j), lambda j, a=a, d=d: edge_key(a, d, j)), n)
-        else:
-            a, b, c = face
-            for s, (net, versions) in enumerate(triangle(face)):
-                x, y, z = ((a, b, c), (b, c, a), (c, a, b))[s]                  # (the patch at the corner x: y is the next corner, z the one before)
-                # (its corners: x, the middle of the edge x y, the middle of the face, the middle of the edge z x; the edges between the middles are the same from the two patches they separate)
-                emit((fi, s), net, versions, (('c', x), edge_key(x, y, q), ('ctr', fi), edge_key(x, z, q)),
-                     (lambda j, x=x, y=y: edge_key(x, y, j), lambda j, x=x: ('i', fi, x, j), lambda j, z=z: ('i', fi, z, j), lambda j, x=x, z=z: edge_key(x, z, j)), q)
-    return controls, verts, tris
 
 
 def _flen(a):
     return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
 
 
-def _hull(pos):
-    ''' The faces of the convex hull of the places `pos` (three numbers each), counterclockwise seen from outside, and the numbers of the places that are inside it (not a corner of it).  A face of the hull
-        that has four corners is one face of four (a cube of eight places has its six squares); one with three is a face of three; a flat piece with more corners stays the triangles it is made of.  The
-        hull is made by adding the places one by one to a tetrahedron: the faces a place can be seen from are taken away and the place is joined to the edge they leave round it.  A place that lies in a face
-        of the hull (not in its edge) splits that face in three.  Raises ValueError for places that are all at one place, in one line or in one plane, and for a place that lies in an edge or on another '''
-    n = len(pos)
-    size = max(max(p[k] for p in pos) - min(p[k] for p in pos) for k in range(3))
-    if size <= 0.0:
-        raise ValueError('all the points are at one place')
-    eps = 1e-9 * size
+_SLIVER_ANGLE = 120.0      # (a corner of a triangle face over this many degrees makes the face a sliver)
+_SLIVER_GAIN = 5.0          # (a flip has to take the largest corner of the two faces down by at least this much)
+_SLIVER_DIHEDRAL = 70.0     # (and the two faces have to meet at no more than this angle: across a sharper edge a flip changes the shape of the body, not only its faces)
+
+
+def _fan_centers(faces):
+    ''' The points with exactly four faces, all of them triangles: the point a press on a face puts down, the face split in four round it (see the faces of a pressed face in profile_edit): neither a flip nor a merge is to take one of its
+        four edges away '''
+    count, triangles = {}, {}
+    for f in faces:
+        for v in f:
+            count[v] = count.get(v, 0) + 1
+            if len(f) == 3:
+                triangles[v] = triangles.get(v, 0) + 1
+    return set(v for v, n in count.items() if n == 4 and triangles.get(v, 0) == 4)
+
+
+def _slivers_flipped(faces, places):
+    ''' THE FACES WITHOUT SLIVERS.  The faces are made of the points (see morph_faces) and a triangle with a corner of 138 degrees and two of 23 and 19 -- a long thin face -- is one of them where the points lie so (the horn the user
+        marked: the dark wedge down such a face, see the sliver face of the points 26, 30 and 29 of sheep_horn.py).  The surface through a sliver has to turn the whole way across a face that is a third of a millimetre wide, and shows it
+        as a groove.  The edge a sliver has along its long side is flipped: the two triangles that share it become the two that the other diagonal of their four points makes, when that takes the largest corner down by at least
+        _SLIVER_GAIN degrees, the four points make a convex quad seen along the face, and the two faces meet at no more than _SLIVER_DIHEDRAL degrees (a flip across a sharper edge would change the shape of the body, not only its
+        faces).  Worst corner first, until no edge flips.  Measured on the horn (16 pieces to an edge): the length of the lines where neighbouring triangles turn more than 20 degrees went from 3.10 to 1.91 body sizes, and
+        on eight bodies that are a cube with corners dragged about it changed nothing.  The faces come back in the order they went in, each face with the turning it had '''
+    def sub(a, b): return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+    def dot(a, b): return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+    def cross(a, b): return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
 
     def unit(a):
-        l = _flen(a)
-        return (a[0] / l, a[1] / l, a[2] / l)
+        l = math.sqrt(dot(a, a))
+        return (a[0] / l, a[1] / l, a[2] / l) if l > 1e-300 else (0.0, 0.0, 1.0)
 
-    i0 = min(range(n), key=lambda i: pos[i])
-    i1 = max(range(n), key=lambda i: _flen(_sub(pos[i], pos[i0])))
-    axis = unit(_sub(pos[i1], pos[i0]))
+    def corner(p, q, r):
+        return math.degrees(math.acos(max(-1.0, min(1.0, dot(unit(sub(places[q], places[p])), unit(sub(places[r], places[p])))))))
 
-    def off_line(i):
-        v = _sub(pos[i], pos[i0])
-        t = _dot(v, axis)
-        return _flen(_sub(v, _scale(t, axis)))
-    i2 = max(range(n), key=off_line)
-    if off_line(i2) <= eps:
-        raise ValueError('all the points are in one line: a body needs points that are not in one plane')
-    across_ = unit(_cross(_sub(pos[i1], pos[i0]), _sub(pos[i2], pos[i0])))
-    i3 = max(range(n), key=lambda i: abs(_dot(_sub(pos[i], pos[i0]), across_)))
-    if abs(_dot(_sub(pos[i3], pos[i0]), across_)) <= eps:
-        raise ValueError('all the points are in one plane: a body needs at least four points that are not (give the faces for a flat shape, or use profile)')
-    centre = tuple((pos[i0][k] + pos[i1][k] + pos[i2][k] + pos[i3][k]) / 4.0 for k in range(3))
+    def widest(t):
+        return max(corner(t[0], t[1], t[2]), corner(t[1], t[2], t[0]), corner(t[2], t[0], t[1]))
 
-    def make(a, b, c):
-        ''' (a, b, c, unit normal, offset) of a face, its normal turned out '''
-        nrm = _cross(_sub(pos[b], pos[a]), _sub(pos[c], pos[a]))
-        l = _flen(nrm)
-        if l <= eps * size:
-            raise ValueError('points %d, %d and %d are in a line on the surface: say the faces' % (a, b, c))
-        nrm = (nrm[0] / l, nrm[1] / l, nrm[2] / l)
-        return (a, b, c, nrm, _dot(nrm, pos[a]))
+    def normal(t):
+        return cross(sub(places[t[1]], places[t[0]]), sub(places[t[2]], places[t[0]]))
+    faces = [tuple(f) for f in faces]
+    for _ in range(4 * len(faces) + 4):
+        edge_faces = {}
+        for i, f in enumerate(faces):
+            for k in range(len(f)):
+                a, b = f[k], f[(k + 1) % len(f)]
+                edge_faces.setdefault((min(a, b), max(a, b)), []).append(i)
+        best = None
+        centers = _fan_centers(faces)
+        for (a, b), fs in edge_faces.items():
+            if len(fs) != 2 or len(faces[fs[0]]) != 3 or len(faces[fs[1]]) != 3 or a in centers or b in centers:
+                continue
+            f, g = faces[fs[0]], faces[fs[1]]
+            old = max(widest(f), widest(g))
+            if old <= _SLIVER_ANGLE or (best is not None and old <= best[0]):
+                continue
+            k = f.index(a)
+            y, z = (a, b) if f[(k + 1) % 3] == b else (b, a)                  # (f runs x, y, z and g runs z, y, w)
+            x = [v for v in f if v not in (a, b)][0]
+            w = [v for v in g if v not in (a, b)][0]
+            if (min(x, w), max(x, w)) in edge_faces:
+                continue
+            first, second = (x, y, w), (x, w, z)
+            n = unit(normal(f))
+            if dot(normal(first), n) <= 0.0 or dot(normal(second), n) <= 0.0:
+                continue
+            if math.degrees(math.acos(max(-1.0, min(1.0, dot(n, unit(normal(g))))))) > _SLIVER_DIHEDRAL:
+                continue
+            quad = (x, y, w, z)
+            if any(dot(cross(sub(places[quad[(i + 1) % 4]], places[quad[i]]), sub(places[quad[i - 1]], places[quad[i]])), n) <= 0.0 for i in range(4)):
+                continue
+            if max(widest(first), widest(second)) > old - _SLIVER_GAIN:
+                continue
+            best = (old, fs, first, second)
+        if best is None:
+            break
+        faces[best[1][0]], faces[best[1][1]] = best[2], best[3]
+    return faces
 
-    def outward(a, b, c):
-        f = make(a, b, c)
-        return f if _dot(f[3], centre) - f[4] < 0 else make(a, c, b)
 
-    faces = [outward(i0, i1, i2), outward(i0, i1, i3), outward(i0, i2, i3), outward(i1, i2, i3)]
-    for p in range(n):
-        if p in (i0, i1, i2, i3):
-            continue
-        seen = [f for f in faces if _dot(f[3], pos[p]) - f[4] > eps]
-        if not seen:
-            # (inside, or in a face: that face is split in three, a place in an edge or at a corner is refused)
-            for f in faces:
-                if abs(_dot(f[3], pos[p]) - f[4]) > eps:
-                    continue
-                a, b, c = f[0], f[1], f[2]
-                whole = _dot(_cross(_sub(pos[b], pos[a]), _sub(pos[c], pos[a])), f[3])
-                u = _dot(_cross(_sub(pos[b], pos[p]), _sub(pos[c], pos[p])), f[3]) / whole
-                v = _dot(_cross(_sub(pos[c], pos[p]), _sub(pos[a], pos[p])), f[3]) / whole
-                w = 1.0 - u - v
-                if min(u, v, w) > 1e-9:
-                    faces.remove(f)
-                    faces += [make(a, b, p), make(b, c, p), make(c, a, p)]
-                    break
-                if min(u, v, w) > -1e-9:
-                    # (in an edge: the line between the two triangles of a flat piece, the diagonal of a square, is no edge of the body -- the place splits both triangles in two --; an edge of the
-                    # body is refused, and so is a place at a corner)
-                    if sorted((u, v, w))[1] > 1e-9:
-                        x, y, z = (a, b, c) if w <= 1e-9 else (b, c, a) if u <= 1e-9 else (c, a, b)
-                        g = next((h for h in faces if (y, x) in ((h[0], h[1]), (h[1], h[2]), (h[2], h[0]))), None)
-                        if g is not None and _dot(f[3], g[3]) > 1.0 - 1e-12:
-                            d = next(t for t in g[:3] if t not in (x, y))
-                            faces.remove(f)
-                            faces.remove(g)
-                            faces += [make(x, p, z), make(p, y, z), make(y, p, d), make(p, x, d)]
-                            break
-                    raise ValueError('point %d lies in an edge of the body or on another point: say the faces' % p)
-            continue
-        edges = {}
-        for f in seen:
-            for x, y in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
-                edges[(x, y)] = True
-        keep = [f for f in faces if f not in seen]
-        for (x, y) in edges:
-            if (y, x) not in edges:
-                keep.append(make(x, y, p))
-        faces = keep
-    used = set(v for f in faces for v in f[:3])
-    inside = [i for i in range(n) if i not in used]
-    # (the triangles that are one flat piece and share an edge: a piece of four corners is one face)
-    parent = list(range(len(faces)))
+_MERGE_COST = 45.0          # (a quad is made of two triangles when none of its corners is more than this many degrees from a right angle...)
+_MERGE_DIHEDRAL = 25.0      # (...the two triangles meet at no more than this angle...)
+_MERGE_OFFPLANE = 0.25      # (...and the fourth point is no farther from the plane of the other three than this part of the mean edge)
+_MERGE_NEEDLE = 30.0        # (and only for a pair of which one triangle is a needle: a corner under this many degrees, or over 110: a pair of well shaped triangles stays two triangles)
 
-    def root(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-    owner = {}
+
+def _flat_pairs_merged(faces, places):
+    ''' THE FACES AS QUADS WHERE TWO TRIANGLES ARE NEARLY ONE FLAT QUAD.  A face of four is a patch that crosses the face at constant speed (see `chords_across` in _morph); a face of three is cut in three patches by lines to its middle, and
+        the creases of a surface made of them lie along the edges of those triangles.  Two triangles that share an edge and are nearly flat together -- the four points convex as seen along the faces, no corner more than _MERGE_COST degrees
+        from a right angle, the two triangles meeting at no more than _MERGE_DIHEDRAL degrees, the fourth point no farther than _MERGE_OFFPLANE of the mean edge from the plane of the others, and one of the two a needle (a corner
+        under _MERGE_NEEDLE degrees or over 110) -- are made one quad.  Greedy, the squarest first, each triangle in one quad at most.  Measured on the horn (16 pieces to an edge, with `_slivers_flipped` before it): the length of the lines where neighbouring triangles turn more than 20 degrees went from 1.91 to
+        0.54 body sizes (all pairs, needles or not: 0.62), and the pairs over 15 degrees from 268 to 198; on eight bodies that are a cube with corners dragged about it left the length of their creases as it was (one of them has a quad now) '''
+    def sub(a, b): return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+    def dot(a, b): return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+    def cross(a, b): return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+    def unit(a):
+        l = math.sqrt(dot(a, a))
+        return (a[0] / l, a[1] / l, a[2] / l) if l > 1e-300 else (0.0, 0.0, 1.0)
+
+    def length(a):
+        return math.sqrt(dot(a, a))
+
+    def corner(p, q, r):
+        return math.degrees(math.acos(max(-1.0, min(1.0, dot(unit(sub(q, p)), unit(sub(r, p)))))))
+
+    def needle(t):
+        a, b, c = (places[v] for v in t)
+        angles = (corner(a, b, c), corner(b, c, a), corner(c, a, b))
+        return min(angles) < _MERGE_NEEDLE or max(angles) > _SLIVER_ANGLE - 10.0
+    faces = [tuple(f) for f in faces]
+    edge_faces = {}
     for i, f in enumerate(faces):
-        for x, y in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
-            owner[(x, y)] = i
-    for (x, y), i in owner.items():
-        j = owner.get((y, x))
-        if j is not None and _dot(faces[i][3], faces[j][3]) > 1.0 - 1e-12:
-            parent[root(i)] = root(j)
-    groups = {}
-    for i in range(len(faces)):
-        groups.setdefault(root(i), []).append(i)
-    out = []
-    for members in sorted(groups.values()):
-        corners = set(v for i in members for v in faces[i][:3])
-        if len(members) == 2 and len(corners) == 4:
-            loop = {}
-            made = set((faces[i][a], faces[i][b]) for i in members for a, b in ((0, 1), (1, 2), (2, 0)))
-            for x, y in made:
-                if (y, x) not in made:
-                    loop[x] = y
-            first = min(loop)
-            ring = [first]
-            while loop[ring[-1]] != first:
-                ring.append(loop[ring[-1]])
-            out.append(tuple(ring))
-        else:
-            out.extend(tuple(faces[i][:3]) for i in members)
-    return out, inside
+        for k in range(len(f)):
+            a, b = f[k], f[(k + 1) % len(f)]
+            edge_faces.setdefault((min(a, b), max(a, b)), []).append(i)
+    candidates = []
+    centers = _fan_centers(faces)
+    for (a, b), fs in sorted(edge_faces.items()):
+        if len(fs) != 2 or len(faces[fs[0]]) != 3 or len(faces[fs[1]]) != 3 or a in centers or b in centers:
+            continue
+        f, g = faces[fs[0]], faces[fs[1]]
+        k = f.index(a)
+        y, z = (a, b) if f[(k + 1) % 3] == b else (b, a)
+        x = [v for v in f if v not in (a, b)][0]
+        w = [v for v in g if v not in (a, b)][0]
+        quad = (x, y, w, z)
+        P = [places[v] for v in quad]
+        n = unit(cross(sub(P[2], P[0]), sub(P[3], P[1])))
+        worst, convex = 0.0, True
+        for i in range(4):
+            p, q, r = P[i], P[(i + 1) % 4], P[i - 1]
+            ang = corner(p, q, r)
+            worst = max(worst, abs(ang - 90.0))
+            if dot(cross(sub(q, p), sub(r, p)), n) <= 0.0 or ang > 165.0:
+                convex = False
+        if not convex or worst > _MERGE_COST:
+            continue
+        if not (needle(f) or needle(g)):
+            continue
+        nf = unit(cross(sub(places[f[1]], places[f[0]]), sub(places[f[2]], places[f[0]])))
+        ng = unit(cross(sub(places[g[1]], places[g[0]]), sub(places[g[2]], places[g[0]])))
+        if math.degrees(math.acos(max(-1.0, min(1.0, dot(nf, ng))))) > _MERGE_DIHEDRAL:
+            continue
+        n3 = unit(cross(sub(P[1], P[0]), sub(P[2], P[0])))
+        mean_edge = sum(length(sub(P[(i + 1) % 4], P[i])) for i in range(4)) / 4.0
+        if abs(dot(sub(P[3], P[0]), n3)) / mean_edge > _MERGE_OFFPLANE:
+            continue
+        candidates.append((worst, fs[0], fs[1], quad))
+    candidates.sort()
+    used, quads = set(), {}
+    for worst, i, j, quad in candidates:
+        if i in used or j in used:
+            continue
+        used.update((i, j))
+        quads[i] = quad
+    return [quads[i] if i in quads else f for i, f in enumerate(faces) if i not in used or i in quads]
+
+
+def _alpha_faces(pos, with_dents=False, repair=True):
+    ''' `repair`: the faces are made better shaped for a smooth surface (_slivers_flipped, _flat_pairs_merged); not for a polyhedron, whose faces are the flat faces of the hull of its points '''
+    from fieldes.stdlib import morph_faces as MF
+    places = [tuple(float(v) for v in p) for p in pos]
+    polys, dents = MF.polygons_of(places, True)
+    # (the faces in a canonical order: each starts at its smallest point, keeping its turning, and the list is sorted -- the same faces come out in the same order wherever the points are, so that a drag that changes no face changes no
+    # vertex of the drawn surface but those near the point, the drawn vertices can be compared one for one, and a structure that is the same is the same structure for the traced numbers)
+    rings = [tuple(int(i) for i in ring) for ring, nn in polys]
+    if repair:
+        rings = _flat_pairs_merged(_slivers_flipped(rings, places), places)
+    canonical = []
+    for ring in rings:
+        k = ring.index(min(ring))
+        canonical.append(tuple(ring[k:] + ring[:k]))
+    faces = tuple(sorted(canonical))
+    return (faces, dents) if with_dents else faces
+
+
+# THE FACES OF A BODY ARE A FUNCTION OF ITS POINTS AND NOTHING ELSE (H171, the user, 2026-11-11: "The face is deterministic always and is exactly what it would be when you run the code fresh. Otherwise the user works on something closes and opens their file and it
+# is completely different").  Until then the faces of the run before were kept and given to the next run whose points were the same but for four ("what you pull is not what you get", 2026-11-10: pressed out and released, 16 of 49 faces of sheep_horn differed): a point that was
+# deleted and a new point put on the other side of the body was, to that test, a point that had moved, and was joined to the neighbours of the point that was there, through the body; and a window that had pressed and deleted showed a body that the same file shows
+# otherwise in a window that has just opened it.  There are no faces of the runs before any more: what is pulled is what the points make, at every frame and after the release.
+# What is kept is only a memory of what THESE places make -- found again for the same places instead of made again, which is the same as making them again -- and never of what other places made.
+_FACES_MADE = {}           # (the kind of body, the places) -> the faces those places make
+_FACES_MADE_MOST = 16      # (how many sets of places the memory holds: the newest)
+
+
+def _faces_of_the_places(name, pos, made_as=None):
+    ''' The faces of the body of the places `pos`: the faces those places make by themselves (see _default_faces, which is told `made_as or name`), the same at every run and in every window -- a function of the places and of nothing that happened before '''
+    kind = made_as or name
+    key = (kind, tuple(tuple(float(v) for v in p) for p in pos))
+    cage = _FACES_MADE.get(key)
+    if cage is None:
+        cage = _default_faces(kind, pos)
+        while len(_FACES_MADE) >= _FACES_MADE_MOST:
+            del _FACES_MADE[next(iter(_FACES_MADE))]
+        _FACES_MADE[key] = cage
+    return cage
 
 
 def _default_faces(name, pos):
-    ''' The faces of a body of the places `pos` that says none: the convex hull of the places (see `_hull`).  Eight places that are the corners of a cube in the order the module says -- the six
-        squares of the cube hold all the faces of the hull, and turn out -- have the six squares of the cube, as the body of eight always had; and eight of which one is pushed into the body (it is not
-        a corner of the hull) too.  A body of other places with a place inside the hull has to say its faces '''
-    try:
-        hull, inside = _hull(pos)
-    except ValueError as e:
-        raise ValueError('%s: %s' % (name, e))
-    if len(pos) == 8:
+    ''' The faces of a body of the places `pos` that says none: made of the places at every run (see morph_faces): the faces between the places that are near each other, the hull where the body is convex, a place pressed into
+        the body joined to the face under it.  Eight places that are the corners of a cube in the order the module says have the six squares of the cube, as the body of eight always had -- as long as the squares turn out and
+        do not pass through each other '''
+    from fieldes.stdlib import morph_faces as MF
+    places = [tuple(float(v) for v in p) for p in pos]
+    MF.refuse_flat(name, places)
+    faces, dents = _alpha_faces(places, True, name != 'morph_polyhedron')
+    if len(places) == 8:
         cube = tuple(CUBE_FACES)
-        if inside:
-            # (a point pushed into the body keeps the cube -- unless the squares of the cube pass through each other, which they do when points were dragged through the body: the faces then follow the hull and the point is pressed in as a dent, H129)
-            if not _cage_crosses(cube, pos):
-                return cube
-            return _hull_with_dents(hull, inside, pos)
-        middle = tuple(sum(p[k] for p in pos) / 8.0 for k in range(3))
-        turned_out = all(_dot(_cross(_sub(pos[f[1]], pos[f[0]]), _sub(pos[f[2]], pos[f[0]])),
-                              _sub(tuple(sum(pos[v][k] for v in f) / 4.0 for k in range(3)), middle)) > 0.0 for f in cube)
         squares = [set(f) for f in cube]
-        if turned_out and all(any(set(h) <= s for s in squares) for h in hull):
-            return cube
-    if inside:
-        raise ValueError('%s: point %d lies inside the body made by the others: say its faces (a list `<the body>_faces = [(0, 2, 3, 1), ...]` above the line that makes the body) -- the numbers of three or four points each, counterclockwise seen from outside'
-                         % (name, inside[0]))
-    return tuple(hull)
+        if all(any(set(h) <= s for s in squares) for h in faces):
+            middle = tuple(sum(p[k] for p in places) / 8.0 for k in range(3))
+            turned_out = all(_dot(_cross(_sub(places[f[1]], places[f[0]]), _sub(places[f[2]], places[f[0]])),
+                                  _sub(tuple(sum(places[v][k] for v in f) / 4.0 for k in range(3)), middle)) > 0.0 for f in cube)
+            # (as the body of eight always had: a point pushed into the body keeps the six squares -- the surface goes THROUGH a spline point, so the squares at it are bent in -- unless the squares pass through each other; with every point out, the six squares while each one turns outward)
+            # (a square is a square only while it IS one: a quad whose four corners are twisted -- the two ways it can be cut in triangles lean opposite ways, the dot of their normals negative or nearly zero -- is folded
+            # over itself, and its patch is a fold; found by the stress test over random bodies made of a cube with corners dragged about: of 40, the ones that folded used squares of that kind.  Such a body is made of
+            # triangles, the faces its points make)
+            def lean(a, b, c, d):
+                ''' How much the triangles (a, b, c) and (a, c, d) lean the same way: the dot of their unit normals '''
+                n1 = _cross(_sub(places[b], places[a]), _sub(places[c], places[a]))
+                n2 = _cross(_sub(places[c], places[a]), _sub(places[d], places[a]))
+                return _dot(n1, n2) / (math.sqrt(_dot(n1, n1) * _dot(n2, n2)) + 1e-300)
+            proper = all(min(lean(f[0], f[1], f[2], f[3]), lean(f[1], f[2], f[3], f[0])) > 0.3 for f in cube)
+            if proper and ((dents and not _cage_crosses(cube, places)) or (not dents and turned_out)):
+                return cube
+    return faces
 
 
 def _without_collection(f):
@@ -534,10 +589,14 @@ def _without_collection(f):
     return g
 
 
-def _fill_holes(faces, gone):
+def _fill_holes(faces, gone, pos):
     ''' The faces without the points `gone` -- those that name one of them are taken away -- and the holes that leaves closed again: the edges of the faces that went, those that lie between points that stay, run
-        round each hole in the direction they had, and each loop of three or four points is one face (more: a fan of triangles).  The faces of the four triangles round a point that was pressed out of a square
-        make the square again.  None when a hole is not a closed loop '''
+        round each hole in the direction they had, and each loop is closed by faces of the points that are there, at the places `pos` (all the points, the ones that go too): a loop of three is one triangle, a loop of four
+        that is a convex quadrilateral one square (the four triangles round a point that was pressed out of a square make the square again), any other loop the triangles of the cheapest triangulation of it -- the least total
+        area -- none of whose new edges is an edge of the body already (H171, the user, 2026-11-11: "I deleted a point and the randomly a point on the opposite side of the body got chosen to be connected, so then the mesh goes
+        through itself": the loop was closed by a fan from its first point, whichever that was, and on random bodies 11 per cent of the deletions of one point left faces that cut through each other, 61 per cent of five in a row).
+        None when a hole is not a closed loop, a loop cannot be closed so, or the faces that are left cut through each other or are not a closed surface -- the faces are then those that the points make.
+        Where the places are not known (`pos` is None: the script has not run) only a loop of three, one triangle, and a loop of four, one square, are closed; any other hole is None '''
     kept = [tuple(f) for f in faces if not any(v in gone for v in f)]
     edges = {}
     for f in faces:
@@ -547,7 +606,12 @@ def _fill_holes(faces, gone):
             a, b = f[k], f[(k + 1) % len(f)]
             if a not in gone and b not in gone:
                 edges[a] = b
-    seen = set()
+    existing = set()
+    for f in kept:
+        for k in range(len(f)):
+            a, b = f[k], f[(k + 1) % len(f)]
+            existing.add((min(a, b), max(a, b)))
+    made, seen = [], set()
     for start in list(edges):
         if start in seen:
             continue
@@ -558,20 +622,81 @@ def _fill_holes(faces, gone):
             v = edges[v]
         if v != start or len(loop) < 3:
             return None
-        if len(loop) <= 4:
-            kept.append(tuple(loop))
-        else:
-            kept.extend((loop[0], loop[i], loop[i + 1]) for i in range(1, len(loop) - 1))
-    return kept
+        closed = _close_loop(loop, pos, existing)
+        if closed is None:
+            return None
+        made.extend(closed)
+    result = kept + made
+    count = {}
+    for f in result:
+        for k in range(len(f)):
+            e = (min(f[k], f[(k + 1) % len(f)]), max(f[k], f[(k + 1) % len(f)]))
+            count[e] = count.get(e, 0) + 1
+    if any(c != 2 for c in count.values()) or (pos is not None and _cage_crosses(result, pos)):
+        return None
+    return result
+
+
+def _close_loop(loop, pos, existing):
+    ''' The faces that close the hole whose boundary is `loop` (the points in the order the edges of the faces that went run round it), see _fill_holes; None when there are none '''
+    n = len(loop)
+    if n == 3:
+        return [tuple(loop)]
+    if pos is None:
+        return [tuple(loop)] if n == 4 else None
+    p = [pos[v] for v in loop]
+    if n == 4:
+        normal = (0.0, 0.0, 0.0)
+        for k in range(4):
+            c = _cross(p[k], p[(k + 1) % 4])
+            normal = (normal[0] + c[0], normal[1] + c[1], normal[2] + c[2])
+        if all(_dot(_cross(_sub(p[(k + 1) % 4], p[k]), _sub(p[(k + 2) % 4], p[(k + 1) % 4])), normal) > 0.0 for k in range(4)):
+            return [tuple(loop)]
+
+    def side_or_free(i, j):
+        # (a side of the loop, or a new edge between two points that no face joins yet)
+        if j == i + 1 or (i == 0 and j == n - 1):
+            return True
+        a, b = loop[i], loop[j]
+        return (min(a, b), max(a, b)) not in existing
+    inf = float('inf')
+    cost, split = {}, {}
+    for span in range(2, n):
+        for i in range(0, n - span):
+            j = i + span
+            best, at = inf, None
+            for k in range(i + 1, j):
+                if not (side_or_free(i, k) and side_or_free(k, j)):
+                    continue
+                c = cost.get((i, k), 0.0) if k - i >= 2 else 0.0
+                d = cost.get((k, j), 0.0) if j - k >= 2 else 0.0
+                if c == inf or d == inf:
+                    continue
+                area = 0.5 * _flen(_cross(_sub(p[k], p[i]), _sub(p[j], p[i])))
+                if c + d + area < best:
+                    best, at = c + d + area, k
+            cost[(i, j)], split[(i, j)] = best, at
+    if cost.get((0, n - 1), inf) == inf:
+        return None
+    out, todo = [], [(0, n - 1)]
+    while todo:
+        i, j = todo.pop()
+        if j - i < 2:
+            continue
+        k = split[(i, j)]
+        out.append((loop[i], loop[k], loop[j]))
+        todo.append((i, k))
+        todo.append((k, j))
+    return out
 
 
 def _healed(name, cage, n, positions):
     ''' The faces of a body of `n` points when some of them name a point that is not there (a point was deleted and the faces were not told): they are taken away and the holes closed (see _fill_holes); when
-        that cannot be done the faces are the convex hull's.  Faces that are right are returned as they are '''
+        that cannot be done the faces are those made of the points.  Faces that are right are returned as they are '''
     gone = set(v for f in cage for v in f if not 0 <= v < n)
     if not gone:
         return cage
-    filled = _fill_holes(cage, gone)
+    filled = _fill_holes(cage, gone, positions)
     if filled is None:
         return tuple(_default_faces(name, positions))
     return tuple(filled)
@@ -673,7 +798,8 @@ def _finish(name, items, smooth, radius, ctrls, cage, field, drawn_controls, dra
         items_now = list(new_points)
         ctrls_now = C.controls(items_now, rounds=True, radius_default=0 if smooth else radius, smooth_default=False)
         C.mark(ctrls_now, smooth, 'morph')
-        controls_now = [mapper(tuple(Shape.wrap(v) for v in c)) for c in drawn_controls]
+        graph_controls = drawn_controls.expressions() if isinstance(drawn_controls, TapeOut) else drawn_controls
+        controls_now = [mapper(tuple(Shape.wrap(v) for v in c)) for c in graph_controls]
         tris_now = [(t[0], t[2], t[1]) for t in drawn_tris] if improper else drawn_tris
         return _finish(name, items_now, smooth, radius, ctrls_now, faces_now, field_now, controls_now, drawn_vertices, tris_now)
     out._remake_mapped = remake_mapped
@@ -681,7 +807,12 @@ def _finish(name, items, smooth, radius, ctrls, cage, field, drawn_controls, dra
     # (what the viewport draws, from the numbers of the points at every step of a drag -- nothing is meshed from the field, see Shape::morphNow: the control points of the patches as expressions
     # of the numbers, each worked out once; every vertex of the surface as a list of (control point, weight) -- `_morph_vstart[v]` to `_morph_vstart[v + 1]` of the two lists `_morph_vctrl` and
     # `_morph_vweight` --; and the triangles between the vertices)
-    out._morph_controls = [tuple(Shape.wrap(c) for c in p) for p in drawn_controls]
+    if isinstance(drawn_controls, TapeOut):
+        ops = drawn_controls.tape.ops
+        out._morph_tape = ([o[0] for o in ops], [o[1] for o in ops], [o[2] for o in ops], list(drawn_controls.tape.constants), [i for o in drawn_controls.outs for i in o])
+        out._morph_inputs = [Shape.wrap(e) for e in drawn_controls.inputs]
+    else:
+        out._morph_controls = [tuple(Shape.wrap(c) for c in p) for p in drawn_controls]
     out._morph_vstart, out._morph_vctrl, out._morph_vweight = [0], [], []
     for terms in drawn_vertices:
         for c, weight in terms:
@@ -689,7 +820,7 @@ def _finish(name, items, smooth, radius, ctrls, cage, field, drawn_controls, dra
             out._morph_vweight.append(float(weight))
         out._morph_vstart.append(len(out._morph_vctrl))
     out._morph_tris = drawn_tris
-    out._editable = True                                         # (a press on its surface is where a point is put, not a surface to pull by the numbers of the points)
+    out._editable = True                                        # (a press on its surface is where a point is put, not a surface to pull by the numbers of the points)
     out._no_gizmo = True                                         # (the points have the numbers: the gizmo of each moves it, and the shared one moves them all)
     lo = tuple(min(c.pos[k] for c in ctrls) for k in range(3))
     hi = tuple(max(c.pos[k] for c in ctrls) for k in range(3))
@@ -761,57 +892,422 @@ def _cage_crosses(cage, pos):
     return False
 
 
-def _hull_with_dents(hull, inside, pos):
-    ''' The faces of the hull with every point that is inside it pressed in as a dent: the face the point lies under -- the one whose plane it is nearest to, among the faces it is under -- is split in three round it.  The faces are triangles '''
-    faces = []
-    for f in hull:
-        faces.append((f[0], f[1], f[2]))
-        if len(f) == 4:
-            faces.append((f[0], f[2], f[3]))
-    for q in inside:
-        best, best_score = None, None
-        for fi, (a, b, c) in enumerate(faces):
-            n = _cross(_sub(pos[b], pos[a]), _sub(pos[c], pos[a]))
-            l = math.sqrt(_dot(n, n))
-            if l < 1e-12:
-                continue
-            nn = (n[0] / l, n[1] / l, n[2] / l)
-            dist = _dot(_sub(pos[q], pos[a]), nn)
-            foot = (pos[q][0] - nn[0] * dist, pos[q][1] - nn[1] * dist, pos[q][2] - nn[2] * dist)
-            u = _dot(_cross(_sub(pos[b], foot), _sub(pos[c], foot)), nn) / l
-            v = _dot(_cross(_sub(pos[c], foot), _sub(pos[a], foot)), nn) / l
-            w = 1.0 - u - v
-            score = (0 if min(u, v, w) >= -1e-9 else 1, abs(dist))
-            if best_score is None or score < best_score:
-                best, best_score = fi, score
-        if best is None:
-            continue
-        a, b, c = faces.pop(best)
-        faces += [(a, b, q), (b, c, q), (c, a, q)]
-    return tuple(faces)
-
-
-def _faces_between_closest_points(cage, positions):
-    ''' THE FACES ARE MADE BETWEEN THE CLOSEST POINTS (H104, the user, 2026-11-03: "faces are created between the closest points ... the feature stays the same"; when a face could be any polygon a point pressed out of
-        it looked right, since the switch to triangles it only looked so).  A body whose points are all corners of their convex hull has the faces of the hull, whatever list of faces it was given -- a point pressed out of a face
-        starts as the face split round it, which is the hull while the point is above the face, and the faces follow the hull as the point is dragged on --, and a body with a point inside the hull (a dent), a body whose
-        hull cannot be made, and a body of more than _FOLLOW_LIMIT points keep the faces they have: nothing is made of them that costs the time of the points '''
+def _faces_between_closest_points(cage, positions, name='body'):
+    ''' THE FACES ARE MADE FROM THE POINTS (H104, the user, 2026-11-03: "faces are created between the closest points ... the feature stays the same"; H164, the user, 2026-11-09: no face logic of its own, no list of
+        faces that locks a point): whatever list of faces a body was given, a body of up to _FOLLOW_LIMIT points has the faces its points make by themselves -- see `_default_faces` -- and nothing else, the same in every window
+        and after every close and open of the file (H171, 2026-11-11; see `_faces_of_the_places`), and a body of more points (an import) keeps the faces it was given: nothing is made of them that costs the time of the points '''
     if len(positions) > _FOLLOW_LIMIT:
         return cage
+    return _faces_of_the_places(name, positions, 'body')
+
+
+_T_START = [0.0]
+
+
+
+
+
+_SUBDIV_CACHE = {}
+_REACH = 4                           # (how many edges away a point still has a weight on a control point, see _subdiv_topology)
+_PATCH_POINTS = 48                   # (the control points of a body of more than 400 points are solved on patches: a cluster of this many points and every point within _REACH + _PATCH_HALO edges of it, see libfive_cc_controls)
+_PATCH_HALO = 3
+
+
+def _lin(terms):
+    ''' The linear combination of dictionaries (a point of the subdivision as the weights of the control points) '''
+    out = {}
+    get = out.get
+    for d, c in terms:
+        for k, w in d.items():
+            out[k] = get(k, 0.0) + c * w
+    return out
+
+
+# (the kinds of the points of a mesh: a corner point stays (1), a spline point is always smooth -- a crease that comes to it from a corner ends there (2) --, the points that the steps make are what their edges say (0): no crease at them smooth, two a crease through them, more a corner)
+_K_AUTO, _K_CORNER, _K_SMOOTH = 0, 1, 2
+
+
+def _crease_neighbours(n, creases):
+    out = [[] for _ in range(n)]
+    for a, b in creases:
+        out[a].append(b)
+        out[b].append(a)
+    return out
+
+
+def _cc_step(verts, faces, kind, creases, par=None):
+    ''' One step of Catmull-Clark on a closed mesh of polygons, with creases: the points of the edges first (the two points of the edge and the points of the two faces on it, each a quarter; a crease edge: the middle of it), the points of the faces (their mean), the new places of the points
+        ((F + 2 R + (n - 3) v) / n, F the mean of the points of its faces, R the mean of the middles of its edges, n its valence; a corner stays; a point with two crease edges moves along the crease: (e1 + 6 v + e2) / 8); every face of m sides makes m quadrilaterals and
+        every crease edge two.  None where the mesh is not closed '''
+    nv = len(verts)
+    edge_faces = {}
+    for fi, f in enumerate(faces):
+        m = len(f)
+        for k in range(m):
+            a, b = f[k], f[(k + 1) % m]
+            edge_faces.setdefault((min(a, b), max(a, b)), []).append(fi)
+    for fl in edge_faces.values():
+        if len(fl) != 2:
+            return None
+    fpts = [_lin([(verts[v], 1.0 / len(f)) for v in f]) for f in faces]
+    edge_index, ev = {}, []
+    for key, fl in edge_faces.items():
+        a, b = key
+        edge_index[key] = nv + len(ev)
+        if key in creases:
+            ev.append(_lin([(verts[a], 0.5), (verts[b], 0.5)]))
+        else:
+            ev.append(_lin([(verts[a], 0.25), (verts[b], 0.25), (fpts[fl[0]], 0.25), (fpts[fl[1]], 0.25)]))
+    vfaces = [[] for _ in range(nv)]
+    vedges = [[] for _ in range(nv)]
+    for fi, f in enumerate(faces):
+        for v in f:
+            vfaces[v].append(fi)
+    for a, b in edge_faces:
+        vedges[a].append(b)
+        vedges[b].append(a)
+    cnb = _crease_neighbours(nv, creases)
+    new_verts = []
+    for v in range(nv):
+        n = len(vedges[v])
+        if n < 2 or len(vfaces[v]) != n:
+            return None
+        if kind[v] == _K_CORNER or (kind[v] == _K_AUTO and len(cnb[v]) >= 3):
+            new_verts.append(dict(verts[v]))
+            continue
+        if kind[v] == _K_AUTO and len(cnb[v]) == 2:
+            new_verts.append(_lin([(verts[v], 0.75), (verts[cnb[v][0]], 0.125), (verts[cnb[v][1]], 0.125)]))
+            continue
+        # (the rule (F + 2 R + (n - 3) v) / n -- F the mean of the points of its faces, R the mean of the middles of its edges -- is (n - 2) / n v + 1 / n^2 (the sum of its neighbours + the sum of the points of its faces): one sum, not a sum of sums of sums, which was
+        # most of the time of a first drawing of a body with a new point in it)
+        n2 = 1.0 / (n * n)
+        new_verts.append(_lin([(verts[v], (n - 2.0) / n)] + [(verts[w], n2) for w in vedges[v]] + [(fpts[fi], n2) for fi in vfaces[v]]))
+    fbase = nv + len(ev)
+    faces2 = []
+    par2 = [] if par is not None else None
+    for fi, f in enumerate(faces):
+        m = len(f)
+        for k in range(m):
+            e_next = edge_index[(min(f[k], f[(k + 1) % m]), max(f[k], f[(k + 1) % m]))]
+            e_prev = edge_index[(min(f[k - 1], f[k]), max(f[k - 1], f[k]))]
+            faces2.append((f[k], e_next, fbase + fi, e_prev))
+            if par is not None:
+                # (where the four corners of the new quadrilateral are in the square (s, t) of the quadrilateral of the net it comes from: the corner, the middle of the edge to the next, the middle of the face, the middle of the edge from the
+                # last -- the parameter lines along which the mesh is drawn at any number of pieces, see _sample_pieces)
+                quad, pts = par[fi]
+                pk, pn, pp = pts[k], pts[(k + 1) % m], pts[k - 1]
+                mid = (sum(p[0] for p in pts) / m, sum(p[1] for p in pts) / m)
+                par2.append((quad, (pk, ((pk[0] + pn[0]) / 2.0, (pk[1] + pn[1]) / 2.0), mid, ((pk[0] + pp[0]) / 2.0, (pk[1] + pp[1]) / 2.0))))
+    creases2 = set()
+    for a, b in creases:
+        e = edge_index[(a, b)]
+        creases2.add((min(a, e), max(a, e)))
+        creases2.add((min(b, e), max(b, e)))
+    kind2 = list(kind) + [_K_AUTO] * (len(ev) + len(faces))
+    if par is not None:
+        return new_verts + ev + fpts, faces2, kind2, creases2, par2
+    return new_verts + ev + fpts, faces2, kind2, creases2
+
+
+def _combine_terms(terms, controls, a):
+    ''' The coordinate a of the sum of weight * control point over (the number of a control point, weight) pairs '''
+    total = None
+    for c, w in terms:
+        t = controls[c][a] * w
+        total = t if total is None else total + t
+    return total
+
+
+def _first_harmonic(n):
+    ''' What the first harmonic of the ring of a point of valence n says about the surface at it.  The first step of Catmull-Clark takes the first harmonic (a, b) of the edge points and of the face points of the ring (a point k of the ring is Re(a w^k), w = exp(2 pi i / n)) to
+        (a / 4 + (1 + conj w) (a (1 + w) + b) / 16, (a (1 + w) + b) / 4): a matrix of determinant 1/16 and trace 1/2 + (1 + cos(2 pi / n)) / 8, the larger eigenvalue lam of which makes the TANGENT PLANE of the limit surface: the limit tangent, as a complex vector, is  a + lb b  with
+        lb = (1 + conj w) / (16 (lam - 1/4))  (the left eigenvector).  Returns (w, lb) '''
+    import cmath
+    w = cmath.exp(2j * math.pi / n)
+    c = math.cos(2.0 * math.pi / n)
+    tr = 0.5 + (1.0 + c) / 8.0
+    lam = (tr + math.sqrt(tr * tr - 0.25)) / 2.0
+    return w, (1.0 + w.conjugate()) / (16.0 * (lam - 0.25))
+
+
+def _subdiv_topology(cage, sharp):
+    ''' What depends on the cage and on which points are corners only: the first step of the subdivision (the net), and the weights B (control point C_i = sum_j B_ij of the points) that make the LIMIT position of every point the point itself as far as the control points can -- the limit of a point of valence n is
+        (n^2 v + 4 sum of the edge points of its ring + sum of the face points of its ring) / (n (n + 5)) of the net, a corner point stays; solved by inverting the matrix L of the limit weights.  The edges that have a corner at an end are crease edges along the half of the edge next to the corner: the crease ends at the middle of the edge, where
+        the surface is smooth.  None where the cage is not a closed surface (every edge in two faces, every point in at least three edges) '''
+    nv0 = 1 + max(max(f) for f in cage)
+    faces = [tuple(f) for f in cage]
+    # (a point where two sheets of the surface touch -- the faces round it make more than one fan, joined by no edge -- is split into one copy for each fan, at the place of the point: each sheet is a smooth surface of its own through it, and the cage is a closed
+    # surface again)
+    orig = list(range(nv0))
+    at_point = [[] for _ in range(nv0)]
+    for fi, f in enumerate(faces):
+        for v in f:
+            at_point[v].append(fi)
+    for v in range(nv0):
+        around = at_point[v]
+        parent = {fi: fi for fi in around}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+        by_neighbour = {}
+        for fi in around:
+            f = faces[fi]
+            k = f.index(v)
+            for u in (f[(k + 1) % len(f)], f[k - 1]):
+                by_neighbour.setdefault(u, []).append(fi)
+        for fl in by_neighbour.values():
+            for x in fl[1:]:
+                parent[find(x)] = find(fl[0])
+        fans = {}
+        for fi in around:
+            fans.setdefault(find(fi), []).append(fi)
+        for fan in list(fans.values())[1:]:
+            new_id = len(orig)
+            orig.append(v)
+            for fi in fan:
+                faces[fi] = tuple(new_id if x == v else x for x in faces[fi])
+    nv = len(orig)
+    sharp = frozenset(i for i in range(nv) if orig[i] in sharp)
+    cage_faces = faces
+    edge_set = set()
+    for f in cage_faces:
+        for k in range(len(f)):
+            a, b = f[k], f[(k + 1) % len(f)]
+            edge_set.add((min(a, b), max(a, b)))
+    creases0 = {key for key in edge_set if key[0] in sharp or key[1] in sharp}
+    kind0 = [_K_CORNER if v in sharp else _K_SMOOTH for v in range(nv)]
+    verts0 = [{i: 1.0} for i in range(nv)]
+    step = _cc_step(verts0, cage_faces, kind0, creases0)
+    if step is None:
+        return None
+    verts1, faces1, kind1, creases1 = step
+    # (THE CREASE OF A CORNER RUNS ALONG THE HALF OF EACH OF ITS EDGES that is next to it -- both halves of an edge between two corners --, and ends at the middle of the edge, where the surface is smooth: a corner shows its sharp edges in its own range and does not run a
+    # crease the whole way to the next point, which on a body of scattered points ran valleys and craters across the surface)
+    creases1 = {(x, e) for (x, e) in creases1 if x in sharp}
+    # (the order of the neighbours round every point, counterclockwise seen from outside, the face between two neighbours that follow each other, and where the points of the edges and of the faces are in the net: what the first harmonic of a ring -- the
+    # tangent plane of the limit surface at the point -- is made of, for the influence and the rotation of a point)
+    faces_at = [[] for _ in range(nv)]
+    for fi, f in enumerate(cage_faces):
+        for v in f:
+            faces_at[v].append(fi)
+    ring, ringf = [], []
+    for v in range(nv):
+        succ, via = {}, {}
+        for fi in faces_at[v]:
+            f = cage_faces[fi]
+            k = f.index(v)
+            succ[f[(k + 1) % len(f)]] = f[k - 1]
+            via[f[(k + 1) % len(f)]] = fi
+        start = next(iter(succ))
+        order, cur = [], start
+        while cur is not None and cur not in order:
+            order.append(cur)
+            cur = succ.get(cur)
+        if cur != start or len(order) != len(succ):
+            return None
+        ring.append(order)
+        ringf.append([via[u] for u in order])
+    edge_net, face_net, idx = {}, {}, 0
+    for fi, f in enumerate(cage_faces):
+        for k in range(len(f)):
+            a, b = f[k], f[(k + 1) % len(f)]
+            edge_net[(min(a, b), max(a, b))] = faces1[idx][1]
+            face_net[fi] = faces1[idx][2]
+            idx += 1
+    ring_e = [set() for _ in range(nv)]
+    ring_f = [set() for _ in range(nv)]
+    for q in faces1:
+        v = q[0]
+        ring_e[v].add(q[1])
+        ring_e[v].add(q[3])
+        ring_f[v].add(q[2])
+    L = []
+    for v in range(nv):
+        if v in sharp:
+            L.append({v: 1.0})
+            continue
+        n = len(ring_e[v])
+        denom = n * (n + 5.0)
+        L.append(_lin([(verts1[v], n * n / denom)] + [(verts1[e], 4.0 / denom) for e in ring_e[v]] + [(verts1[f], 1.0 / denom) for f in ring_f[v]]))
+    # (the limit matrix L can be singular -- the corners of a cube: the alternating mode has the limit weight 0, a point of valence 3 has no weight on itself in its first step -- so the control points are the minimal solution of L C = P:  C = L^T (L L^T + mu I)^-1 P, which is the exact solution wherever one exists)
+    # (THE REACH, the user, 2026-11-10: "shifting one point on one side of the geometry can COMPLETELY CHANGE THE OTHER SIDE"): the weight of a point on the control point of another falls away with the number of edges between them -- the matrix L is the
+    # smoothing of the surface and its inverse is the opposite, which dies out the way a smoothing does.  A point further than _REACH edges away has no weight on the control point at all, and what is left is made one: the weights of a control point add up to 1, so that a body
+    # that moves moves its surface with it.  The rows of the weights B (control point C_i = sum_j B_ij P_j) are the solution of (L L^T + mu I) y = L e_i for the points within the reach: the kernel makes them -- for the points of a body of up to 400 on one dense matrix, as this
+    # function did, for more points on patches of the body, in time proportional to its size: libfive_cc_controls, the user, 2026-11-10: "I dont see why there would a reason to restrict the user")
+    near = [set() for _ in range(nv)]
+    for f in cage_faces:
+        for k in range(len(f)):
+            near[f[k]].add(f[(k + 1) % len(f)])
+            near[f[(k + 1) % len(f)]].add(f[k])
+    l_start, l_column, l_weight = array.array('i', [0]), array.array('i'), array.array('d')
+    for row in L:
+        for column, weight in sorted(row.items()):
+            l_column.append(column)
+            l_weight.append(weight)
+        l_start.append(len(l_column))
+    n_start, n_column = array.array('i', [0]), array.array('i')
+    for u in range(nv):
+        n_column.extend(sorted(near[u]))
+        n_start.append(len(n_column))
+    flags = array.array('i', [1 if v in sharp else 0 for v in range(nv)])           # (a corner is its own control point, exactly: the edge between two corners is a straight line)
+    handle = lib.libfive_cc_controls(nv, l_start.buffer_info()[0], l_column.buffer_info()[0], l_weight.buffer_info()[0], n_start.buffer_info()[0], n_column.buffer_info()[0],
+                                     flags.buffer_info()[0], _REACH, _PATCH_HALO, _PATCH_POINTS)
+    if not handle:
+        return None
     try:
-        hull, inside = _hull(positions)
-    except ValueError:
-        return cage
-    if inside:
-        # (the faces they have, unless those pass through each other: then the faces follow the hull and every point inside it is pressed in as a dent -- H129)
-        if not _cage_crosses(cage, positions):
-            return cage
-        return _hull_with_dents(hull, inside, positions)
-    return tuple(tuple(f) for f in hull)
+        rows_, count_, none_ = ctypes.c_int32(), ctypes.c_int32(), ctypes.c_int32()
+        lib.libfive_cc_sizes(handle, ctypes.byref(rows_), ctypes.byref(count_), ctypes.byref(none_))
+        start = array.array('i', bytes(4 * (rows_.value + 1)))
+        column = array.array('i', bytes(4 * count_.value))
+        weight = array.array('d', bytes(8 * count_.value))
+        lib.libfive_cc_copy(handle, start.buffer_info()[0], column.buffer_info()[0], weight.buffer_info()[0], None, None, None)
+    finally:
+        lib.libfive_cc_free(handle)
+    s, col, wt = start.tolist(), column.tolist(), weight.tolist()
+    B = [list(zip(col[s[i]:s[i + 1]], wt[s[i]:s[i + 1]])) for i in range(nv)]
+    return {'orig': orig, 'v1': verts1, 'f1': faces1, 'kind1': kind1, 'creases1': creases1, 'sharp': sharp, 'levels': {}, 'B': B,
+            'ring': ring, 'ringf': ringf, 'edge_net': edge_net, 'face_net': face_net}
+
+
+def _subdiv_level(topo, level):
+    ''' The mesh after `level` steps (1 or more) from the net (the mesh after the first step) as (the weights of the points of the net of every point -- at its LIMIT position --, the triangles).  The steps of the rule and the limit are made by the kernel
+        (libfive_cc_levels: the same rule as _cc_step, and the limit position of a vertex (n^2 v + 4 sum of its edge neighbours + sum of its diagonal neighbours) / (n (n + 5)) -- a corner is itself, a point with two crease edges is (e1 + 4 v + e2) / 6 along the
+        crease --; the drawn surface is the limit, not the mesh of the last step: a vertex that is a point of the cage is the point, the user, 2026-11-10: "the body does not go through the spline points always").  The Python of it took 0.4 s of a body
+        of 36 points, at every run that put a point in; None where the mesh is not a closed surface '''
+    got = topo['levels'].get(level)
+    if got is not None:
+        return got
+    quads = array.array('i')
+    for f in topo['f1']:
+        quads.extend(f)
+    kind = array.array('i', topo['kind1'])
+    pairs = array.array('i')
+    for a, b in topo['creases1']:
+        pairs.extend((a, b))
+    handle = lib.libfive_cc_levels(len(topo['v1']), len(topo['f1']), quads.buffer_info()[0], kind.buffer_info()[0], len(pairs) // 2, pairs.buffer_info()[0] if pairs else None, level)
+    if not handle:
+        return None
+    try:
+        nv, nw, nq = ctypes.c_int32(), ctypes.c_int32(), ctypes.c_int32()
+        lib.libfive_cc_sizes(handle, ctypes.byref(nv), ctypes.byref(nw), ctypes.byref(nq))
+        nv, nw, nq = nv.value, nw.value, nq.value
+        start = array.array('i', bytes(4 * (nv + 1)))
+        column = array.array('i', bytes(4 * nw))
+        weight = array.array('d', bytes(8 * nw))
+        fquads = array.array('i', bytes(16 * nq))
+        parent = array.array('i', bytes(4 * nq))
+        corner = array.array('d', bytes(64 * nq))
+        lib.libfive_cc_copy(handle, start.buffer_info()[0], column.buffer_info()[0], weight.buffer_info()[0], fquads.buffer_info()[0], parent.buffer_info()[0], corner.buffer_info()[0])
+    finally:
+        lib.libfive_cc_free(handle)
+    s, col, wt = start.tolist(), column.tolist(), weight.tolist()
+    vl = [list(zip(col[s[i]:s[i + 1]], wt[s[i]:s[i + 1]])) for i in range(nv)]
+    q = fquads.tolist()
+    tr = []
+    for i in range(0, len(q), 4):
+        a, b, c, d = q[i], q[i + 1], q[i + 2], q[i + 3]
+        tr.append((a, b, c))
+        tr.append((a, c, d))
+    topo.setdefault('cc_raw', {})[level] = (fquads, parent, corner)
+    topo['levels'][level] = (vl, tr)
+    return topo['levels'][level]
+
+
+def _faces_par(topo, level):
+    ''' The faces of the mesh at `level` and, for each, its quadrilateral of the net and where its four corners are in it (s, t) -- what _sample_pieces reads; made from the arrays of _subdiv_level when it is asked for '''
+    got = topo.setdefault('faces_par', {}).get(level)
+    if got is None:
+        fquads, parent, corner = topo['cc_raw'][level]
+        q, p, c = fquads.tolist(), parent.tolist(), corner.tolist()
+        faces = [tuple(q[i:i + 4]) for i in range(0, len(q), 4)]
+        par = [(p[i], ((c[8 * i], c[8 * i + 1]), (c[8 * i + 2], c[8 * i + 3]), (c[8 * i + 4], c[8 * i + 5]), (c[8 * i + 6], c[8 * i + 7]))) for i in range(len(p))]
+        got = topo['faces_par'][level] = (faces, par)
+    return got
+
+
+def _sample_pieces(topo, level, vl, pieces):
+    ''' THE MESH AT ANY NUMBER OF PIECES (the user, 2026-11-10: the mesher has an argument that says how fine it meshes): a cage edge is drawn in `pieces` pieces (even: half of them on each of the two quadrilaterals of the net that have it as a side), every
+        quadrilateral of the net as a square (s, t) of pieces / 2 to a side.  The mesh of the surface at `level` (2 ** (level - 1) cells to a side of a quadrilateral of the net, vertices at their limit places, `vl`) is as fine as that or finer; each vertex of the mesh
+        that is drawn is the bilinear mean of the four vertices of the cell that it is in -- on a side of a quadrilateral only the two on that side, so that two quadrilaterals that meet there agree on it and the mesh is one piece -- and a vertex that is one of the
+        fine mesh is that vertex (the points of the cage are).  Returns (vertices, triangles) '''
+    faces, par = _faces_par(topo, level)
+    q = pieces // 2
+    g = 2 ** (level - 1)
+    cells = {}
+    for fi, f in enumerate(faces):
+        quad, pts = par[fi]
+        cells[(quad, int(round(min(p[0] for p in pts) * g)), int(round(min(p[1] for p in pts) * g)))] = (f, pts)
+    made, ids_of, tris = [], {}, []
+    for quad in range(len(topo['f1'])):
+        grid = [[None] * (q + 1) for _ in range(q + 1)]
+        for i in range(q + 1):
+            for j in range(q + 1):
+                s, t = i / float(q), j / float(q)
+                cx, cy = min(int(s * g + 1e-9), g - 1), min(int(t * g + 1e-9), g - 1)
+                f, pts = cells[(quad, cx, cy)]
+                u, v = s * g - cx, t * g - cy
+                w = {}
+                for vid, (ps, pt) in zip(f, pts):
+                    wu = u if abs(ps * g - (cx + 1)) < 1e-9 else 1.0 - u
+                    wv = v if abs(pt * g - (cy + 1)) < 1e-9 else 1.0 - v
+                    if wu * wv > 1e-12:
+                        w[vid] = w.get(vid, 0.0) + wu * wv
+                key = tuple(sorted((vid, round(x, 9)) for vid, x in w.items()))
+                if key not in ids_of:
+                    ids_of[key] = len(made)
+                    made.append(w)
+                grid[i][j] = ids_of[key]
+        for i in range(q):
+            for j in range(q):
+                a, b, c, d = grid[i][j], grid[i + 1][j], grid[i + 1][j + 1], grid[i][j + 1]
+                tris.append((a, b, c))
+                tris.append((a, c, d))
+    out = []
+    for w in made:
+        acc = {}
+        for vid, x in w.items():
+            for c, cw in vl[vid]:
+                acc[c] = acc.get(c, 0.0) + x * cw
+        out.append([(c, x) for c, x in acc.items() if abs(x) > 1e-12])
+    return out, tris
+
+
+def _drawn_pieces(n, top):
+    ''' How many pieces a cage edge is drawn in -- any even number: the argument of the mesher (see _sample_pieces).  The resolution scales it, as it does what every other body is drawn in: half the resolution half the pieces, twice the resolution twice --
+        from what the body is drawn in at the resolution 10, held to 32 pieces so that a script run and a drag stay as quick as they were; at most 2 ** top, what a drag can bear '''
+    res = None
+    try:
+        from fieldes import view
+        res = view._scene_resolution()
+    except Exception:
+        pass
+    scale = (float(res) / 10.0) if res else 1.0
+    base = min(float(n) / scale, 32.0)
+    pieces = max(4, min(int(round(base * scale)), 2 ** top))
+    return pieces + (pieces & 1)
+
+
+def _drawn_top(cage):
+    ''' The finest mesh a body is drawn in, as a level (2 ** level pieces to an edge): the one whose triangles stay within what a drag can bear -- about 60,000: a quadrilateral of the cage is 2 n^2 triangles at n pieces to an edge, a face of three 1.5 n^2 -- between 3 and 6 '''
+    triangles_per_n2 = sum(2.0 if len(f) == 4 else 1.5 for f in cage)
+    most = math.sqrt(60000.0 / triangles_per_n2)
+    return max(3, min(6, int(math.floor(math.log(most) / math.log(2.0)))))
+
+
+def _subdiv_levels_for(n):
+    return max(1, min(4, int(round(math.log(max(n, 2)) / math.log(2.0)))))
 
 
 def _morph(name, points, smooth, radius, faces):
-    items = list(points)
+    _T_START[0] = time.perf_counter()
+    if not _NUMERIC[0] and _TRACE[0] is None and not _NO_TAPE[0]:
+        made = _morph_native(name, points, smooth, radius, faces)
+        if made is not None:
+            return made
+    items = C.expand_points(points)
     if len(items) < 4:
         raise ValueError('%s needs at least four points (that are not all in one plane): %d were given' % (name, len(items)))
     if C.value_of(radius) < 0:
@@ -828,7 +1324,7 @@ def _morph(name, points, smooth, radius, faces):
         except AttributeError:
             pass
     if faces is None:
-        cage = _default_faces(name, [tuple(float(v) for v in c.pos) for c in ctrls])
+        cage = _faces_of_the_places(name, [tuple(float(v) for v in c.pos) for c in ctrls])
     else:
         cage = tuple(tuple(int(v) for v in f) for f in faces)
         # (a face that names a point that is not there -- the point was deleted -- is not an error: the faces are healed, see _healed; the user, 2026-11-02, on deleting a point of a morph shape)
@@ -836,13 +1332,16 @@ def _morph(name, points, smooth, radius, faces):
         for f in cage:
             if len(f) not in (3, 4) or any(not 0 <= v < len(items) for v in f) or len(set(f)) != len(f):
                 raise ValueError('%s: a face is the numbers of three or four different points (0 to %d): %r' % (name, len(items) - 1, f))
-        cage = _faces_between_closest_points(cage, [tuple(float(v) for v in c.pos) for c in ctrls])
+        cage = _faces_between_closest_points(cage, [tuple(float(v) for v in c.pos) for c in ctrls], name)
     # (the normal at a point is made of the faces as they were given -- a square is one face of its own area at each of its four corners --, not of the triangles that a square is cut in: along one
     # diagonal the corners it touches twice weigh it twice, and eight identical sphere points of a cube were not the same at the eight corners, the user, 2026-11-02, H47)
     normal_cage = cage
     if name == 'morph_polyhedron':
         cage = _triangulated(cage)
-    P = [c.expr for c in ctrls]
+    if _TRACE[0] is not None:
+        P = [tuple(_input(e) for e in c.expr) for c in ctrls]
+    else:
+        P = [tuple(_wrap(v) for v in c.pos) for c in ctrls] if _NUMERIC[0] else [c.expr for c in ctrls]
     # The mean length of the edges at each point: what a sphere point's radius is measured against
     neighbours = [set() for _ in P]
     for f in cage:
@@ -868,24 +1367,37 @@ def _morph(name, points, smooth, radius, faces):
                 except Exception:
                     pass
     if _is_polyhedron(ctrls, cage, smooth):
+        if _NUMERIC[0]:
+            verts, tris = _flat_tessellation(cage)
+            _INFO['poly'] = True
+            return P, verts, tris
         verts, tris = _flat_tessellation(cage)
         field = _native_field(P, verts, tris)
         return _finish(name, items, smooth, radius, ctrls, cage, field, P, verts, tris)
     N = _normals(P, normal_cage)
-    # The rotation of a spline point turns the plane its surface leaves it in (the user, 2026-11-02: "rotation for splines" was a requirement of the feature, as it is for the line of a spline): the plane is
-    # across the normal, so the normal is what is turned.  Everything that leaves the point -- the curves of its edges and, through them, the faces that meet there and the tangent plane they share with
-    # the face on the other side of each edge -- follows it
-    for i, c in enumerate(ctrls):
-        if c.rot_expr is not None and not c.rounded and c.smooth(smooth):
-            N[i] = _turn(N[i], c.rot_expr)
+    # THE NORMAL AT A POINT PULLED OUT INTO A SPIKE (the user, 2026-11-09, "the beak like spike when dragging a point down and out"; 2026-11-10: a line along the horn).  The normal is the sum of the normals of the faces that meet at the
+    # point -- until the neighbours of the point are all on one side of it: at a point pulled far out the sum is tilted about 40 degrees off the axis the spike runs along, the neighbours all fall in one sector of the tangent plane, and the
+    # faces that meet there fold over each other (measured on the drawn surface of a cube with one corner pulled out: the angle between neighbouring triangles along the spike, 2 to 6 mm from the tip, went 92, 71, 141, 149 degrees as
+    # the surface was refined: a fold, not a curve, and the line seen along the horn).  The normal then is the axis the neighbours leave along, turned round, blended with the face normal by how one-sided the neighbours are -- the length
+    # of the mean of the unit vectors to them: 0 for a ring of them in a plane, 1 for all of them in one direction --, so that a point in a flat or round place is as it was
+    for i in range(len(P)):
+        if len(neighbours[i]) < 2:
+            continue
+        total = None
+        for j in neighbours[i]:
+            e = _unit(_sub(P[j], P[i]))
+            total = e if total is None else _add(total, e)
+        k = float(len(neighbours[i]))
+        mean = (total[0] / k, total[1] / k, total[2] / k)
+        length = _norm(mean)
+        m = _wrap(length).min(1.0)
+        blend = tuple(N[i][a] * (1.0 - m) - (mean[a] / length) * m for a in range(3))
+        N[i] = _unit(blend)
     # What each point is: where the surface is at it (V), how far the curves that leave it go the way a spline's do -- along the tangent plane, not straight at the next point -- (S: 0 for a
     # corner, 1 for a spline point) and how strongly they leave it (K: the influence of the point, 1 being the spline of a profile)
-    NORMALS = N                                                  # (the normals of the points under a name that triangle() does not use for the normal of an edge)
-    V, S, K, R = [], [], [], []
-    SHORT = {}                                                   # (the shortest edge at each sphere point)
-    sphere = [bool(c.rounded) for c in ctrls]
+    V, S, K = [], [], []
+    sphere =[bool(c.rounded) for c in ctrls]
     for i, c in enumerate(ctrls):
-        R.append(None)
         if c.rounded:
             # a sphere point: a rounded corner (the user, 2026-11-02: "I want it to straight up make a strong radius, just like it does in a profile", after a build whose cut was a fraction of the radius and
             # went with the square of it).  The radius used is the radius itself -- the scale and the influence of the point are in it -- until it is a good part of the shortest edge at the point; the
@@ -895,10 +1407,8 @@ def _morph(name, points, smooth, radius, faces):
             for j in neighbours[i]:
                 d = ((P[i][0] - P[j][0]).square() + (P[i][1] - P[j][1]).square() + (P[i][2] - P[j][2]).square()).sqrt()
                 shortest = d if shortest is None else shortest.min(d)
-            r = c.radius_expr
-            used = r if shortest is None else Shape.wrap(r).min(shortest * _SPHERE_LIMIT)
-            R[i] = used
-            SHORT[i] = shortest
+            r = _val(c.radius_expr)
+            used = r if shortest is None else _wrap(r).min(shortest * _SPHERE_LIMIT)
             # (the ball that rounds the corner touches every face that meets there: its centre is r u behind the corner, u being the vector for which the outward unit normal m of each face has m . u = 1 -- solved
             # over the faces as they are given: for the corner of a box that is u = (1, 1, 1) in the axes of its faces, whichever way a square is cut in triangles.  The normal of the point is the way of u, and the
             # cut is r (|u| - 1) deep: r (sqrt(3) - 1) at the corner of a box, as it was, and more for a corner that has been pulled out into a wedge, which the constant of the box left a beak -- the user,
@@ -906,7 +1416,7 @@ def _morph(name, points, smooth, radius, faces):
             faces_here = [_unit(_face_normal(P, face)) for face in cage if i in face]
             if faces_here:
                 eps = _SPHERE_FACES_RIDGE
-                s00, s01, s02, s11, s12, s22 = Shape.wrap(eps), Shape.wrap(0.0), Shape.wrap(0.0), Shape.wrap(eps), Shape.wrap(0.0), Shape.wrap(eps)
+                s00, s01, s02, s11, s12, s22 = _wrap(eps), _wrap(0.0), _wrap(0.0), _wrap(eps), _wrap(0.0), _wrap(eps)
                 q0, q1, q2 = N[i][0] * eps, N[i][1] * eps, N[i][2] * eps
                 for m in faces_here:
                     s00, s01, s02 = s00 + m[0] * m[0], s01 + m[0] * m[1], s02 + m[0] * m[2]
@@ -930,302 +1440,259 @@ def _morph(name, points, smooth, radius, faces):
             depth = used * depth_factor
             V.append(tuple(P[i][a] - N[i][a] * depth for a in range(3)))
             S.append(1.0)
-            K.append(1.0)
+            # (A SPHERE POINT IS ROUND ABOUT ITS AXIS, NOT AN EXACT BALL -- the user, 2026-11-10: "it should be round and have infinite symmetry axis at the point, so sphere like. But the curvature does not need to be that of a perfect sphere"; an exact ball set on the surface
+            # stood out of it as a pimple with a dimple round its foot, at every radius, since a cap tighter than the surface it sits on cannot pass back into it without a concave neck.  The surface is the spline through the tip, rounder or tighter by its influence:
+            # HOW STRONGLY THE SURFACE LEAVES A SPHERE POINT: the corner of a box rounded by a ball much smaller than the edges that meet at it is a tight corner, and the faces round it stay flat only if the surface leaves the point less strongly -- sqrt(2 r / edge), 1 where the
+            # radius is half the edge, as for the eight sphere points of a cube, and never below _SPHERE_K_MIN -- measured: on a box of 40 x 30 x 20 with a sphere point of radius 5 the middles of the faces dipped 1.1, 2.0 and 3.0 toward it without it, within 0.6 with it.  Only for a
+            # blunt corner: a corner pulled out into a spike has the surface leave it as it does, or the spike is a thin cone: the strength comes in as the cut-in depth goes from 0.8 to 1.6 radii)
+            if shortest is None:
+                K.append(1.0)
+            else:
+                blunt = ((1.6 - depth_factor) / 0.8).max(0.0).min(1.0) if faces_here else 1.0
+                K.append(1.0 - (1.0 - ((used / shortest) * 2.0).min(1.0).sqrt().max(_SPHERE_K_MIN)) * blunt)
         elif c.smooth(smooth):
             V.append(P[i])
             S.append(1.0)
-            K.append(c.influence_expr if c.influence_expr is not None else 1.0)
+            K.append(_val(c.influence_expr) if c.influence_expr is not None else 1.0)
         else:
             V.append(P[i])
             S.append(0.0)
-            K.append(1.0)
-    made = {}
+            K.append(_val(c.influence_expr) if c.influence_expr is not None else 1.0)       # (a corner's influence: how far its sharp edges run, see subdiv_tessellate)
+    def subdiv_tessellate(level, pieces=None):
+        # (THE SURFACE AS THE LIMIT OF A CATMULL-CLARK SUBDIVISION THROUGH THE POINTS: the control points are fixed linear combinations of the points, the surface of them: (controls, vertices, triangles) as ribbon_tessellate gives them; None where it does not apply)
+        sharp = frozenset(i for i in range(len(V)) if not S[i])
+        key = (tuple(tuple(f) for f in cage), sharp)
+        if key not in _SUBDIV_CACHE:
+            _SUBDIV_CACHE[key] = _subdiv_topology(cage, sharp)
+        topo = _SUBDIV_CACHE[key]
+        if topo is None:
+            raise ValueError('%s: the faces of this body do not make a closed surface (every edge of a face must belong to exactly two faces, every point to at least two edges): %r' % (name, cage))
+        meshed = _subdiv_level(topo, level)
+        if meshed is None:
+            raise ValueError('%s: the faces of this body do not make a closed surface' % name)
+        ring, ringf, edge_net, face_net = topo['ring'], topo['ringf'], topo['edge_net'], topo['face_net']
+        orig = topo['orig']
+        nv_ = len(orig)
+        Vx = [V[o] for o in orig]
+        Sx = [S[o] for o in orig]
+        Kx = [K[o] for o in orig]
+        ctrlsx = [ctrls[o] for o in orig]
+        spherex = [sphere[o] for o in orig]
+        # 1. THE FIRST MESH OF THE SUBDIVISION: the control points of the points are fixed linear combinations of the points (the minimal solution of the limit being the point), the first mesh is the first step of the subdivision of them
+        Cs = [tuple(sum(w * Vx[j][a] for j, w in topo['B'][i]) for a in range(3)) for i in range(nv_)]
+        net = [tuple(sum(w * Cs[j][a] for j, w in topo['v1'][k].items()) for a in range(3)) for k in range(len(topo['v1']))]
 
-    def edge(i, j):
-        ''' The control point next to point i on the cubic curve from i to j: a third of the way along the leaving direction, which for a spline point has no part across the normal '''
-        if (i, j) not in made:
-            if sphere[i]:
-                # (a sphere point: the edge leaves it flat, in the plane across its normal, toward where the edge is, for the length of the radius used -- not the whole edge, so that the rounding is local)
-                to = _sub(P[j], P[i])
-                along = _dot(to, N[i])
-                flat = _unit(tuple(to[a] - N[i][a] * along for a in range(3)))
-                # (a third of the chord between the two places the surface is at, a little more -- 1.1 -- as the handle of the circle through them is, so that two sphere points half an edge apart make the
-                # arc of a sphere)
-                chord = _norm(_sub(V[j], V[i]))
-                factor = 1.1
-                if sphere[j]:
-                    # (between two sphere points the curve is the arc of a circle through the two places, and the handle of an arc of the angle theta between the normals at its ends is chord / (3 cos^2 (theta / 4)): 1.10
-                    # where the corners of a cube are 70.5 degrees apart, 1.27 across a face -- the diagonal of a square that a morph polyhedron is cut in --, where the 1.1 left the middle of a face of a ball of eight
-                    # sphere points 1.1 inside the sphere, the user, 2026-11-02, H47)
-                    cos_theta = Shape.wrap(_dot(N[i], N[j])).max(-1.0).min(1.0)
-                    factor = 2.0 / (1.0 + ((cos_theta + 1.0) * 0.5).sqrt())
-                reach = Shape.wrap(R[i] * _SPHERE_REACH).min(chord * (factor / 3.0))
-                made[(i, j)] = tuple(V[i][a] + flat[a] * reach for a in range(3))
-            else:
-                # (the edge goes toward the place of the point at its end, not toward the dent of a sphere point: the dent is the sphere point's own, and the edge is straight again after its reach)
-                d = _sub(P[j], V[i])
-                along = _dot(d, N[i])
-                tangent = tuple((d[a] - N[i][a] * (along * S[i])) * K[i] for a in range(3))
-                made[(i, j)] = tuple(V[i][a] + tangent[a] * (1.0 / 3.0) for a in range(3))
-        return made[(i, j)]
+        def turned(t, cs, ax):
+            # (the vector t turned by the rotation that takes a unit vector to another: cs the cosine of the angle, ax the cross product of the two, whose length is the sine; Rodrigues without a division by the sine)
+            cr = _cross(ax, t)
+            k_ = _dot(ax, t) / (cs + 1.0 + 1e-9)
+            return tuple(t[a] * cs + cr[a] + ax[a] * k_ for a in range(3))
+        # 2. THE INFLUENCE AND THE ROTATION OF A SPLINE POINT, ADDED TO IT (the user, 2026-11-10: "the point control with influence and rotation"): the limit surface has a tangent plane at the point, which is the first harmonic of the edge points and the face points of its
+        # ring (see _first_harmonic); the rotation turns that plane (the normal is turned the way the gizmo turns a shape, the plane by the rotation that takes the normal to the turned one) and the influence multiplies its tangent vectors, how strongly the surface
+        # leaves the point.  The change goes into the edge points of the ring as a first harmonic whose response -- the limit tangent, the face points staying as they are -- is exactly the change asked for.  A point that says neither has nothing added: its first mesh is the one of the control points
+        shifts = {}
+        for i in range(nv_):
+            c_ = ctrlsx[i]
+            if not Sx[i]:
+                # THE INFLUENCE OF A CORNER (the user, 2026-11-10: "the last thing that you have to add is the influence for the corner points"; 2026-11-09: how far its edges are crisp): the sharp run of each edge that leaves a corner for a point that is not a corner ends at the point of
+                # the first mesh on that edge, which lies half way along it; the influence moves that point along the edge, K times as far from the corner -- a longer sharp run for more, a shorter one for less, 1 as it was.  The point at the other end of the edge has it
+                # among its ring, and is made exact after it, so it stays on the surface.  An edge between two corners is straight and sharp all along and has nothing to move
+                if isinstance(Kx[i], float) and Kx[i] == 1.0:
+                    continue
+                for j in ring[i]:
+                    if not Sx[j]:
+                        continue
+                    key = edge_net[(min(i, j), max(i, j))]
+                    d = _scale(Kx[i] - 1.0, _sub(net[key], net[i]))
+                    shifts[key] = d if key not in shifts else _add(shifts[key], d)
+                continue
+            rot =c_.rot_expr is not None and c_.smooth(smooth) and not spherex[i]
+            infl = not (isinstance(Kx[i], float) and Kx[i] == 1.0)
+            if not (rot or infl):
+                continue
+            r = ring[i]
+            n = len(r)
+            if n < 3:
+                continue                                        # (a point of two edges has no tangent plane to turn)
+            w, lb = _first_harmonic(n)
+            ar = ai = br = bi = None
+            for k, j in enumerate(r):
+                ang = 2.0 * math.pi * k / n
+                e = net[edge_net[(min(i, j), max(i, j))]]
+                f = net[face_net[ringf[i][k]]]
+                cr_, sr_ = 2.0 / n * math.cos(ang), 2.0 / n * math.sin(ang)
+                ta, tb, tc_, td = _scale(cr_, e), _scale(-sr_, e), _scale(cr_, f), _scale(-sr_, f)
+                ar = ta if ar is None else _add(ar, ta)
+                ai = tb if ai is None else _add(ai, tb)
+                br = tc_ if br is None else _add(br, tc_)
+                bi = td if bi is None else _add(bi, td)
+            lr, li = lb.real, lb.imag
+            tau_r = _add(ar, _sub(_scale(lr, br), _scale(li, bi)))
+            tau_i = _add(ai, _add(_scale(lr, bi), _scale(li, br)))
+            new_r, new_i = tau_r, tau_i
+            if rot:
+                nrm = _unit(_cross(tau_i, tau_r))
+                nr = _turn(nrm, _val(c_.rot_expr))
+                cs, ax = _dot(nrm, nr), _cross(nrm, nr)
+                new_r, new_i = turned(tau_r, cs, ax), turned(tau_i, cs, ax)
+            if infl:
+                new_r, new_i = _scale(Kx[i], new_r), _scale(Kx[i], new_i)
+            dr, di = _sub(new_r, tau_r), _sub(new_i, tau_i)
+            for k, j in enumerate(r):
+                ang = 2.0 * math.pi * k / n
+                d = _sub(_scale(math.cos(ang), dr), _scale(math.sin(ang), di))
+                key = edge_net[(min(i, j), max(i, j))]
+                shifts[key] = d if key not in shifts else _add(shifts[key], d)
+        for key, d in shifts.items():
+            net[key] = _add(net[key], d)
+        # 3. THE POINT OF THE NET AT EACH POINT, LAST: so that the limit surface is the point itself, whatever was added round it -- (n^2 v' + 4 sum of its edge points + sum of its face points) / (n (n + 5)) = the point; a corner stays.  Where the global solution
+        # already had the point on the surface this is what it had
+        for i in range(nv_):
+            if i in topo['sharp']:
+                net[i] = Vx[i]
+                continue
+            n = len(ring[i])
+            se = sf = None
+            for j in ring[i]:
+                e = net[edge_net[(min(i, j), max(i, j))]]
+                se = e if se is None else _add(se, e)
+            for fi in ringf[i]:
+                sf = net[face_net[fi]] if sf is None else _add(sf, net[face_net[fi]])
+            net[i] = tuple((Vx[i][a] * (n * (n + 5.0)) - se[a] * 4.0 - sf[a]) / float(n * n) for a in range(3))
+        if pieces is None or pieces // 2 == 2 ** (level - 1):
+            return net, meshed[0], meshed[1]
+        vl2, tr2 = _sample_pieces(topo, level, meshed[0], pieces)
+        return net, vl2, tr2
 
-    # SMOOTH IN ALL DIRECTIONS (the user, 2026-11-01: "Right now spline just looks like a smoothed corner. A Spline should just be smoothed in all directions", and "THIS IS AN ENGINEERING TOOL": the
-    # surface itself must be smooth, not its shading).  Two faces that meet along an edge between two spline points have ONE tangent plane all along it, exactly (G1).  The patch of each face is a
-    # Gregory patch: a bicubic patch whose four inner control points each have two versions, one for each edge at its corner, blended by u / (u + v) and v / (u + v), so that along each boundary the
-    # second row of control points can be chosen on its own.  It is chosen so that the cross-boundary derivative of the patch is  alpha(t) T(t) + beta(t) E'(t)  with the SAME transversal T(t) -- the
-    # vector across the edge from one face to the other, between the two ends -- on both sides of the edge: E' is the derivative of the edge's own curve, so both derivatives lie in the plane
-    # T and E' span.  An edge with a corner at an end, or between two corners, is a sharp edge: its second row makes a parallelogram, as it did
-    spline = [bool(c.rounded or c.smooth(smooth)) for c in ctrls]               # (a sphere point is smooth too: its tangent plane is across its normal, and the faces meet in it with one tangent plane)
-    on_edge = {}
-    for f in cage:
-        for k in range(len(f)):
-            a, b = f[k], f[(k + 1) % len(f)]
-            on_edge.setdefault((min(a, b), max(a, b)), []).append(f)
-
-    def next_to(face, v, other):
-        ''' The point of the face next to the point v that is not `other`: the end of the face's other edge at v '''
-        k = face.index(v)
-        before, after = face[k - 1], face[(k + 1) % len(face)]
-        return after if before == other else before
-
-    def anchor(x):
-        ''' Where the parallelogram of the second row is measured from at point x: the place the surface is at.  At a sphere point that is the place of the corner itself in the measure that the radius is small
-            (rho to the power 4 is the part that is the place of the surface): the handles of a sphere point go back to the edges of the faces, and a parallelogram from the place of the surface, which is
-            cut in, would put the inner control point outside the face and the face would bulge (measured: 2 mm on a cube of 40 with a radius of 10) '''
-        if not sphere[x] or SHORT.get(x) is None:
-            return V[x]
-        rho = Shape.wrap(R[x] / (SHORT[x] * _SPHERE_LIMIT))
-        weight = rho * rho * rho * rho
-        return tuple(P[x][a] * (1.0 - weight) + V[x][a] * weight for a in range(3))
-
-    def parallel_row(face, x, y):
-        ''' The second row of control points next to the edge x -> y of the patch of `face` when nothing is asked of it: each makes a parallelogram with the edge's control point and the other edge at that corner '''
-        return (_add(edge(x, y), _sub(edge(x, next_to(face, x, y)), anchor(x))), _add(edge(y, x), _sub(edge(y, next_to(face, y, x)), anchor(y))))
-
-    def split(vec, t, along):
-        ''' vec = alpha t + beta along, in the plane the two span '''
-        m = _cross(t, along)
-        mm = _dot(m, m) + 1e-12
-        return _dot(_cross(vec, along), m) / mm, _dot(_cross(t, vec), m) / mm
-
-    def row_core(B, o0, o1, t0, t1, gain=1.0, k0=1.0, k1=1.0):
-        ''' The two control points of the second row next to an edge whose curve has the Bezier points B, such that the patch leaves the edge in the plane that t (a vector across the edge, linear from t0 at
-            the start to t1 at the end) and the edge's own direction span all along it.  o0 and o1 are the offsets of the patch's own other edge at the two ends (from the corner to the control point next to it) '''
-        e = [_scale(3.0, _sub(B[k + 1], B[k])) for k in range(3)]                # (the derivative of the edge's curve: quadratic, these are its Bezier points)
-        a0, b0 = split(_scale(3.0, o0), t0, e[0])
-        a1, b1 = split(_scale(3.0, o1), t1, e[2])
-        # (alpha is how much of the way across the edge the patch goes: 1/2 for two faces that leave it evenly.  Where the other edge of the patch at an end lies on the wrong side of the edge -- a point
-        # pressed far into a face, the tangent plane of a corner turned away from it -- it is negative, and the patch would leave the edge backwards and fold over the face on the other side: it is kept
-        # a little positive, so that the faces stay on their own sides and still have one tangent plane)
-        a0, a1 = a0.max(_ALPHA_MIN).min(1.0) * gain, a1.max(_ALPHA_MIN).min(1.0) * gain
-        # (alpha is at most the whole way across, and beta -- how much of the edge's own direction the patch takes -- is within one edge derivative: where the vector across the edge lies nearly along the edge,
-        # `split` divides by almost nothing and both run off to thousands.  The user, 2026-11-04, a cube of eight spline points with one corner pulled out: "a complete disaster case", a snout that ran 50 mm past
-        # the corner; measured on his file: the mesh ran to the edge of the sampled region, and with these two limits it stays 1.5 mm outside the points)
-        b0, b1 = b0.max(-1.0).min(1.0), b1.max(-1.0).min(1.0)
-        # (k0 and k1 take beta away at an end that is a sphere point: there the patch leaves the edge in the plane across the normal of the point, and the edge's own direction -- which a little way on has turned toward the neighbour, far along a horn -- took the second row of the three faces about twice the radius back from the cut-in place and drew the point out into a needle under 0.2 mm wide.  The user, 2026-11-04, H127, a sphere point dragged far out of a body of spline points: "The sphere points ends in a beak like point when dragged to a point like this"; measured: the second row 4.4 mm behind the point for a radius of 2.4, 0.2 mm with beta taken away, and the tip a rounded end)
-        b0, b1 = b0 * k0, b1 * k1
-        # (the cross-boundary derivative alpha T + beta E' as a cubic: alpha and beta are linear from one end to the other, T linear, E' quadratic -- its Bezier points, raised to degree three)
-        p0, p1, p2 = _scale(a0, t0), _scale(0.5, _add(_scale(a0, t1), _scale(a1, t0))), _scale(a1, t1)
-        c1 = _add(_scale(1.0 / 3.0, _add(p0, _scale(2.0, p1))), _scale(1.0 / 3.0, _add(_scale(2.0 * b0, e[1]), _scale(b1, e[0]))))
-        c2 = _add(_scale(1.0 / 3.0, _add(_scale(2.0, p1), p2)), _scale(1.0 / 3.0, _add(_scale(b0, e[2]), _scale(2.0 * b1, e[1]))))
-        return (_add(B[1], _scale(1.0 / 3.0, c1)), _add(B[2], _scale(1.0 / 3.0, c2)))
-
-    across_made = {}
-
-    def across(face, x, y, mixed=False):
-        ''' The vector across the edge x -> y of `face`, at x and at y, from the face on the other side to this one: the offset of this face's other edge at the point, less the same of the other face.  It is
-            the same for both faces up to its sign.  None where the edge is sharp (a corner at an end, or nothing on the other side) '''
-        key = (id(face), x, y, mixed)
-        if key not in across_made:
-            result = None
-            # (`mixed`: also for an edge with a corner at ONE end -- the vector across it at the corner is the difference of the two faces' other edges there -- which fade_row uses)
-            if (spline[x] and spline[y]) or (mixed and (spline[x] or spline[y])):
-                beyond = [f for f in on_edge[(min(x, y), max(x, y))] if f is not face]
-                if beyond:
-                    g = beyond[0]
-                    result = (_sub(_sub(edge(x, next_to(face, x, y)), V[x]), _sub(edge(x, next_to(g, x, y)), V[x])),
-                              _sub(_sub(edge(y, next_to(face, y, x)), V[y]), _sub(edge(y, next_to(g, y, x)), V[y])))
-            across_made[key] = result
-        return across_made[key]
-
-    def fade_weight(i, j):
-        ''' How much of the smooth row the second-row point at the end i of the edge i -> j takes: nothing at a corner, all of it at a spline point, and at a sphere point the part of the edge that
-            _SPHERE_FADE radii make (all of it from half the edge on) '''
-        if sphere[i]:
-            length = _norm(_sub(P[j], P[i]))
-            return Shape.wrap(R[i] * _SPHERE_FADE).min(length) / length
-        return 1.0 if spline[i] else 0.0
-
-    def fade_row(face, x, y):
-        ''' The second row of an edge with a corner at one end and a smooth point -- a spline point or a sphere point -- at the other: sharp at the corner, where the two faces still meet in a crease, and
-            smooth toward the smooth point, so that the crease of the corner fades out along the edge and is gone at the smooth point, where the faces have one tangent plane (the user, 2026-11-02, on a
-            spline point and a sphere point next to a corner point: "the corner point affects the spline point up to the very inner part of its influence. At some point towards the center of the influence,
-            it should return to being smooth without creases").  An edge between two corners stays sharp '''
-        sharp = parallel_row(face, x, y)
-        if spline[x] == spline[y]:
-            return sharp
-        t = across(face, x, y, True)
-        if t is None:
-            return sharp
-        B = (V[x], edge(x, y), edge(y, x), V[y])
-        o_x, o_y = _sub(edge(x, next_to(face, x, y)), V[x]), _sub(edge(y, next_to(face, y, x)), V[y])
-        smooth = row_core(B, o_x, o_y, t[0], t[1], 1.0, 0.0 if sphere[x] else 1.0, 0.0 if sphere[y] else 1.0)
-        out = []
-        for k, (i, j) in enumerate(((x, y), (y, x))):
-            w = fade_weight(i, j)
-            out.append((smooth[k] if w >= 1.0 else sharp[k]) if isinstance(w, float) else tuple(sharp[k][a] * (1.0 - w) + smooth[k][a] * w for a in range(3)))
-        return tuple(out)
-
-    def smooth_row(face, x, y):
-        ''' The two control points of the second row next to the edge x -> y of the patch of `face`, such that the patch leaves the edge in the tangent plane the face on the other side leaves it in '''
-        t = across(face, x, y)
-        if t is None:
-            return fade_row(face, x, y)
-        B = (V[x], edge(x, y), edge(y, x), V[y])
-        o_x, o_y = _sub(edge(x, next_to(face, x, y)), V[x]), _sub(edge(y, next_to(face, y, x)), V[y])
-        if not (sphere[x] and sphere[y]) or SHORT.get(x) is None or SHORT.get(y) is None:
-            return row_core(B, o_x, o_y, t[0], t[1], 1.0, 0.0 if sphere[x] else 1.0, 0.0 if sphere[y] else 1.0)
-        # (an edge between two sphere points: rho is how much of the radius is possible there -- 1 at half the shortest edge, where a cube is a sphere and the faces meet in one tangent plane all along the
-        # edge, near 0 for a small radius, where the corners are rounded and the edge stays an edge with flat faces on its two sides; the second row is the one of the sharp edge and the one of the smooth
-        # edge, weighed by rho to the power 4)
-        rho = Shape.wrap(R[x] / (SHORT[x] * _SPHERE_LIMIT)).min(Shape.wrap(R[y] / (SHORT[y] * _SPHERE_LIMIT)))
-        weight = 1.0
-        for _step in range(_SPHERE_EDGE_POWER):
-            weight = weight * rho
-        smooth = row_core(B, o_x, o_y, t[0], t[1], 1.0 + _SPHERE_GAIN * rho)
-        sharp = parallel_row(face, x, y)
-        return tuple(tuple(sharp[k][a] * (1.0 - weight) + smooth[k][a] * weight for a in range(3)) for k in range(2))
-
-    gregory_made, triangle_made = {}, {}
-
-    def gregory(face):
-        ''' The two versions of each of the four inner control points of the patch of a face of four, at its corners a, b, c, d: the version for each of the two edges at that corner '''
-        if id(face) not in gregory_made:
-            a, b, c, d = face
-            r_ab, r_bc, r_dc, r_ad = smooth_row(face, a, b), smooth_row(face, b, c), smooth_row(face, d, c), smooth_row(face, a, d)
-            gregory_made[id(face)] = {(1, 1): (r_ab[0], r_ad[0]), (2, 1): (r_ab[1], r_bc[0]), (2, 2): (r_dc[1], r_bc[1]), (1, 2): (r_dc[0], r_ad[1])}
-        return gregory_made[id(face)]
-
-    def lead(p, normal, to, ahead=None):
-        ''' The control point next to p on a curve to `to` that leaves p in the plane across `normal`: the way the curves leave a spline point.  With `ahead` -- the way into a face from the edge that p is
-            the middle of --, the curve is not let to leave backwards: where the plane is so steep that the way to `to`, flattened into it, would point away from the face, it leaves a quarter of the
-            distance along `ahead` at least (backwards, the patch of the face would fold over the face on the other side of the edge) '''
-        d = _sub(to, p)
-        along = _dot(d, normal)
-        flat = tuple(d[a] - normal[a] * along for a in range(3))
-        if ahead is not None:
-            h = _unit(ahead)
-            c = _dot(flat, h)
-            push = c.max(0.25 * _norm(d)) - c
-            flat = tuple(flat[a] + h[a] * push for a in range(3))
-        return tuple(p[a] + flat[a] * (1.0 / 3.0) for a in range(3))
-
-    def triangle(face):
-        ''' A face of three as three patches of four, one at each corner.  The face is cut by the lines from the middle of each of its edges to the middle of the face, which is where the surface of the face
-            would be at its middle if it were the cubic triangle of Vlachos and others (the one the face used to be), and the face is smooth there like a spline point.  Each patch is a Gregory patch,
-            joined to the next one in the plane they share, and to the face on the other side of an edge of the cage in the plane that face leaves it in: along the half of the edge that is its own it
-            takes the same transversal across the edge the face beyond takes, which is linear from one end to the other, so that the two faces have ONE tangent plane all along it, as two faces of four do.
-            Returns the three (net of control points, versions of the inner ones) of the patches at the corners a, b, c, each with its corners in the order (the corner, the middle of the edge to the next
-            corner, the middle of the face, the middle of the edge from the corner before) '''
-        if id(face) in triangle_made:
-            return triangle_made[id(face)]
-        a, b, c = face
-        b210, b120, b021, b012, b102, b201 = edge(a, b), edge(b, a), edge(b, c), edge(c, b), edge(c, a), edge(a, c)
-        around = _combine([(1.0 / 6.0, p) for p in (b210, b120, b021, b012, b102, b201)])
-        corners = _combine([(1.0 / 3.0, V[a]), (1.0 / 3.0, V[b]), (1.0 / 3.0, V[c])])
-        b111 = _add(around, _combine([(0.5, around), (-0.5, corners)]))
-        cubic = {(3, 0, 0): V[a], (0, 3, 0): V[b], (0, 0, 3): V[c], (2, 1, 0): b210, (1, 2, 0): b120, (0, 2, 1): b021, (0, 1, 2): b012, (1, 0, 2): b102, (2, 0, 1): b201, (1, 1, 1): b111}
-        # (the middle of the face and the way the surface faces there: the cubic triangle's point and normal at its centre)
-        middle = _combine([((1.0 if k in ((3, 0, 0), (0, 3, 0), (0, 0, 3)) else 6.0 if k == (1, 1, 1) else 3.0) / 27.0, p) for k, p in cubic.items()])
-        if sphere[a] and sphere[b] and sphere[c] and all(SHORT.get(s) is not None for s in (a, b, c)):
-            # (a face of three sphere points whose radius is what is possible there -- the face of a ball of sphere points --: the centre of the cubic triangle of a face that is part of a sphere lies inside the sphere
-            # (measured: 1 on a ball of 40 with eight points of radius 20), so it is brought onto the spheres the three points are the corners of -- the point of each of them, centre c + R u along the way to the
-            # middle of the three places --, the more so the nearer their radius is to half the shortest edge: rho to the power 4, as at an edge between two sphere points (see smooth_row)).  The user, 2026-11-02, H47
-            onto = []
-            for s in (a, b, c):
-                centre_s = tuple(V[s][k] - NORMALS[s][k] * R[s] for k in range(3))
-                way = _unit(_sub(corners, centre_s))
-                onto.append((1.0 / 3.0, tuple(centre_s[k] + way[k] * R[s] for k in range(3))))
-            target = _combine(onto)
-            rho = None
-            for s in (a, b, c):
-                one = Shape.wrap(R[s] / (SHORT[s] * _SPHERE_LIMIT))
-                rho = one if rho is None else rho.min(one)
-            weight = rho * rho * rho * rho
-            middle = tuple(middle[k] * (1.0 - weight) + target[k] * weight for k in range(3))
-
-        def slope(du, dv, dw):
-            terms = []
-            for alpha, w in (((2, 0, 0), 1.0), ((0, 2, 0), 1.0), ((0, 0, 2), 1.0), ((1, 1, 0), 2.0), ((1, 0, 1), 2.0), ((0, 1, 1), 2.0)):
-                for axis, step in enumerate((du, dv, dw)):
-                    if step != 0:
-                        terms.append((3.0 * w / 9.0 * step, cubic[tuple(alpha[i] + (1 if i == axis else 0) for i in range(3))]))
-            return _combine(terms)
-        N_mid = _unit(_cross(slope(-1, 1, 0), slope(-1, 0, 1)))
-        order = ((a, b, c), (b, c, a), (c, a, b))                            # (x, the next corner y, the corner z before it)
-        rec = {}
-        for x, y, z in order:
-            B = (V[x], edge(x, y), edge(y, x), V[y])
-            M = _combine([(0.125, B[0]), (0.375, B[1]), (0.375, B[2]), (0.125, B[3])])
-            tr = across(face, x, y)
-            d = _combine([(-0.75, B[0]), (-0.75, B[1]), (0.75, B[2]), (0.75, B[3])])           # (the direction of the edge's curve at its middle)
-            # (the surface faces away from the face there: across the edge's direction and the way into this face -- the transversal at the middle where the edge is smooth, the way to the middle of the
-            # face where it is sharp)
-            into = _scale(0.5, _add(tr[0], tr[1])) if tr is not None else _sub(middle, M)
-            N = _unit(_cross(d, into))
-            rec[x] = {'M': M, 'tr': tr, 'L1': _combine([(0.5, B[0]), (0.5, B[1])]), 'L2': _combine([(0.25, B[0]), (0.5, B[1]), (0.25, B[2])]),
-                      'R1': _combine([(0.25, B[1]), (0.5, B[2]), (0.25, B[3])]), 'R2': _combine([(0.5, B[2]), (0.5, B[3])]),
-                      'p1': lead(M, N, middle, into if tr is not None else None), 'p2': lead(middle, N_mid, M)}
-        nxt, prv = {a: b, b: c, c: a}, {a: c, b: a, c: b}
-        spoke = {}
-        for s in (a, b, c):
-            # (the line from the middle of the edge s -> next to the middle of the face separates the patch at s from the patch at the next corner: what each of them has as its other edge at the two ends)
-            oxm, oym = _sub(rec[s]['L2'], rec[s]['M']), _sub(rec[s]['R1'], rec[s]['M'])
-            oxc, oyc = _sub(rec[prv[s]]['p2'], middle), _sub(rec[nxt[s]]['p2'], middle)
-            spoke[s] = (oxm, oxc, oym, oyc, _sub(oxm, oym), _sub(oxc, oyc))
-        out = []
-        for x, y, z in order:
-            ex, ez = rec[x], rec[z]
-            Mx, Mz = ex['M'], ez['M']
-            AB, BC = (V[x], ex['L1'], ex['L2'], Mx), (Mx, ex['p1'], ex['p2'], middle)
-            DC, AD = (Mz, ez['p1'], ez['p2'], middle), (V[x], ez['R2'], ez['R1'], Mz)
-            o_a_ab, o_b_ab = _sub(ez['R2'], V[x]), _sub(ex['p1'], Mx)
-            o_a_ad, o_d_ad = _sub(ex['L1'], V[x]), _sub(ez['p1'], Mz)
-            if ex['tr'] is None:
-                r_ab = (_add(AB[1], o_a_ab), _add(AB[2], o_b_ab))
-            else:
-                r_ab = row_core(AB, o_a_ab, o_b_ab, ex['tr'][0], _scale(0.5, _add(ex['tr'][0], ex['tr'][1])))
-            if ez['tr'] is None:
-                r_ad = (_add(AD[1], o_a_ad), _add(AD[2], o_d_ad))
-            else:
-                r_ad = row_core(AD, o_a_ad, o_d_ad, ez['tr'][1], _scale(0.5, _add(ez['tr'][0], ez['tr'][1])))
-            oxm, oxc, oym, oyc, tm, tc = spoke[x]
-            r_bc = row_core(BC, oxm, oxc, tm, tc)
-            oxm, oxc, oym, oyc, tm, tc = spoke[z]
-            r_dc = row_core(DC, oym, oyc, _scale(-1.0, tm), _scale(-1.0, tc))
-            net = [[None] * 4 for _ in range(4)]
-            net[0][0], net[3][0], net[3][3], net[0][3] = V[x], Mx, middle, Mz
-            net[1][0], net[2][0] = AB[1], AB[2]
-            net[3][1], net[3][2] = BC[1], BC[2]
-            net[2][3], net[1][3] = DC[2], DC[1]
-            net[0][1], net[0][2] = AD[1], AD[2]
-            net[1][1] = _sub(_add(net[1][0], net[0][1]), net[0][0])
-            net[2][1] = _sub(_add(net[2][0], net[3][1]), net[3][0])
-            net[2][2] = _sub(_add(net[2][3], net[3][2]), net[3][3])
-            net[1][2] = _sub(_add(net[1][3], net[0][2]), net[0][3])
-            out.append((net, {(1, 1): (r_ab[0], r_ad[0]), (2, 1): (r_ab[1], r_bc[0]), (2, 2): (r_dc[1], r_bc[1]), (1, 2): (r_dc[0], r_ad[1])}))
-        triangle_made[id(face)] = out
-        return out
-    drawn_controls, drawn_vertices, drawn_tris = _tessellate(cage, V, edge, _drawn_segments(cage), gregory, triangle)
-    field_controls, field_vertices, field_tris = _tessellate(cage, V, edge, _field_segments(cage), gregory, triangle)
+    _t0 = time.perf_counter()
+    _INFO['ctrls'], _INFO['cage'], _INFO['items'] = ctrls, cage, items
+    if _NUMERIC[0] and _FIELD_RUN[0]:
+        return subdiv_tessellate(_subdiv_levels_for(_field_segments(cage)))
+    n_drawn = _drawn_segments(cage, any(sphere), _cage_turn([tuple(float(v) for v in c.pos) for c in ctrls], cage))
+    top_level = _drawn_top(cage)
+    pieces = _drawn_pieces(n_drawn, top_level)
+    drawn_controls, drawn_vertices, drawn_tris = subdiv_tessellate(min(top_level, 1 + int(math.ceil(math.log(max(pieces // 2, 1)) / math.log(2.0) - 1e-9))), pieces)
+    _t1 = time.perf_counter()
+    if _NUMERIC[0]:
+        return drawn_controls, drawn_vertices, drawn_tris
+    field_controls, field_vertices, field_tris = subdiv_tessellate(_subdiv_levels_for(_field_segments(cage)))
+    _t2 = time.perf_counter()
     field = _native_field(field_controls, field_vertices, field_tris)
+    if os.environ.get('FIELDES_TIMING'):
+        sys.__stderr__.write('[morph-py] %s: the points, normals, edges before the tessellations %.0f ms; drawn tessellation (and the nets) %.0f ms; field tessellation %.0f ms; the native field %.0f ms (%d controls, %d vertices drawn)\n'
+                             % (name, 1000.0 * (_t0 - _T_START[0]), 1000.0 * (_t1 - _t0), 1000.0 * (_t2 - _t1), 1000.0 * (time.perf_counter() - _t2), len(drawn_controls), len(drawn_vertices)))
+        sys.__stderr__.flush()
     return _finish(name, items, smooth, radius, ctrls, cage, field, drawn_controls, drawn_vertices, drawn_tris)
+
+
+def morph_numbers(points, smooth=True, radius=0.0, faces=None, name='morph_body'):
+    ''' The drawn control points, the vertices and the triangles of a body of points, worked out on plain numbers (H164 step 1b): (controls, vertices, triangles) with every control point three floats --
+    what the graph of expressions gives when it is evaluated at the numbers of the points.  The reference the native port is compared against '''
+    _NUMERIC[0] = True
+    try:
+        controls, vertices, tris = _morph(name, list(points), smooth, radius, faces)
+    finally:
+        _NUMERIC[0] = False
+    return [tuple(float(c) for c in p) for p in controls], vertices, tris
+
+
+class TapeOut(object):
+    """ The drawn control points of a body as the tape of operations that makes them from the numbers of its points (see morph_num.Tape): `inputs` are the expressions the tape's leaves read, `outs` the
+        tape numbers of the three coordinates of each control point """
+
+    def __init__(self, tape, inputs, outs):
+        self.tape, self.inputs, self.outs = tape, inputs, outs
+
+    def __len__(self):
+        return len(self.outs)
+
+    def expressions(self):
+        """ The control points as expressions again (a graph is made only where something still asks for one: the image of a body in a symmetry) """
+        from fieldes.stdlib import morph_num as MN
+        val = [None] * len(self.tape.ops)
+        for k, (op, a, b) in enumerate(self.tape.ops):
+            if op == MN.OP_INPUT:
+                val[k] = Shape.wrap(self.inputs[a])
+            elif op == MN.OP_CONST:
+                val[k] = Shape.wrap(self.tape.constants[a])
+            elif op == MN.OP_ADD:
+                val[k] = val[a] + val[b]
+            elif op == MN.OP_SUB:
+                val[k] = val[a] - val[b]
+            elif op == MN.OP_MUL:
+                val[k] = val[a] * val[b]
+            elif op == MN.OP_DIV:
+                val[k] = val[a] / val[b]
+            elif op == MN.OP_MIN:
+                val[k] = val[a].min(val[b])
+            elif op == MN.OP_MAX:
+                val[k] = val[a].max(val[b])
+            elif op == MN.OP_SQRT:
+                val[k] = val[a].sqrt()
+            elif op == MN.OP_SQUARE:
+                val[k] = val[a].square()
+            elif op == MN.OP_NEG:
+                val[k] = -val[a]
+            elif op == MN.OP_SIN:
+                val[k] = val[a].sin()
+            elif op == MN.OP_COS:
+                val[k] = val[a].cos()
+        return [tuple(val[i] for i in o) for o in self.outs]
+
+
+def _morph_native(name, points, smooth, radius, faces):
+    """ H164 step 2 (the user, 2026-11-09: "ON SMALLER FILES IT SHOULD LEGIT TAKE NO TIME AT ALL"): the body made WITHOUT a graph of expression nodes.  The drawn patches are TRACED into a tape of plain operations
+        (the viewport runs it at every step of a drag, see Shape::morphDirect) and the field's patches are worked out on numbers.  None when the body is a flat polyhedron, which the old way makes """
+    from fieldes.stdlib import morph_num
+    _INFO.clear()
+    tape = morph_num.Tape()
+    morph_num._TAPE[0] = tape
+    _NUMERIC[0] = True
+    _TRACE[0] = {}
+    try:
+        controls, vertices, tris = _morph(name, list(points), smooth, radius, faces)
+        table = _TRACE[0]
+    finally:
+        _NUMERIC[0] = False
+        _TRACE[0] = None
+    if _INFO.get('poly') or 'ctrls' not in _INFO:
+        return None
+    ctrls, cage, items = _INFO['ctrls'], _INFO['cage'], _INFO['items']
+    inputs = [e for e, _ in sorted(table.values(), key=lambda t: t[1])]
+    outs = [tuple(morph_num.wrap_trace(c).i for c in p) for p in controls]
+    _NUMERIC[0] = True
+    _FIELD_RUN[0] = True
+    try:
+        field_controls, field_vertices, field_tris = _morph(name, list(points), smooth, radius, cage)
+    finally:
+        _NUMERIC[0] = False
+        _FIELD_RUN[0] = False
+    field = _native_field_numbers([tuple(float(c) for c in p) for p in field_controls], field_vertices, field_tris)
+    return _finish(name, items, smooth, radius, ctrls, cage, field, TapeOut(tape, inputs, outs), vertices, tris)
+
+
+def morph_traced(points, smooth=True, radius=0.0, faces=None, name='morph_body'):
+    ''' H164 step 2: the same run as morph_numbers, but every operation is RECORDED into a tape (morph_num.Tape) whose leaves are the expressions of the points: (tape, inputs, controls, vertices, tris) with
+        `inputs` the expressions (one per input number) and `controls` the tape numbers of the three coordinates of each control point '''
+    from fieldes.stdlib import morph_num
+    tape = morph_num.Tape()
+    morph_num._TAPE[0] = tape
+    _NUMERIC[0] = True
+    _TRACE[0] = {}
+    try:
+        controls, vertices, tris = _morph(name, list(points), smooth, radius, faces)
+        table = _TRACE[0]
+    finally:
+        _NUMERIC[0] = False
+        _TRACE[0] = None
+    inputs = [e for e, _ in sorted(table.values(), key=lambda t: t[1])]
+    return tape, inputs, [tuple(morph_num.wrap_trace(c).i for c in p) for p in controls], vertices, tris
 
 
 def _faces_of_the_script():
     ''' The faces of the body that the call now running makes, from the script: the list `body_faces` above the line `body = morph_polyhedron(...)` (the user, 2026-11-02, "THIS SHOULD BE AN INTERNAL FUCKING
         VARIABLE, BUT I DONT SEE ANY ADVANTAGE TO EXPOSING THIS AS A CALL": the faces are no argument of the call).  The name the result is stored under is read from the instruction after the call in the
-        script's own code; None when the call is not stored under a name, or there is no such list -- the faces are then those of the convex hull '''
+        script's own code; None when the call is not stored under a name, or there is no such list -- the faces are then made of the points '''
     try:
         import dis
         frame = sys._getframe(0)
@@ -1268,7 +1735,7 @@ def morph_polyhedron(points, smooth=False, radius=0, *, position=None, _faces=No
 
 
 def morph_body(points, smooth=True, radius=0, *, position=None, _faces=None):
-    ''' The same body as `morph_polyhedron` (four points or more, the faces those of the convex hull unless the script has the list `body_faces` above the call), with a spline point at each point (a rounded body whose surface
+    ''' The same body as `morph_polyhedron` (four points or more, the faces made of the points unless the script has the list `body_faces` above the call), with a spline point at each point (a rounded body whose surface
         goes through its points, as the line of a spline goes through its points); `smooth=False` makes every point a corner that does not say otherwise, point(..., smooth=False) makes that one a corner, and
         point(..., radius=r) a sphere point.  Press its surface and drag to put a point there.  `position` (x, y, z) is where the body is: the middle of the box of its points; a number typed in the code
         moves every point by the difference, and a point or the whole body dragged writes the number again.  See the module '''

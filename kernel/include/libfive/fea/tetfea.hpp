@@ -28,6 +28,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -66,8 +67,19 @@ public:
 
     const TetMesh& mesh() const { return *m_mesh; }
 
+    /*  H160 (the user, 2026-11-09, of the optimised rifle: "THE FIELD IS FUCKING IMPORTANT ... THE FIELD IS FUCKING BROKEN"): a DESIGN field -- the density of a topology optimisation -- is defined on the elements and nowhere
+     *  else: it is VOID (0) where no tetrahedron holds the point.  `locate` gave such a point the value of the nearest tetrahedron, which is right for a stress drawn on a surface that the tetrahedra only approximate, and wrong
+     *  for a density: material appeared outside the design space, as slabs past the walls of the mesh and as scraps in its bays.  How far the box [lower, upper] is from the box of the mesh (0 where they meet), and whether
+     *  some point of the box may lie outside every tetrahedron (it reaches out of the mesh's box, or overlaps a grid cell that holds a piece of the mesh's boundary or none of the mesh at all): what an interval of a
+     *  design field has to hold, 0, besides the values of the nodes  */
+    double outsideDistance(const Eigen::Vector3d& lower, const Eigen::Vector3d& upper) const;
+    bool boxMayHaveVoid(const Eigen::Vector3d& lower, const Eigen::Vector3d& upper) const;
+
 private:
     void cellRange(const Eigen::Vector3d& lower, const Eigen::Vector3d& upper, int lo[3], int hi[3]) const;
+    void buildClasses() const;
+    mutable std::once_flag m_classOnce;
+    mutable std::vector<uint8_t> m_cellClass;           // per cell: 0 wholly outside the mesh, 1 wholly inside it, 2 holds a piece of its boundary (built on the first use, see buildClasses)
 
     const TetMesh* m_mesh;
     Eigen::Vector3d m_lo = Eigen::Vector3d::Zero(), m_hi = Eigen::Vector3d::Zero();
@@ -97,6 +109,7 @@ struct MeshResult
     int elements = 0, nodes = 0, dofs = 0, fixedNodes = 0, loadedNodes = 0, looseElements = 0;
     int iterations = 0;
     double residual = 0, seconds = 0, volume = 0, compliance = 0;
+    std::vector<float> residualHistory;     // (the residual after every iteration of the solve, relative to the load: the convergence curve)
     Eigen::Vector3d totalLoad = Eigen::Vector3d::Zero();
     Eigen::Vector3d reaction = Eigen::Vector3d::Zero();
     double heatIn = 0, heatOutFixed = 0, heatOutConvection = 0;         // (thermal analysis: W)
@@ -108,7 +121,7 @@ struct MeshResult
 
 /*  A result field as a Tree: linear interpolation of the nodal values inside
  *  the tetrahedron that holds the point  */
-Tree meshFieldTree(std::shared_ptr<const MeshResult> result, int field);
+Tree meshFieldTree(std::shared_ptr<const MeshResult> result, int field, bool voidOutside = false);
 
 namespace tet { struct QuadMesh; }
 

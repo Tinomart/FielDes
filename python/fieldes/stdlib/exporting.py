@@ -658,9 +658,12 @@ def _install_key_results():
                 out = original(self, *args, **kwargs)
                 try:
                     rows = key_results(self)
+                    history = list(getattr(self, 'residual_history', None) or [])         # (a static analysis: the residual of its solve after every iteration, for the curve on the result card)
                     for shape in (out if isinstance(out, (list, tuple)) else [out]):
                         if rows and hasattr(shape, '__dict__'):
                             shape._key_results = rows
+                        if len(history) > 1 and hasattr(shape, '__dict__'):
+                            shape._residual_history = history
                 except Exception:
                     pass
                 return out

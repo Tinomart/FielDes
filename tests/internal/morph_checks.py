@@ -74,7 +74,12 @@ def body():
     check('morph_body: the surface goes THROUGH its spline points (the field is 0 at each of the eight corners of its box)', inside(cube, (1, 1, 1)) and max(through) < 0.3, max(through))
     # (a surface that is smooth in all directions through the eight corners of a box bulges between them: the middle of the face x = 40 is inside the body, by 3.8 now that the faces meet in one tangent
     # plane along their edges, by 2.9 when they only did at the points; a flat face would be 0, a sphere through the corners 14.7)
-    check('morph_body: a spline surface bulges out between its points (the middle of a face is inside the body by more than 1 and less than 6)', -6.0 < evaluate(blob, [(40, 15, 10)])[0] < -1.0, evaluate(blob, [(40, 15, 10)])[0])
+    # (2026-11-10: the patches cross a face at constant speed -- the arc speed of the way across -- and the edges leave a spline point with the length of the chord, so that the cage edges show no ridge: the pillow is 8.4 on this box, was 3.8 -- 5.0;
+    # a sphere through the eight corners is 14.7 and a flat face 0; 2026-11-10 night, H170: the handle of an edge is 0.42 of the chord, not a third -- it is what a curve that turns 110 degrees wants, and it took the creases
+    # of the horn and of the dragged bodies down -- and the pillow is 9.4 on this box; 2026-11-10, H170: the surface is made from its edges, a patch crosses a face at the speed of the arc and bends as the edges beside it do, and the pillow
+    # is 10.4 on this box -- still short of a sphere through the corners, 14.7)
+    # (2026-11-10 night, H170: the surface is the limit of a Catmull-Clark subdivision through the points, the algorithm that was seen to be beautiful: the pillow is 12.7 on this box, between a flat face and the sphere through the corners, 14.7)
+    check('morph_body: a spline surface bulges out between its points (the middle of a face is inside the body by more than 1 and less than the 14.7 of a sphere through the corners)', -14.7 < evaluate(blob, [(40, 15, 10)])[0] < -1.0, evaluate(blob, [(40, 15, 10)])[0])
     mostly_sharp = morph_body([point(position=c, smooth=(i == 7)) for i, c in enumerate(corners((0, 0, 0), (40, 30, 20)))])
     check('morph_body: the points that say smooth=False are corners (the corner at the origin is sharp) and the one that says smooth=True is a spline point the surface goes through',
           inside(mostly_sharp, (0.3, 0.3, 0.3)) and abs(evaluate(mostly_sharp, [(40, 30, 20)])[0]) < 0.3, [inside(mostly_sharp, (0.3, 0.3, 0.3)), evaluate(mostly_sharp, [(40, 30, 20)])[0]])
@@ -97,32 +102,31 @@ def symmetric_and_drawn():
         a = evaluate(blob, [(x, y, z), (40 - x, y, z), (x, 30 - y, z), (x, y, 20 - z)])
         worst = max(worst, abs(a[0] - a[1]), abs(a[0] - a[2]), abs(a[0] - a[3]))
     check('morph_body of a box: the field is the same at a place and at its mirror image in each middle plane (the largest difference %.2g)' % worst, worst < 1e-3)
-    # what is drawn: the control points of the patches as expressions of the points' numbers, every vertex as a sum of control points times weights, and the triangles -- the viewport shades every
-    # triangle flat, so the six faces of the cube are drawn in n pieces to an edge (n from _drawn_segments): 6 (n-1)^2 + 12 (n-1) + 8 vertices, 12 n^2 triangles
+    # what is drawn (H170, 2026-11-10: the limit of a Catmull-Clark subdivision of control points made from the points, see the module): the control points as expressions of the points' numbers, every vertex as a sum of control
+    # points times weights, and the triangles -- the viewport shades every triangle flat, so the six faces of the cube are drawn in n pieces to an edge, n an even number (32 at the default resolution):
+    # 6 n^2 + 2 vertices, 12 n^2 triangles
     from fieldes.stdlib import morph as morph_module
-    n = morph_module._drawn_segments(blob._morph_faces)
     vertices = len(blob._morph_vstart) - 1
-    check('morph_body: it says the surface to draw from the numbers of its points (%d pieces to an edge: %d vertices, %d triangles)' % (n, 6 * (n - 1) ** 2 + 12 * (n - 1) + 8, 12 * n * n),
-          vertices == 6 * (n - 1) ** 2 + 12 * (n - 1) + 8 and len(blob._morph_tris) == 12 * n * n, (vertices, len(blob._morph_tris)))
-    check('morph_body: the control points are few (a cube has 8 corners, 24 points along its 12 edges and 8 inner points to each of 6 faces -- every inner point in two versions, one per edge at its corner, so that two faces share a tangent plane along their edge: 80) -- the drawing does not evaluate once per vertex',
-          len(blob._morph_controls) == 80, len(blob._morph_controls))
+    n = int(round(math.sqrt(len(blob._morph_tris) / 12.0)))
+    check('morph_body: it says the surface to draw from the numbers of its points (%d pieces to an edge, an even number: %d vertices, %d triangles)' % (n, 6 * n * n + 2, 12 * n * n),
+          n >= 4 and n % 2 == 0 and vertices == 6 * n * n + 2 and len(blob._morph_tris) == 12 * n * n, (vertices, len(blob._morph_tris)))
+    net_controls = morph_module.morph_numbers(pts)[0]
+    check('morph_body: the control points are few (a cube: 8 control points at its corners, 12 at the middles of its edges, 6 at the middles of its faces -- 26) -- the drawing does not evaluate once per vertex',
+          len(net_controls) == 26, len(net_controls))
     check('morph_body: every vertex is a weighted sum whose weights add up to 1 (the surface does not move when the points do)',
           all(abs(sum(blob._morph_vweight[blob._morph_vstart[v]:blob._morph_vstart[v + 1]]) - 1.0) < 1e-9 for v in range(vertices)))
     # the vertices that are drawn lie on the surface the field has, to the faceting: the middle of the far face is on both
-    cube = morph_polyhedron(pts)
 
-    def drawn(body, v):
-        total = [0.0, 0.0, 0.0]
-        for k in range(body._morph_vstart[v], body._morph_vstart[v + 1]):
-            control = body._morph_controls[body._morph_vctrl[k]]
-            for a in range(3):
-                total[a] += body._morph_vweight[k] * float(C.value_of(control[a]))
-        return total
+    def drawn_vertices(point_list, name_, smooth_):
+        # (the vertices as numbers: the controls worked out on plain numbers, and every vertex the weighted sum of them)
+        controls, verts_, _ = morph_module.morph_numbers(point_list, smooth=smooth_, name=name_)
+        return [tuple(sum(w * controls[c][a] for c, w in terms) for a in range(3)) for terms in verts_]
 
-    top = [drawn(cube, v) for v in range(len(cube._morph_vstart) - 1)]
+    top = drawn_vertices(pts, 'morph_polyhedron', False)
     check('morph_polyhedron: what is drawn is the box (every vertex is inside or on its box to a thousandth)', all(-1e-3 <= v[0] <= 40.001 and -1e-3 <= v[1] <= 30.001 and -1e-3 <= v[2] <= 20.001 for v in top))
     # (the drawn surface of the rounded body lies on the surface of the field it is made with, to the faceting of the field: its vertices are near the field's zero)
-    seen = [drawn(blob, v) for v in range(0, vertices, max(1, vertices // 60))]
+    every = drawn_vertices(pts, 'morph_body', True)
+    seen = [every[v] for v in range(0, len(every), max(1, len(every) // 60))]
     worst = max(abs(evaluate(blob, [tuple(p)])[0]) for p in seen)
     check('morph_body: the drawn vertices lie on the surface of its field (the largest distance %.3g of 40; at 2 pieces to an edge it was 1.9)' % worst, worst < 0.8, worst)
 
@@ -193,8 +197,10 @@ def sphere_ball():
     again = evaluate(huge, [tuple(20.0 + 20.0 * u[k] for k in range(3)) for u in unit])
     check('... a radius beyond half an edge is the same sphere (radius 1000: the field differs by %.6f at most)' % max(abs(a - b) for a, b in zip(on, again)), max(abs(a - b) for a, b in zip(on, again)) < 1e-6, again)
     half = morph_body([point(position=c, radius=10) for c in corners((0, 0, 0), (40, 40, 40))])
-    check('... half that radius is a rounded cube, not a sphere: the middle of a face is still on the face (field %.2f) and the corner is cut' % evaluate(half, [(20, 20, 0)])[0],
-          abs(evaluate(half, [(20, 20, 0)])[0]) < 0.5 and not inside(half, (0.5, 0.5, 0.5)), evaluate(half, [(20, 20, 0)])[0])
+    # (2026-11-10 night, H170: eight sphere points are eight spline points at the tips of their balls, so the body is the smooth surface through them -- rounder than the box, flatter than the sphere through its corners: a face of a box of 40 is 4.1 inside it at its middle (the sphere
+    # through the corners is 14.7, a flat face 0) -- and its corners are cut)
+    check('... half that radius is a body rounder than the box and flatter than the sphere: the middle of a face is inside it by %.2f (at least 1, less than 14.7) and the corner is cut' % -evaluate(half, [(20, 20, 0)])[0],
+          -14.7 < evaluate(half, [(20, 20, 0)])[0] < -1.0 and not inside(half, (0.5, 0.5, 0.5)), evaluate(half, [(20, 20, 0)])[0])
 
 
 def errors():
@@ -207,8 +213,9 @@ def errors():
     refused('3 points are an error (at least four)', lambda: morph_polyhedron([point(), point(position=(1, 0, 0)), point(position=(0, 1, 0))]), 'at least four')
     refused('points in a line are an error', lambda: morph_polyhedron([point(position=(i, 0, 0)) for i in range(7)]), 'line')
     refused('four points in one plane are an error', lambda: morph_polyhedron([point(), point(position=(4, 0, 0)), point(position=(4, 3, 0)), point(position=(0, 3, 0))]), 'plane')
-    refused('a point inside the others, without faces, is an error (of nine)',
-            lambda: morph_polyhedron([point(position=c) for c in corners((0, 0, 0), (4, 4, 4))] + [point(position=(2, 2, 2))]), 'inside')
+    # (a point inside the others is no error: it is joined to the face nearest to it, a dent -- see morph_faces.polygons_of -- and the body goes through it)
+    dented = morph_polyhedron([point(position=c) for c in corners((0, 0, 0), (4, 4, 4))] + [point(position=(2, 2, 2))])
+    check('a point inside the others is a dent, not an error: the body of nine goes through it (field %.3f at the point)' % evaluate(dented, [(2, 2, 2)])[0], abs(evaluate(dented, [(2, 2, 2)])[0]) < 0.3, evaluate(dented, [(2, 2, 2)])[0])
     try:
         morph_polyhedron([point(position=c) for c in corners((0, 0, 0), (1, 1, 1))], radius=-1)
         check('a negative radius is an error', False)
@@ -243,14 +250,14 @@ def hull_faces():
         return all(n == 1 and (e[1], e[0]) in directed for e, n in directed.items())
 
     tetra = [(0, 0, 0), (10, 0, 0), (0, 10, 0), (0, 0, 10)]
-    faces, inner = M._hull(tetra)
+    faces, inner = M._alpha_faces(tetra, False, False), []                # (the faces the points make, as the face finder gives them: a polyhedron has no sliver flips and no quads from needles)
     check('hull of four points: four triangles, facing out, closed', len(faces) == 4 and not inner and facing_out(tetra, faces) and closed(faces), faces)
     octa = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
-    faces, inner = M._hull(octa)
+    faces, inner = M._alpha_faces(octa, False, False), []
     check('hull of the six points of an octahedron: eight triangles, facing out, closed', len(faces) == 8 and not inner and facing_out(octa, faces) and closed(faces), len(faces))
     box = corners((0, 0, 0), (40, 30, 20))
     scrambled = [box[i] for i in (5, 2, 7, 0, 3, 6, 1, 4)]
-    faces, inner = M._hull(scrambled)
+    faces, inner = M._alpha_faces(scrambled, False, False), []
     check('hull of the eight corners of a box in any order: its six squares, facing out, closed', len(faces) == 6 and all(len(f) == 4 for f in faces) and facing_out(scrambled, faces) and closed(faces), faces)
     body_ = morph_polyhedron([point(position=c) for c in scrambled])
     check('... and a morph polyhedron of them is the box', inside(body_, (20, 15, 10)) and not inside(body_, (-0.5, 15, 10)) and not inside(body_, (20, 30.5, 10)) and not inside(body_, (20, 15, 20.5)))
@@ -259,7 +266,7 @@ def hull_faces():
     check('the corners of a cube in the order of a mirror image of the template: the faces still face out (the box is inside, beyond it is outside)',
           inside(flat, (20, 15, 10)) and not inside(flat, (20, 15, 20.5)) and not inside(flat, (-0.5, 15, 10)), len(flat._morph_faces))
     mid = box + [(20, 15, 20)]                               # (the middle of the top face: a place in a face of the hull splits it in three)
-    faces, inner = M._hull(mid)
+    faces, inner = M._alpha_faces(mid, False, False), []
     check('a ninth point in the middle of the top face: the top face is split in four triangles round it, the other five stay squares', not inner and len(faces) == 9
           and sorted(len(f) for f in faces) == [3, 3, 3, 3, 4, 4, 4, 4, 4] and facing_out(mid, faces) and closed(faces), sorted(len(f) for f in faces))
     cut = morph_polyhedron([point(position=c) for c in mid])
@@ -277,10 +284,11 @@ def hull_faces():
             v = (rng.gauss(0, 1), rng.gauss(0, 1), rng.gauss(0, 1))
             l = math.sqrt(sum(x * x for x in v))
             pts.append(tuple(30.0 * x / l for x in v))       # (on a sphere: every point is a corner of the hull)
-        faces, inner = M._hull(pts)
+        faces, inner = M._alpha_faces(pts, False, False), []
         edges = sum(len(f) for f in faces) // 2
-        check('hull of %d points on a sphere: every point a corner, %d triangles (2n - 4), facing out, closed, Euler' % (n, len(faces)),
-              not inner and len(faces) == 2 * n - 4 and all(len(f) == 3 for f in faces) and facing_out(pts, faces) and closed(faces) and n - edges + len(faces) == 2, (len(faces), inner))
+        # (2n - 4 triangles; two that lie flat together -- 40 points on a sphere have such a pair -- are one square, as a face of four points that are the corners of a convex square always is)
+        check('hull of %d points on a sphere: every point a corner, %d faces of 2n - 4 = %d triangles, facing out, closed, Euler' % (n, len(faces), 2 * n - 4),
+              not inner and sum(len(f) - 2 for f in faces) == 2 * n - 4 and all(len(f) in (3, 4) for f in faces) and facing_out(pts, faces) and closed(faces) and n - edges + len(faces) == 2, (len(faces), inner))
         body_ = morph_polyhedron([point(position=p) for p in pts])
         check('... and the morph polyhedron of them has the middle of its points inside and a place beyond the sphere outside', inside(body_, centre(pts)) and not inside(body_, (0, 0, 31))
               and not inside(body_, (31, 0, 0)))
@@ -343,7 +351,9 @@ def insertion():
         check('%s: after the edit the script runs and the body has nine points and its faces are split round the new point (a polyhedron: 12 triangles, the one pressed in three, 14; a body: 6 faces, the quad pressed in four, 9)' % name,
               len(obj2.points) == n0 + 1 and len(obj2._morph_faces) == (14 if name == 'morph_polyhedron' else 9),
               (len(obj2.points), len(obj2._morph_faces)))
-        check('%s: the script says its triangles in a list above the call, no argument of it' % name, name + '_1_faces = [' in script2 and 'faces=' not in script2)
+        # (a body says no faces -- they are made of the points at every run, the user, 2026-11-03: "YOU DO NOT REEXPOSE THE FACES" --; a polyhedron keeps the list it has, an imported mesh has faces of its own: one list above the call, no argument of it)
+        check('%s: the script says its faces %s, no argument of it' % (name, 'in a list above the call' if name == 'morph_polyhedron' else 'not at all'),
+              (name + '_1_faces = [' in script2 if name == 'morph_polyhedron' else '_faces = [' not in script2) and 'faces=' not in script2)
         # a second press: the call that says its faces is edited, not given another
         line2 = max(i for i, l in enumerate(script2.split('\n'), 1) if l.strip() == name + '_1')
         request2 = dict(request, source=script2, line=line2, x=xs[0] + 0.4, px=xs[0] + 0.4, y=(ys[0] + ys[-1]) / 2.0, py=(ys[0] + ys[-1]) / 2.0, z=(zs[0] + zs[-1]) / 2.0, pz=(zs[0] + zs[-1]) / 2.0)
@@ -351,8 +361,8 @@ def insertion():
         script3 = apply_edits(script2, answer2['edits'])
         ns3 = make(script3)
         obj3 = ns3[name + '_1']
-        check('%s: a second press: ten points, 16 faces for a polyhedron (a triangle split in three) or 11 or 12 for a body (a triangle or a quad split), one list of faces' % name,
-              len(obj3.points) == n0 + 2 and len(obj3._morph_faces) in ((16,) if name == 'morph_polyhedron' else (11, 12)) and script3.count('_faces = [') == 1 and 'faces=' not in script3,
+        check('%s: a second press: ten points, 16 faces for a polyhedron (a triangle split in three, one list of faces) or 11 or 12 for a body (a triangle or a quad split, no list of faces in the script)' % name,
+              len(obj3.points) == n0 + 2 and len(obj3._morph_faces) in ((16,) if name == 'morph_polyhedron' else (11, 12)) and script3.count('_faces = [') == (1 if name == 'morph_polyhedron' else 0) and 'faces=' not in script3,
               (len(obj3.points), len(obj3._morph_faces), script3.count('_faces = [')))
         # the new point is on the surface where it was pressed (the body is the same shape), and dragged out of it the body has a bump, dragged in a dent
         new_name = answer['name']
@@ -362,7 +372,7 @@ def insertion():
         up = script2.replace('%s = point(\n    position=(var(%s), var(%s), var(%s)),' % (new_name, '%g' % round(press[0], 4), '%g' % round(press[1], 4), '%g' % round(press[2], 4)),
                              '%s = point(\n    position=(var(%s), var(%s), var(%s)),' % (new_name, '%g' % round(press[0], 4), '%g' % round(press[1], 4), '%g' % round(press[2] + 10.0, 4)))
         down = script2.replace('%s = point(\n    position=(var(%s), var(%s), var(%s)),' % (new_name, '%g' % round(press[0], 4), '%g' % round(press[1], 4), '%g' % round(press[2], 4)),
-                               '%s = point(\n    position=(var(%s), var(%s), var(%s)),' % (new_name, '%g' % round(press[0], 4), '%g' % round(press[1], 4), '%g' % round(press[2] - 4.0, 4)))
+                               '%s = point(\n    position=(var(%s), var(%s), var(%s)),' % (new_name, '%g' % round(press[0], 4), '%g' % round(press[1], 4), '%g' % round(press[2] - 2.0, 4)))        # (2, not 4: the faces of a body are made of its points at every run, and a point pulled in by 4 on a cube of 10 is nearer the side face than the top one, so it dents that face -- measured 2026-11-10 with the point exact on the surface; the dent of the top face is what is asked here)
         check('%s: the text of the new point is what the test expects (a bump and a dent are made by changing its z)' % name, up != script2 and down != script2)
         bump = make(up)[name + '_1']
         dent = make(down)[name + '_1']
@@ -415,140 +425,60 @@ def toggling():
 
 
 def tangent_planes():
-    # SMOOTH IN ALL DIRECTIONS (the user, 2026-11-01): along every edge between two spline points the two faces have ONE tangent plane -- worked out here from the control points of their patches, at points
-    # all along the edge, not from a mesh (a mesh of a curved surface turns by a few degrees at every step whatever the surface does: only the control points say whether the planes are the same).
-    # A face of three is three patches of four (see `triangle` in morph.py): they are asked the same along the edge of the cage they share with the next face (each covers a half of it), and along the
-    # three lines inside the face where they meet
+    # SMOOTH IN ALL DIRECTIONS (the user, 2026-11-01).  Until 2026-11-10 this was measured on the control points of the patches of each face (one tangent plane along every edge, to a thousandth of a degree).  The
+    # surface is now the limit of a Catmull-Clark subdivision of control points made from the points (H170, see the module): C2 and with one tangent plane at every point (C1 at a point of a valence other than 4), so the
+    # planes are the same along an edge by construction, and there are no patches left to ask.  What is checked is the drawn mesh: no two neighbouring triangles turn away from each other by more than a few
+    # degrees (the mesh has 32 pieces to an edge: a cage edge that was a crease -- a box with a sharp edge turns by 90 degrees there -- would show as one jump), for the cases the old check had; a corner is a
+    # kink by design and must show.
     from fieldes.stdlib import morph as morph_module
-    caught = {}
-    original = morph_module._tessellate
 
-    def wrapped(cage, V, edge, n, gregory, triangle):
-        caught.update(cage=cage, V=V, edge=edge, gregory=gregory, triangle=triangle)
-        return original(cage, V, edge, n, gregory, triangle)
-
-    def num(v):
-        return tuple(float(C.value_of(c)) for c in v)
-
-    def add(a, b): return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
     def sub(a, b): return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
-    def sc(s, a): return (a[0] * s, a[1] * s, a[2] * s)
     def cross(a, b): return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
     def dot(a, b): return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
-    def bern(k, d, t):
-        return math.comb(d, k) * t ** k * (1 - t) ** (d - k)
+    def largest_turn(points, faces=None):
+        ''' (the largest angle in degrees between the normals of two triangles that share an edge of the mesh, the number of such edges) '''
+        controls, vertices, tris = morph_module.morph_numbers(points, faces=faces)
+        pos = [tuple(sum(w * controls[c][a] for c, w in terms) for a in range(3)) for terms in vertices]
+        normals = []
+        for a, b, c in tris:
+            n = cross(sub(pos[b], pos[a]), sub(pos[c], pos[a]))
+            length = math.sqrt(dot(n, n))
+            normals.append(None if length < 1e-12 else (n[0] / length, n[1] / length, n[2] / length))
+        owners = {}
+        for t, (a, b, c) in enumerate(tris):
+            for u, v in ((a, b), (b, c), (c, a)):
+                owners.setdefault((min(u, v), max(u, v)), []).append(t)
+        worst, count = 0.0, 0
+        for pair in owners.values():
+            if len(pair) == 2 and normals[pair[0]] is not None and normals[pair[1]] is not None:
+                count += 1
+                worst = max(worst, math.degrees(math.acos(max(-1.0, min(1.0, dot(normals[pair[0]], normals[pair[1]]))))))
+        return worst, count
 
-    def combo(pts, d, t):
-        out = (0.0, 0.0, 0.0)
-        for k, p in enumerate(pts):
-            out = add(out, sc(bern(k, d, t), p))
-        return out
-
-    def normal(B, R, s):
-        ''' across the tangent plane of a patch at the place s of its edge: the edge's own direction and the cross-boundary derivative, which is three times the second row less the edge '''
-        return cross(sc(3.0, combo([sub(B[k + 1], B[k]) for k in range(3)], 2, s)), sc(3.0, combo([sub(R[k], B[k]) for k in range(4)], 3, s)))
-
-    def angle(n1, n2):
-        # (the normals face out of the body on both sides, so a face that leaves the edge the wrong way -- folded back over the other -- makes an angle of up to 180 degrees, not 0)
-        cosine = dot(n1, n2) / math.sqrt(dot(n1, n1) * dot(n2, n2))
-        return math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
-
-    def measure(points, faces=None, sharp=False):
-        ''' (the largest angle between the tangent planes of two patches along the edges of the cage between spline points -- or, with sharp, the edges that have a corner at an end --, how many edges,
-            the same along the lines inside the faces of three, how many) '''
-        caught.clear()
-        morph_module._tessellate = wrapped
-        try:
-            body = morph_body(points, _faces=faces)
-        finally:
-            morph_module._tessellate = original
-        cage, V, edge, gregory, triangle = caught['cage'], caught['V'], caught['edge'], caught['gregory'], caught['triangle']
-        smooth = [p._curve_smooth for p in body.points]
-        Vn = lambda i: num(V[i])
-        E = lambda i, j: num(edge(i, j))
-        found, inner = [], {}
-
-        def put(x, y, whole, B, R, turns):
-            # (the edge of a patch from x to y: the whole edge of the cage, or the half of it that starts at x -- where it starts and ends along the cage edge, counted from the lower point -- and whether
-            # the face goes round x to y counterclockwise (then the interior is on the left and the normal across the edge and the way into the face faces out) or y to x)
-            lo, hi = min(x, y), max(x, y)
-            a_t = 0.0 if x == lo else 1.0
-            b_t = (1.0 if whole else 0.5) if x == lo else (0.0 if whole else 0.5)
-            found.append((lo, hi, a_t, b_t, B, R, 1.0 if turns else -1.0))
-        for fi, face in enumerate(cage):
-            if len(face) == 4:
-                a, b, c, d = face
-                ver = {k: (num(p), num(q)) for k, (p, q) in gregory(face).items()}
-                put(a, b, True, (Vn(a), E(a, b), E(b, a), Vn(b)), (E(a, d), ver[(1, 1)][0], ver[(2, 1)][0], E(b, c)), True)
-                put(b, c, True, (Vn(b), E(b, c), E(c, b), Vn(c)), (E(b, a), ver[(2, 1)][1], ver[(2, 2)][1], E(c, d)), True)
-                put(d, c, True, (Vn(d), E(d, c), E(c, d), Vn(c)), (E(d, a), ver[(1, 2)][0], ver[(2, 2)][0], E(c, b)), False)
-                put(a, d, True, (Vn(a), E(a, d), E(d, a), Vn(d)), (E(a, b), ver[(1, 1)][1], ver[(1, 2)][1], E(d, c)), False)
-            else:
-                a, b, c = face
-                for s, (net, versions) in enumerate(triangle(face)):
-                    x, y, z = ((a, b, c), (b, c, a), (c, a, b))[s]
-                    N = [[num(p) for p in row] for row in net]
-                    ver = {k: (num(p), num(q)) for k, (p, q) in versions.items()}
-                    put(x, y, False, (N[0][0], N[1][0], N[2][0], N[3][0]), (N[0][1], ver[(1, 1)][0], ver[(2, 1)][0], N[3][1]), True)
-                    put(x, z, False, (N[0][0], N[0][1], N[0][2], N[0][3]), (N[1][0], ver[(1, 1)][1], ver[(1, 2)][1], N[1][3]), False)
-                    # (the lines inside the face, both ways from the middle of an edge to the middle of the face: the patch at x has the one for the edge x y as its edge b c and the one for the edge z x as its d c)
-                    inner.setdefault((fi, x), []).append(((N[3][0], N[3][1], N[3][2], N[3][3]), (N[2][0], ver[(2, 1)][1], ver[(2, 2)][1], N[2][3]), 1.0))
-                    inner.setdefault((fi, z), []).append(((N[0][3], N[1][3], N[2][3], N[3][3]), (N[0][2], ver[(1, 2)][0], ver[(2, 2)][0], N[3][2]), -1.0))
-        by_edge = {}
-        for record in found:
-            by_edge.setdefault((record[0], record[1]), []).append(record)
-        worst, edges = 0.0, 0
-        for (lo, hi), records in by_edge.items():
-            if bool(smooth[lo] and smooth[hi]) == sharp:
-                continue                                                # (sharp=True looks at the edges that have a corner at an end: the measure must see those)
-            edges += 1
-            for t in (0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95):
-                normals = []
-                for _, _, a_t, b_t, B, R, turning in records:
-                    s = (t - a_t) / (b_t - a_t)
-                    if -1e-9 <= s <= 1.0 + 1e-9:
-                        normals.append(sc(turning, normal(B, R, min(1.0, max(0.0, s)))))
-                for i in range(len(normals)):
-                    for j in range(i):
-                        worst = max(worst, angle(normals[i], normals[j]))
-        worst_inner = 0.0
-        for pair in inner.values():
-            for s in (0.05, 0.25, 0.5, 0.75, 0.95):
-                worst_inner = max(worst_inner, angle(sc(pair[0][2], normal(pair[0][0], pair[0][1], s)), sc(pair[1][2], normal(pair[1][0], pair[1][1], s))))
-        return worst, edges, worst_inner, len(inner)
-    tolerance = 1e-3                                                    # (degrees: the kernel hands the points back in single precision, which is 1e-5 degrees; a real kink is degrees)
+    limit = 20.0                                                        # (degrees: the turn of neighbouring triangles of a smooth round body at 32 pieces to an edge is far under it, a crease along an edge of a box cage is 90)
     box = corners((0, 0, 0), (40, 30, 20))
-    worst, edges, _, _ = measure([point(position=c) for c in box])
-    check('morph_body of eight spline points: along all %d edges the two faces have the same tangent plane (the largest angle between them %.6f degrees)' % (edges, worst), edges == 12 and worst < tolerance, (edges, worst))
-    worst, edges, _, _ = measure([point(position=c, rotation=((10, 20, 50) if i in (0, 7) else (0, 0, 0))) for i, c in enumerate(box)])
-    check('rotated spline points: the two faces still have one tangent plane along every edge (%.6f degrees)' % worst, edges == 12 and worst < tolerance, (edges, worst))
-    skew = [(x * 1.0 + 0.15 * y, y * 1.0 - 0.1 * z, z + 0.2 * x) for x, y, z in box]               # (a box that is not a box: the planes are the same for any cage)
-    worst, edges, _, _ = measure([point(position=c) for c in skew])
-    check('a skewed cage of eight spline points: the same (%.6f degrees)' % worst, edges == 12 and worst < tolerance, (edges, worst))
-    worst, edges, _, _ = measure([point(position=c, smooth=(i != 7)) for i, c in enumerate(box)])
-    check('one corner among spline points: the edges between spline points are smooth, the three at the corner are not asked (%d edges, %.6f degrees)' % (edges, worst), edges == 9 and worst < tolerance, (edges, worst))
-    kinked, edges, _, _ = measure([point(position=c, smooth=(i != 7)) for i, c in enumerate(box)], sharp=True)
-    check('the measure sees a kink: the three edges at that corner turn by %.1f degrees (they are sharp by design)' % kinked, edges == 3 and kinked > 10.0, (edges, kinked))
-    # a point put on the top face by a press: the face is split in four faces of three round it, and the body is smooth along the four new edges, along the four edges of the old top face (a face of four
-    # and a face of three meet there) and along the lines inside each face of three
-    lifted = [point(position=c) for c in box] + [point(position=(20, 15, 27))]
+    worst, count = largest_turn([point(position=c) for c in box])
+    check('morph_body of eight spline points: no two neighbouring triangles of the %d edges of the mesh turn by more than %.0f degrees (the largest %.2f)' % (count, limit, worst), count > 1000 and worst < limit, (count, worst))
+    worst, count = largest_turn([point(position=c, rotation=((10, 20, 50) if i in (0, 7) else (0, 0, 0))) for i, c in enumerate(box)])
+    check('rotated spline points: the same (the largest %.2f degrees)' % worst, count > 1000 and worst < limit, (count, worst))
+    skew = [(x * 1.0 + 0.15 * y, y * 1.0 - 0.1 * z, z + 0.2 * x) for x, y, z in box]               # (a box that is not a box)
+    worst, count = largest_turn([point(position=c) for c in skew])
+    check('a skewed cage of eight spline points: the same (the largest %.2f degrees)' % worst, count > 1000 and worst < limit, (count, worst))
+    worst, count = largest_turn([point(position=c, smooth=(i != 7)) for i, c in enumerate(box)])
+    check('one corner among spline points: the corner is a kink by design and shows (the largest turn %.1f degrees, over %.0f)' % (worst, limit), count > 1000 and worst > limit, (count, worst))
+    # a point put on the top face by a press: the face is split in four faces of three round it; pressed out and in (the normals face out on both sides of every edge, so a face folded back over the one next
+    # to it would make 180 degrees, not a few)
     others = [(0, 2, 3, 1), (0, 1, 5, 4), (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5)]
     fans = [(4, 5, 8), (5, 7, 8), (7, 6, 8), (6, 4, 8)]
-    worst, edges, inner, lines = measure(lifted, others + fans)
-    check('a point pressed out of the top face: all %d edges of the cage have one tangent plane (%.6f degrees), and the %d lines inside the four faces of three (%.6f degrees)' % (edges, worst, lines, inner),
-          edges == 16 and lines == 12 and worst < tolerance and inner < tolerance, (edges, worst, lines, inner))
-    # the same pressed in (a dent): the normals face out on both sides of every edge, so a face that folded back over the one next to it would make 180 degrees, not 0
-    for z in (22, 20, 16, 12):
-        worst, edges, inner, lines = measure([point(position=c) for c in box] + [point(position=(20, 15, z))], others + fans)
-        check('a point put at z = %d (the top face is at 20): one tangent plane along the %d edges, normals facing out on both sides (%.6f degrees), and along the %d lines inside the faces of three (%.6f degrees)' % (z, edges, worst, lines, inner),
-              edges == 16 and lines == 12 and worst < tolerance and inner < tolerance, (edges, worst, lines, inner))
+    for z in (27, 22, 20, 16, 12):
+        worst, count = largest_turn([point(position=c) for c in box] + [point(position=(20, 15, z))], others + fans)
+        check('a point put at z = %d (the top face is at 20): no two neighbouring triangles turn by more than %.0f degrees (the largest %.2f)' % (z, limit, worst), count > 1000 and worst < limit, (count, worst))
     # a body of faces of three only: an octahedron of spline points
     octa = [point(position=(20, 0, 0)), point(position=(-20, 0, 0)), point(position=(0, 15, 0)), point(position=(0, -15, 0)), point(position=(0, 0, 10)), point(position=(0, 0, -10))]
     faces = [(0, 2, 4), (2, 1, 4), (1, 3, 4), (3, 0, 4), (2, 0, 5), (1, 2, 5), (3, 1, 5), (0, 3, 5)]
-    worst, edges, inner, lines = measure(octa, faces)
-    check('an octahedron of spline points, eight faces of three: all %d edges (%.6f degrees) and %d lines inside the faces (%.6f degrees) have one tangent plane' % (edges, worst, lines, inner),
-          edges == 12 and lines == 24 and worst < tolerance and inner < tolerance, (edges, worst, lines, inner))
+    worst, count = largest_turn(octa, faces)
+    check('an octahedron of spline points, eight faces of three: the largest turn %.2f degrees' % worst, count > 500 and worst < limit, (count, worst))
 
 
 def cache():
@@ -704,10 +634,12 @@ def resolution_of_the_view():
         view.settings.pop('resolution', None)
     check('the drawn surface of a morph body has more vertices the higher the resolution (3, 5, 10, 20: %s)' % ', '.join(str(counts[r][0]) for r in (3, 5, 10, 20)),
           counts[3][0] < counts[5][0] < counts[10][0] < counts[20][0], counts)
-    check('... at the resolution 10 it is what it always was (2402 vertices, 4800 triangles)', counts[10] == (2402, 4800), counts[10])
+    # (H170, 2026-11-10: the pieces to a cage edge are the argument of the mesher, any even number that follows the resolution -- 10, 16, 32 and 64 at the resolutions 3, 5, 10 and 20 for a cube: 602, 1538, 6146 and
+    # 24578 vertices, 6146 and 12288 triangles at the default 10; it was 20 pieces, 2402 vertices.  A cube may go to 64 pieces (_drawn_top), a body of more faces or with a sphere point keeps 32)
+    check('... at the resolution 10 it is what it is now (6146 vertices, 12288 triangles)', counts[10] == (6146, 12288), counts[10])
     check('... and half the resolution draws about a quarter of the vertices (%.2f)' % (counts[5][0] / counts[10][0]), 0.2 < counts[5][0] / counts[10][0] < 0.35)
     none = morph_body(box)
-    check('... with no resolution said it is what it was at 10', (len(none._morph_vstart) - 1, len(none._morph_tris)) == (2402, 4800))
+    check('... with no resolution said it is what it was at 10', (len(none._morph_vstart) - 1, len(none._morph_tris)) == (6146, 12288))
 
 
 def points_in_place():

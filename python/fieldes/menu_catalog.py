@@ -169,8 +169,10 @@ _SPLINE = _LINE_POINTS + '#@@#\nspline([' + _LINE_LIST + '])'
 # for the cube and splines for the morph body"): the eight points are the corners of a box round the click, in the order x changes fastest, then y, then z
 # (a body of points says its influence from the start, influence=var(1): the tree would write it into every point right after the body is made -- a second run of the script that replaces the body once more, H77)
 _MORPH_POINTS, _MORPH_LIST = _points(*[('{xp}' if i & 1 else '{xm}', '{yp}' if i & 2 else '{ym}', '{zp}' if i & 4 else '{zm}') for i in range(8)], influence='1')
-_MORPH_POLYHEDRON = _MORPH_POINTS + '#@@#\nmorph_polyhedron([' + _MORPH_LIST + '])'
-_MORPH_BODY = _MORPH_POINTS + '#@@#\nmorph_body([' + _MORPH_LIST + '])'
+# (H167, the user, 2026-11-09: "The morph body starts without a position when created and it is only written when you click on it in the model tree. The position should just always be there from the get go":
+# the position of a body of points is the middle of its points -- here the click, the middle of the box the eight points are the corners of -- and it is written with the body, as the tree writes it)
+_MORPH_POLYHEDRON = _MORPH_POINTS + '#@@#\nmorph_polyhedron([' + _MORPH_LIST + '], position=({x}, {y}, {z}))'
+_MORPH_BODY = _MORPH_POINTS + '#@@#\nmorph_body([' + _MORPH_LIST + '], position=({x}, {y}, {z}))'
 
 # A radial field, or a distance to a point, made from the menu is made of a POINT (the Point class: a model of its own, with its gizmo), written above it -- not of a vector (the user, 2026-10-28:
 # "DO YOU KNOW WHAT THE POINT CLASS IS IN FIELDES?") --, and the point says its INFLUENCE, which is the radius of the field: negative inside it, 0 on it, positive outside, and the ring of the point's gizmo drags it
@@ -190,21 +192,21 @@ FROM_SELECTION = {
     'profile': (tr('A 2D shape from points or from a surface.  With points selected: made from them, in the order you selected them.  With a surface selected: its '
                   'outline (a flat face exactly; a surface that is not flat is projected onto a plane).  With none: four new points to drag.  '
                   'Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
-               [({'point'}, 3, None, 'profile([{names}])'), ({'curve'}, 1, None, 'profile({name})'), ({'surface'}, 1, None, 'profile({name})')]),
+               [({'point', 'points'}, 3, None, 'profile([{names}])'), ({'curve'}, 1, None, 'profile({name})'), ({'surface'}, 1, None, 'profile({name})')]),
     'morph_polyhedron': (tr('A body made of points with flat faces and a sharp corner at each point (a polyhedron).  With four or more points selected (not all in one plane): made from them, with the '
                       'faces of their convex hull.  With none: eight new points to drag, the corners of a cube.  Double-click a point to make it a corner or a spline point; '
                       'press a surface and drag to pull the points near it'),
-                   [({'point'}, 4, None, 'morph_polyhedron([{names}])')]),
+                   [({'point', 'points'}, 4, None, 'morph_polyhedron([{names}])')]),
     'morph_body': (tr('A smooth body made of points: its surface goes through every point and is smooth there, every point a spline point (it is not a polyhedron).  With four or more points selected '
-                      '(not all in one plane): made from them -- the faces of their convex hull say which points are joined, the surface between stays smooth.  With none: eight new points to '
+                      '(not all in one plane): made from them -- the faces made of the points say which points are joined, the surface between stays smooth.  With none: eight new points to '
                       'drag, the corners of a cube.  Double-click a point to make it a corner or a spline point; press a surface and drag to pull the points near it'),
-                   [({'point'}, 4, None, 'morph_body([{names}])')]),
+                   [({'point', 'points'}, 4, None, 'morph_body([{names}])')]),
     'polyline': (tr('A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
                     'drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
-                 [({'point'}, 2, None, 'polyline([{names}])')]),
+                 [({'point', 'points'}, 2, None, 'polyline([{names}])')]),
     'spline': (tr('A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
                   'drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
-               [({'point'}, 2, None, 'spline([{names}])')]),
+               [({'point', 'points'}, 2, None, 'spline([{names}])')]),
     # (a field of a point is made ON the point that is selected -- its influence is the radius -- and of a new point when none is: the user, 2026-10-28, "you dont create the radial field on a selected point,
     # but ALWAYS insert your own new point.  That is obviously not what I want")
     'radial_field': (tr('A field: how far every place is from the axis through a point -- its radius is the influence of the point.  With a point selected: made on that point.  With none: '
@@ -1135,7 +1137,7 @@ def _default_morph_template(name, values, r):
             text += sym.image_statement('{var}_p%d' % (i + 1), '{var}_p%d' % (j + 1), elements[e], symmetry_var)
         else:
             text += _gizmoed_point('{var}_p%d' % (j + 1), x, y, z, '1')
-    return text + '#@@#\n' + '%s([%s])' % (name, ', '.join('{var}_p%d' % (k + 1) for k in range(8)))
+    return text + '#@@#\n' + '%s([%s], position=({x}, {y}, {z}))' % (name, ', '.join('{var}_p%d' % (k + 1) for k in range(8)))
 
 
 def _screw_for(size):

@@ -35,7 +35,7 @@ __all__ = ['instance']
 
 # What belongs to the original's own statements, not to what the original IS: its gizmo (the copy has its own), its lock, what it was placed from, the pivot of the faces
 # that were dragged, whether it is kept in the render cache
-_NOT_TAKEN = ('ptr', '_gizmo', '_locked', '_placed_from', '_placed_parts', '_pivot_shape', '_render_cache', '_literal_seen', '_outline_mode')
+_NOT_TAKEN = ('ptr', '_gizmo', '_gizmo_centre', '_gizmo_centre_live', '_handle_numbers', '_locked', '_placed_from', '_placed_parts', '_pivot_shape', '_render_cache', '_literal_seen', '_outline_mode')
 
 
 def instance(shape):

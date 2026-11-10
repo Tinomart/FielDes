@@ -61,6 +61,25 @@ except Exception:
     traceback.print_exc()
     bad.append('an error')
 
+# The matrix of an image is worked out once for a symmetry and kept on it (symmetries._frame_matrix): asked again it is the same, it is the matrix worked out again, and a gizmo put on the symmetry
+# afterwards gives another one
+try:
+    kept = symmetry_planes(1, 'axis', (0, 0, 1), (0, 1, 0), position=(48, 0, 0))
+    first = symmetries._frame_matrix(kept, 1)
+    check('a symmetry keeps the matrix of an image: asked again it is the same one', symmetries._frame_matrix(kept, 1) is first)
+    c, turn = symmetries._frame_of(kept)
+    fresh = symmetries._matmul_expr(turn, symmetries._matmul_expr(symmetries.base_elements(kept._symmetry_def)[0], symmetries._transpose(turn)))
+    check('... and it is the matrix worked out again', all(abs(fresh[i][j] - first[2][i][j]) < 1e-12 for i in range(3) for j in range(3)) and all(abs(c[i] - first[4][i]) < 1e-12 for i in range(3)))
+    g = getattr(kept, '_gizmo', None)
+    check('the symmetry has the gizmo that holds its place', g is not None)
+    if g is not None:
+        kept._gizmo = (g[0], g[1], (g[2][0] + 5.0, g[2][1], g[2][2]), g[3], g[4])
+        moved = symmetries._frame_matrix(kept, 1)
+        check('a gizmo put on it later gives another matrix and centre (the centre moved by 5)', abs(moved[4][0] - first[4][0] - 5.0) < 1e-12, (first[4][0], moved[4][0]))
+except Exception:
+    traceback.print_exc()
+    bad.append('an error in the kept matrix checks')
+
 print()
 print('FAILED: %s' % bad if bad else 'ALL PASSED')
 raise SystemExit(1 if bad else 0)

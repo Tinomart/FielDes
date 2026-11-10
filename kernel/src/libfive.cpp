@@ -19,6 +19,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <mutex>
 #include <thread>
 #include <vector>
+#include <unordered_map>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -382,15 +383,609 @@ libfive_tree libfive_import_mesh(const char* filename, float scale,
     return finishMeshImport(std::move(t), ok, error, mi, info);
 }
 
+// THE FIELD OF A MESH THAT WAS MADE A MOMENT AGO FROM THE SAME ARRAYS (the user, 2026-11-10: putting a point in a body takes seconds; measured on sheep_horn: the sweep of a path extrusion and the sweep of its mirror image are 81 000
+// triangles each, and making their distance fields took 154 and 197 ms at EVERY run of the script, from the same numbers).  The arrays are compared whole -- no hash that could be wrong --, the field is the same tree, so a run
+// that makes the same mesh again is given the field it made before.  Only a field that took 20 ms or more to make is kept (a small mesh costs less than keeping it), and at most six of them, the one used last kept longest
+namespace {
+struct KeptMeshField
+{
+    std::vector<float> xyz;
+    std::vector<uint32_t> tri;
+    float scale;
+    Tree tree;
+    mesh::MeshImportInfo mi;
+};
+std::mutex g_keptMeshLock;
+// (never destroyed: the trees in it let go of the cache of trees when they are, and at the end of the program that cache may be gone before a list of this file is)
+std::list<KeptMeshField>& keptMesh()
+{
+    static std::list<KeptMeshField>* list = new std::list<KeptMeshField>();      // (the one used last first)
+    return *list;
+}
+const size_t kKeptMeshMost = 6;
+}
+
 libfive_tree libfive_mesh_from_arrays(const float* xyz, uint32_t vertex_count,
                                       const uint32_t* tri, uint32_t tri_count,
                                       float scale, libfive_mesh_import_info* info)
 {
+    {
+        std::lock_guard<std::mutex> lock(g_keptMeshLock);
+        auto& list = keptMesh();
+        for (auto it = list.begin(); it != list.end(); ++it)
+        {
+            if (it->scale == scale
+                && it->xyz.size() == size_t(vertex_count) * 3
+                && it->tri.size() == size_t(tri_count) * 3
+                && std::memcmp(it->xyz.data(), xyz, it->xyz.size() * sizeof(float)) == 0
+                && std::memcmp(it->tri.data(), tri, it->tri.size() * sizeof(uint32_t)) == 0)
+            {
+                list.splice(list.begin(), list, it);
+                const KeptMeshField& kept = list.front();
+                return finishMeshImport(Tree(kept.tree), true, std::string(), kept.mi, info);
+            }
+        }
+    }
     bool ok = false;
     std::string error;
     mesh::MeshImportInfo mi;
+    const auto started = std::chrono::steady_clock::now();
     Tree t = mesh::meshTreeFromArrays(xyz, vertex_count, tri, tri_count, scale, mi, ok, error);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    if (ok && ms >= 20.0)
+    {
+        std::lock_guard<std::mutex> lock(g_keptMeshLock);
+        auto& list = keptMesh();
+        list.push_front(KeptMeshField{std::vector<float>(xyz, xyz + size_t(vertex_count) * 3),
+                                      std::vector<uint32_t>(tri, tri + size_t(tri_count) * 3),
+                                      scale, t, mi});
+        while (list.size() > kKeptMeshMost)
+        {
+            list.pop_back();
+        }
+    }
     return finishMeshImport(std::move(t), ok, error, mi, info);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------
+// THE LEVELS OF A CATMULL-CLARK SUBDIVISION AS WEIGHTS (the user, 2026-11-10: putting a point in a body takes seconds; the weights of the vertices of the finest mesh over the points of the net it starts from took
+// 0.4 s of Python for a body of 36 points, and were made again whenever a point was put in, since the faces were new).  The same steps as morph.py's _cc_step, then the limit position, on the same numbers: a mesh of quadrilaterals with
+// the weights of every vertex over the points of the first mesh, `kind` of every vertex (0 the points that the steps make: a crease through them if two crease edges meet there, a corner if more; 1 a corner; 2 smooth), the crease
+// edges; `level` - 1 steps of the rule and then the LIMIT position of every vertex.  The result is the rows of weights (the ones of 1e-9 or less left out), the quadrilaterals of the finest mesh, the quadrilateral of the first mesh
+// each is part of and where its four corners are in it (s, t) -- what the mesh at any number of pieces is sampled from
+namespace {
+
+typedef std::vector<std::pair<int32_t, double> > CcRow;
+
+class CcSum
+{
+public:
+    explicit CcSum(size_t n) : value(n, 0.0), seen(n, 0) {}
+    void add(const CcRow& row, double c)
+    {
+        for (const auto& kv : row)
+        {
+            const size_t k = static_cast<size_t>(kv.first);
+            if (!seen[k])
+            {
+                seen[k] = 1;
+                touched.push_back(kv.first);
+            }
+            value[k] += c * kv.second;
+        }
+    }
+    CcRow take()
+    {
+        CcRow out;
+        out.reserve(touched.size());
+        for (int32_t k : touched)
+        {
+            out.emplace_back(k, value[static_cast<size_t>(k)]);
+            value[static_cast<size_t>(k)] = 0.0;
+            seen[static_cast<size_t>(k)] = 0;
+        }
+        touched.clear();
+        return out;
+    }
+private:
+    std::vector<double> value;
+    std::vector<char> seen;
+    std::vector<int32_t> touched;
+};
+
+struct CcMesh
+{
+    std::vector<CcRow> verts;
+    std::vector<std::array<int32_t, 4> > faces;
+    std::vector<int32_t> kind;
+    std::vector<std::pair<int32_t, int32_t> > creases;          // (a < b)
+    std::vector<int32_t> quad;                                   // the quadrilateral of the first mesh each face is part of
+    std::vector<std::array<double, 8> > corner;                  // (s, t) of its four corners in that quadrilateral
+};
+
+uint64_t ccEdgeKey(int32_t a, int32_t b)
+{
+    const uint32_t lo = static_cast<uint32_t>(a < b ? a : b), hi = static_cast<uint32_t>(a < b ? b : a);
+    return (static_cast<uint64_t>(lo) << 32) | hi;
+}
+
+// the neighbours along crease edges of every vertex
+std::vector<std::vector<int32_t> > ccCreaseNeighbours(size_t nv, const std::vector<std::pair<int32_t, int32_t> >& creases)
+{
+    std::vector<std::vector<int32_t> > out(nv);
+    for (const auto& c : creases)
+    {
+        out[static_cast<size_t>(c.first)].push_back(c.second);
+        out[static_cast<size_t>(c.second)].push_back(c.first);
+    }
+    return out;
+}
+
+// One step of Catmull-Clark with creases on a mesh of quadrilaterals, the rule of morph.py's _cc_step; false where the mesh is not closed
+bool ccStep(const CcMesh& in, CcMesh& out, CcSum& sum)
+{
+    const size_t nv = in.verts.size();
+    const size_t nf = in.faces.size();
+    // the edges in the order they are first met, and the two faces of each
+    std::unordered_map<uint64_t, int32_t> edgeId;
+    std::vector<std::pair<int32_t, int32_t> > edgeEnds;
+    std::vector<std::array<int32_t, 3> > edgeFaces;                  // (face, face, how many)
+    for (size_t fi = 0; fi < nf; ++fi)
+    {
+        const auto& f = in.faces[fi];
+        for (int k = 0; k < 4; ++k)
+        {
+            const int32_t a = f[k], b = f[(k + 1) % 4];
+            const uint64_t key = ccEdgeKey(a, b);
+            auto it = edgeId.find(key);
+            if (it == edgeId.end())
+            {
+                it = edgeId.emplace(key, static_cast<int32_t>(edgeEnds.size())).first;
+                edgeEnds.emplace_back(a < b ? a : b, a < b ? b : a);
+                edgeFaces.push_back({-1, -1, 0});
+            }
+            auto& ef = edgeFaces[static_cast<size_t>(it->second)];
+            if (ef[2] >= 2) return false;
+            ef[static_cast<size_t>(ef[2])] = static_cast<int32_t>(fi);
+            ef[2] += 1;
+        }
+    }
+    for (const auto& ef : edgeFaces)
+    {
+        if (ef[2] != 2) return false;
+    }
+    const size_t ne = edgeEnds.size();
+    std::vector<uint64_t> creaseSet;
+    creaseSet.reserve(in.creases.size());
+    for (const auto& c : in.creases) creaseSet.push_back(ccEdgeKey(c.first, c.second));
+    std::sort(creaseSet.begin(), creaseSet.end());
+    auto isCrease = [&](int32_t a, int32_t b) { return std::binary_search(creaseSet.begin(), creaseSet.end(), ccEdgeKey(a, b)); };
+
+    std::vector<CcRow> fpts(nf), ev(ne);
+    for (size_t fi = 0; fi < nf; ++fi)
+    {
+        for (int k = 0; k < 4; ++k) sum.add(in.verts[static_cast<size_t>(in.faces[fi][k])], 1.0 / 4.0);
+        fpts[fi] = sum.take();
+    }
+    for (size_t e = 0; e < ne; ++e)
+    {
+        const int32_t a = edgeEnds[e].first, b = edgeEnds[e].second;
+        if (isCrease(a, b))
+        {
+            sum.add(in.verts[static_cast<size_t>(a)], 0.5);
+            sum.add(in.verts[static_cast<size_t>(b)], 0.5);
+        }
+        else
+        {
+            sum.add(in.verts[static_cast<size_t>(a)], 0.25);
+            sum.add(in.verts[static_cast<size_t>(b)], 0.25);
+            sum.add(fpts[static_cast<size_t>(edgeFaces[e][0])], 0.25);
+            sum.add(fpts[static_cast<size_t>(edgeFaces[e][1])], 0.25);
+        }
+        ev[e] = sum.take();
+    }
+    std::vector<std::vector<int32_t> > vfaces(nv), vedges(nv);
+    for (size_t fi = 0; fi < nf; ++fi)
+    {
+        for (int k = 0; k < 4; ++k) vfaces[static_cast<size_t>(in.faces[fi][k])].push_back(static_cast<int32_t>(fi));
+    }
+    for (size_t e = 0; e < ne; ++e)
+    {
+        vedges[static_cast<size_t>(edgeEnds[e].first)].push_back(edgeEnds[e].second);
+        vedges[static_cast<size_t>(edgeEnds[e].second)].push_back(edgeEnds[e].first);
+    }
+    const auto cnb = ccCreaseNeighbours(nv, in.creases);
+    out.verts.clear();
+    out.verts.reserve(nv + ne + nf);
+    for (size_t v = 0; v < nv; ++v)
+    {
+        const size_t n = vedges[v].size();
+        if (n < 2 || vfaces[v].size() != n) return false;
+        if (in.kind[v] == 1 || (in.kind[v] == 0 && cnb[v].size() >= 3))
+        {
+            out.verts.push_back(in.verts[v]);
+            continue;
+        }
+        if (in.kind[v] == 0 && cnb[v].size() == 2)
+        {
+            sum.add(in.verts[v], 0.75);
+            sum.add(in.verts[static_cast<size_t>(cnb[v][0])], 0.125);
+            sum.add(in.verts[static_cast<size_t>(cnb[v][1])], 0.125);
+            out.verts.push_back(sum.take());
+            continue;
+        }
+        const double nn = static_cast<double>(n);
+        const double n2 = 1.0 / (nn * nn);
+        sum.add(in.verts[v], (nn - 2.0) / nn);
+        for (int32_t w : vedges[v]) sum.add(in.verts[static_cast<size_t>(w)], n2);
+        for (int32_t fi : vfaces[v]) sum.add(fpts[static_cast<size_t>(fi)], n2);
+        out.verts.push_back(sum.take());
+    }
+    for (size_t e = 0; e < ne; ++e) out.verts.push_back(std::move(ev[e]));
+    for (size_t fi = 0; fi < nf; ++fi) out.verts.push_back(std::move(fpts[fi]));
+    const int32_t fbase = static_cast<int32_t>(nv + ne);
+    out.faces.clear();
+    out.faces.reserve(nf * 4);
+    out.quad.clear();
+    out.quad.reserve(nf * 4);
+    out.corner.clear();
+    out.corner.reserve(nf * 4);
+    for (size_t fi = 0; fi < nf; ++fi)
+    {
+        const auto& f = in.faces[fi];
+        const auto& pts = in.corner[fi];
+        const double midS = (pts[0] + pts[2] + pts[4] + pts[6]) / 4.0;
+        const double midT = (pts[1] + pts[3] + pts[5] + pts[7]) / 4.0;
+        for (int k = 0; k < 4; ++k)
+        {
+            const int32_t eNext = static_cast<int32_t>(nv) + edgeId.at(ccEdgeKey(f[k], f[(k + 1) % 4]));
+            const int32_t ePrev = static_cast<int32_t>(nv) + edgeId.at(ccEdgeKey(f[(k + 3) % 4], f[k]));
+            out.faces.push_back({f[k], eNext, fbase + static_cast<int32_t>(fi), ePrev});
+            out.quad.push_back(in.quad[fi]);
+            const int kn = (k + 1) % 4, kp = (k + 3) % 4;
+            out.corner.push_back({pts[2 * k], pts[2 * k + 1],
+                                  (pts[2 * k] + pts[2 * kn]) / 2.0, (pts[2 * k + 1] + pts[2 * kn + 1]) / 2.0,
+                                  midS, midT,
+                                  (pts[2 * k] + pts[2 * kp]) / 2.0, (pts[2 * k + 1] + pts[2 * kp + 1]) / 2.0});
+        }
+    }
+    out.creases.clear();
+    out.creases.reserve(in.creases.size() * 2);
+    for (const auto& c : in.creases)
+    {
+        const int32_t e = static_cast<int32_t>(nv) + edgeId.at(ccEdgeKey(c.first, c.second));
+        out.creases.emplace_back(c.first < e ? c.first : e, c.first < e ? e : c.first);
+        out.creases.emplace_back(c.second < e ? c.second : e, c.second < e ? e : c.second);
+    }
+    out.kind = in.kind;
+    out.kind.resize(nv + ne + nf, 0);
+    return true;
+}
+
+// The limit position of every vertex of a mesh of quadrilaterals as the weights of its points: (n^2 v + 4 sum of its edge neighbours + sum of its diagonal neighbours) / (n (n + 5)), a corner itself, a point with two crease edges (e1 + 4 v + e2) / 6
+std::vector<CcRow> ccLimit(const CcMesh& m, CcSum& sum)
+{
+    const size_t nv = m.verts.size();
+    std::vector<std::vector<int32_t> > en(nv), dn(nv);
+    for (const auto& q : m.faces)
+    {
+        for (int k = 0; k < 4; ++k)
+        {
+            const size_t v = static_cast<size_t>(q[k]);
+            en[v].push_back(q[(k + 1) % 4]);
+            en[v].push_back(q[(k + 3) % 4]);
+            dn[v].push_back(q[(k + 2) % 4]);
+        }
+    }
+    auto unique = [](std::vector<int32_t>& list) {
+        std::sort(list.begin(), list.end());
+        list.erase(std::unique(list.begin(), list.end()), list.end());
+    };
+    const auto cnb = ccCreaseNeighbours(nv, m.creases);
+    std::vector<CcRow> out;
+    out.reserve(nv);
+    for (size_t v = 0; v < nv; ++v)
+    {
+        if (m.kind[v] == 1 || (m.kind[v] == 0 && cnb[v].size() >= 3))
+        {
+            out.push_back(m.verts[v]);
+            continue;
+        }
+        if (m.kind[v] == 0 && cnb[v].size() == 2)
+        {
+            sum.add(m.verts[v], 4.0 / 6.0);
+            sum.add(m.verts[static_cast<size_t>(cnb[v][0])], 1.0 / 6.0);
+            sum.add(m.verts[static_cast<size_t>(cnb[v][1])], 1.0 / 6.0);
+            out.push_back(sum.take());
+            continue;
+        }
+        unique(en[v]);
+        unique(dn[v]);
+        const double n = static_cast<double>(en[v].size());
+        const double denom = n * (n + 5.0);
+        sum.add(m.verts[v], n * n / denom);
+        for (int32_t e : en[v]) sum.add(m.verts[static_cast<size_t>(e)], 4.0 / denom);
+        for (int32_t d : dn[v]) sum.add(m.verts[static_cast<size_t>(d)], 1.0 / denom);
+        out.push_back(sum.take());
+    }
+    return out;
+}
+
+}   // anonymous namespace
+
+struct libfive_cc_levels_s
+{
+    std::vector<int32_t> rowStart, column, quads, parent;
+    std::vector<double> weight, corner;
+};
+
+libfive_cc_levels_t* libfive_cc_levels(int32_t vertex_count, int32_t quad_count, const int32_t* quads, const int32_t* kind,
+                                       int32_t crease_count, const int32_t* creases, int32_t level)
+{
+    if (vertex_count < 1 || quad_count < 1 || level < 1 || !quads || !kind) return nullptr;
+    try
+    {
+    CcMesh a;
+    a.verts.resize(static_cast<size_t>(vertex_count));
+    for (int32_t i = 0; i < vertex_count; ++i) a.verts[static_cast<size_t>(i)].emplace_back(i, 1.0);
+    a.faces.resize(static_cast<size_t>(quad_count));
+    a.quad.resize(static_cast<size_t>(quad_count));
+    a.corner.resize(static_cast<size_t>(quad_count));
+    for (int32_t i = 0; i < quad_count; ++i)
+    {
+        for (int k = 0; k < 4; ++k)
+        {
+            const int32_t v = quads[4 * i + k];
+            if (v < 0 || v >= vertex_count) return nullptr;
+            a.faces[static_cast<size_t>(i)][static_cast<size_t>(k)] = v;
+        }
+        a.quad[static_cast<size_t>(i)] = i;
+        a.corner[static_cast<size_t>(i)] = {0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0};
+    }
+    a.kind.assign(kind, kind + vertex_count);
+    for (int32_t i = 0; i < crease_count; ++i)
+    {
+        const int32_t x = creases[2 * i], y = creases[2 * i + 1];
+        if (x < 0 || y < 0 || x >= vertex_count || y >= vertex_count) return nullptr;
+        a.creases.emplace_back(x < y ? x : y, x < y ? y : x);
+    }
+    CcSum sum(static_cast<size_t>(vertex_count));         // (the points the weights are over are those of the first mesh)
+    CcMesh b;
+    for (int32_t step = 1; step < level; ++step)
+    {
+        if (!ccStep(a, b, sum)) return nullptr;
+        std::swap(a, b);
+    }
+    const std::vector<CcRow> limit = ccLimit(a, sum);
+    auto* out = new libfive_cc_levels_s();
+    out->rowStart.reserve(limit.size() + 1);
+    out->rowStart.push_back(0);
+    for (const auto& row : limit)
+    {
+        for (const auto& kv : row)
+        {
+            if (std::fabs(kv.second) > 1e-9)
+            {
+                out->column.push_back(kv.first);
+                out->weight.push_back(kv.second);
+            }
+        }
+        out->rowStart.push_back(static_cast<int32_t>(out->column.size()));
+    }
+    out->quads.reserve(a.faces.size() * 4);
+    for (const auto& f : a.faces) out->quads.insert(out->quads.end(), f.begin(), f.end());
+    out->parent = a.quad;
+    out->corner.reserve(a.corner.size() * 8);
+    for (const auto& c : a.corner) out->corner.insert(out->corner.end(), c.begin(), c.end());
+    return out;
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;                 // (a crease that is no edge, no memory: the caller says the mesh is no closed surface)
+    }
+}
+
+void libfive_cc_sizes(const libfive_cc_levels_t* r, int32_t* vertex_count, int32_t* weight_count, int32_t* quad_count)
+{
+    *vertex_count = static_cast<int32_t>(r->rowStart.size()) - 1;
+    *weight_count = static_cast<int32_t>(r->column.size());
+    *quad_count = static_cast<int32_t>(r->parent.size());
+}
+
+void libfive_cc_copy(const libfive_cc_levels_t* r, int32_t* row_start, int32_t* column, double* weight, int32_t* quads,
+                     int32_t* parent, double* corner)
+{
+    std::copy(r->rowStart.begin(), r->rowStart.end(), row_start);
+    std::copy(r->column.begin(), r->column.end(), column);
+    std::copy(r->weight.begin(), r->weight.end(), weight);
+    std::copy(r->quads.begin(), r->quads.end(), quads);
+    std::copy(r->parent.begin(), r->parent.end(), parent);
+    std::copy(r->corner.begin(), r->corner.end(), corner);
+}
+
+void libfive_cc_free(libfive_cc_levels_t* r)
+{
+    delete r;
+}
+
+// THE CONTROL POINTS OF A BODY OF POINTS (morph.py _subdiv_topology).  The control point at point i is  C_i = sum_j B_ij P_j  where the row B_i is the solution y of  G y = L e_i,  G = L L^T + mu I
+// (L the limit weights: row k says what the limit position of point k is made of), kept for the points within `reach` edges of i and made to add up to 1 -- the minimal solution of "the limit of the
+// control points is the points" over the points near i.  Solving it for every point at once is a dense matrix of the size of the body (cubic in the number of points: 240 points were seconds of Python
+// and the limit of the body); the solution of a row dies out quickly with the distance from i (3e-7 at two edges more than the reach), so it is found on a PATCH: a cluster of `cluster` points is
+// taken together with every point within `reach + halo` edges of it, G and the right hand sides are cut to those points and solved once (Cholesky) for all the points of the cluster.  A body
+// of at most kWholeBody points is ONE patch -- the dense solution, exactly -- so the bodies made until now are as they were; a larger one is made of patches, in time proportional to its size.
+libfive_cc_levels_t* libfive_cc_controls(int32_t vertex_count, const int32_t* l_start, const int32_t* l_column, const double* l_weight,
+                                         const int32_t* near_start, const int32_t* near_column, const int32_t* sharp,
+                                         int32_t reach, int32_t halo, int32_t cluster)
+{
+    if (vertex_count < 1 || !l_start || !l_column || !l_weight || !near_start || !near_column || !sharp || reach < 0 || halo < 0 || cluster < 1) return nullptr;
+    try
+    {
+        constexpr int32_t kWholeBody = 400;
+        constexpr double kRegularisation = 1e-7;
+        const size_t N = static_cast<size_t>(vertex_count);
+        if (vertex_count <= kWholeBody)
+        {
+            halo = vertex_count;                  // (every point is in every patch: one solution, the dense one)
+            cluster = vertex_count;
+        }
+        std::vector<std::vector<int32_t>> near(N);
+        for (size_t v = 0; v < N; ++v)
+        {
+            near[v].assign(near_column + near_start[v], near_column + near_start[v + 1]);
+            std::sort(near[v].begin(), near[v].end());
+            near[v].erase(std::unique(near[v].begin(), near[v].end()), near[v].end());
+            for (int32_t w : near[v])
+                if (w < 0 || w >= vertex_count) return nullptr;
+        }
+        for (size_t k = 0; k < static_cast<size_t>(l_start[N]); ++k)
+            if (l_column[k] < 0 || l_column[k] >= vertex_count) return nullptr;
+        std::vector<int32_t> mark(N, -1);
+        // (every point within `depth` edges of the points `start`: the points, then the next ring, and so on)
+        const auto ball = [&](const std::vector<int32_t>& start, int32_t depth) {
+            std::vector<int32_t> seen(start);
+            for (int32_t s : start) mark[static_cast<size_t>(s)] = 0;
+            size_t from = 0;
+            for (int32_t d = 1; d <= depth; ++d)
+            {
+                const size_t to = seen.size();
+                if (from == to) break;
+                for (size_t k = from; k < to; ++k)
+                    for (int32_t w : near[static_cast<size_t>(seen[k])])
+                        if (mark[static_cast<size_t>(w)] < 0)
+                        {
+                            mark[static_cast<size_t>(w)] = d;
+                            seen.push_back(w);
+                        }
+                from = to;
+            }
+            for (int32_t v : seen) mark[static_cast<size_t>(v)] = -1;
+            return seen;
+        };
+        std::vector<std::vector<std::pair<int32_t, double>>> rows(N);
+        std::vector<char> left(N, 0);
+        for (size_t v = 0; v < N; ++v)
+        {
+            if (sharp[v]) rows[v].emplace_back(static_cast<int32_t>(v), 1.0);        // (a corner is its own control point, exactly)
+            else left[v] = 1;
+        }
+        std::vector<double> scatter(N, 0.0);
+        std::vector<int32_t> pos(N, -1), member(N, -1);
+        for (size_t seed = 0; seed < N; ++seed)
+        {
+            if (!left[seed]) continue;
+            // (a cluster: the seed and the points next to it, ring by ring, that no cluster has)
+            std::vector<int32_t> group{static_cast<int32_t>(seed)};
+            left[seed] = 0;
+            std::vector<int32_t> frontier = group;
+            while (!frontier.empty() && group.size() < static_cast<size_t>(cluster))
+            {
+                std::vector<int32_t> next;
+                for (int32_t u : frontier)
+                    for (int32_t w : near[static_cast<size_t>(u)])
+                        if (left[static_cast<size_t>(w)] && group.size() < static_cast<size_t>(cluster))
+                        {
+                            left[static_cast<size_t>(w)] = 0;
+                            group.push_back(w);
+                            next.push_back(w);
+                        }
+                frontier.swap(next);
+            }
+            std::vector<int32_t> patch = ball(group, reach + halo);
+            std::sort(patch.begin(), patch.end());
+            const size_t p = patch.size();
+            for (size_t a = 0; a < p; ++a) pos[static_cast<size_t>(patch[a])] = static_cast<int32_t>(a);
+            for (size_t m = 0; m < group.size(); ++m) member[static_cast<size_t>(group[m])] = static_cast<int32_t>(m);
+            // (G = L L^T + mu I on the patch: the dot products of the rows of L of its points)
+            std::vector<double> G(p * p, 0.0);
+            for (size_t a = 0; a < p; ++a)
+            {
+                const size_t va = static_cast<size_t>(patch[a]);
+                for (int32_t k = l_start[va]; k < l_start[va + 1]; ++k) scatter[static_cast<size_t>(l_column[k])] += l_weight[k];
+                for (size_t b = a; b < p; ++b)
+                {
+                    const size_t vb = static_cast<size_t>(patch[b]);
+                    double s = 0.0;
+                    for (int32_t k = l_start[vb]; k < l_start[vb + 1]; ++k) s += scatter[static_cast<size_t>(l_column[k])] * l_weight[k];
+                    G[a * p + b] = G[b * p + a] = s;
+                }
+                G[a * p + a] += kRegularisation;
+                for (int32_t k = l_start[va]; k < l_start[va + 1]; ++k) scatter[static_cast<size_t>(l_column[k])] = 0.0;
+            }
+            // (the right hand sides: the column of L at each point of the cluster, cut to the patch)
+            std::vector<double> rhs(group.size() * p, 0.0);
+            for (size_t a = 0; a < p; ++a)
+            {
+                const size_t va = static_cast<size_t>(patch[a]);
+                for (int32_t k = l_start[va]; k < l_start[va + 1]; ++k)
+                {
+                    const int32_t m = member[static_cast<size_t>(l_column[k])];
+                    if (m >= 0) rhs[static_cast<size_t>(m) * p + a] += l_weight[k];
+                }
+            }
+            // (Cholesky, in place in the lower triangle of G)
+            for (size_t i = 0; i < p; ++i)
+                for (size_t j = 0; j <= i; ++j)
+                {
+                    double s = G[i * p + j];
+                    for (size_t k = 0; k < j; ++k) s -= G[i * p + k] * G[j * p + k];
+                    if (i == j)
+                    {
+                        if (!(s > 0.0)) return nullptr;
+                        G[i * p + i] = std::sqrt(s);
+                    }
+                    else G[i * p + j] = s / G[j * p + j];
+                }
+            std::vector<double> y(p);
+            for (size_t m = 0; m < group.size(); ++m)
+            {
+                double* r = &rhs[m * p];
+                for (size_t i = 0; i < p; ++i)
+                {
+                    double s = r[i];
+                    for (size_t k = 0; k < i; ++k) s -= G[i * p + k] * y[k];
+                    y[i] = s / G[i * p + i];
+                }
+                for (size_t i = p; i-- > 0;)
+                {
+                    double s = y[i];
+                    for (size_t k = i + 1; k < p; ++k) s -= G[k * p + i] * r[k];
+                    r[i] = s / G[i * p + i];
+                }
+                // (the row of the control point: the points within the reach, adding up to 1)
+                const int32_t i0 = group[m];
+                std::vector<int32_t> within = ball(std::vector<int32_t>{i0}, reach);
+                std::sort(within.begin(), within.end());
+                double total = 0.0;
+                for (int32_t j : within) total += r[static_cast<size_t>(pos[static_cast<size_t>(j)])];
+                if (!(std::fabs(total) > 1e-12)) return nullptr;
+                for (int32_t j : within)
+                {
+                    const double w = r[static_cast<size_t>(pos[static_cast<size_t>(j)])];
+                    if (std::fabs(w) > 1e-9) rows[static_cast<size_t>(i0)].emplace_back(j, w / total);
+                }
+            }
+            for (int32_t v : patch) pos[static_cast<size_t>(v)] = -1;
+            for (int32_t v : group) member[static_cast<size_t>(v)] = -1;
+        }
+        auto* out = new libfive_cc_levels_s();
+        out->rowStart.reserve(N + 1);
+        out->rowStart.push_back(0);
+        for (const auto& row : rows)
+        {
+            for (const auto& kv : row)
+            {
+                out->column.push_back(kv.first);
+                out->weight.push_back(kv.second);
+            }
+            out->rowStart.push_back(static_cast<int32_t>(out->column.size()));
+        }
+        return out;
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;
+    }
 }
 
 libfive_tree libfive_mesh_patch(const float* xyz, uint32_t vertex_count, const uint32_t* tri,
@@ -1343,6 +1938,17 @@ void libfive_fea_elements(libfive_fea* f, float* out)
     std::copy(fr.begin(), fr.end(), out);
 }
 
+// The residual of a solve after every iteration, as at most 400 numbers for the convergence curve of the result card: stat 20 is how many, stat 100 + k is the k-th (evenly spread over the iterations,
+// the first and the last among them)
+static double residualSample(const std::vector<float>& h, int which)
+{
+    const size_t n = h.size(), m = std::min<size_t>(n, 400);
+    if (which == 20) return double(m);
+    const size_t k = size_t(which - 100);
+    if (m == 0 || k >= m) return 0;
+    return double(h[m == 1 ? 0 : size_t(std::llround(double(k) * double(n - 1) / double(m - 1)))]);
+}
+
 double libfive_fea_stat(libfive_fea* f, int which)
 {
     if (which >= 16 && which <= 18)
@@ -1352,6 +1958,7 @@ double libfive_fea_stat(libfive_fea* f, int which)
     }
     auto r = f->problem->result();
     if (!r) return 0;
+    if (which == 20 || which >= 100) return residualSample(r->residualHistory, which);
     switch (which)
     {
         case 0: return r->elements;
@@ -1818,6 +2425,7 @@ double libfive_tetfea_stat(libfive_tetfea* f, int which)
 {
     auto r = f->problem->result();
     if (!r || !f->solved) return 0;
+    if (which == 20 || which >= 100) return residualSample(r->residualHistory, which);
     switch (which)
     {
         case 0: return r->elements;
@@ -1956,7 +2564,7 @@ libfive_tree libfive_tetfea_density(libfive_tetfea* f)
 {
     auto r = f->problem->densityResult();
     if (!r) return nullptr;
-    Tree t = fea::meshFieldTree(r, 0);
+    Tree t = fea::meshFieldTree(r, 0, true);
     if (!t.is_valid()) return nullptr;
     return t.release();
 }
@@ -1965,7 +2573,7 @@ libfive_tree libfive_tetfea_design(libfive_tetfea* f)
 {
     auto r = f->problem->designResult();
     if (!r) return nullptr;
-    Tree t = fea::meshFieldTree(r, 0);
+    Tree t = fea::meshFieldTree(r, 0, true);
     if (!t.is_valid()) return nullptr;
     return t.release();
 }
@@ -1989,7 +2597,7 @@ libfive_tree libfive_tetfea_density_at(libfive_tetfea* f, int k)
     if (k < 0) return nullptr;
     auto r = f->problem->densityResultAt(size_t(k));
     if (!r) return nullptr;
-    Tree t = fea::meshFieldTree(r, 0);
+    Tree t = fea::meshFieldTree(r, 0, true);
     if (!t.is_valid()) return nullptr;
     return t.release();
 }
@@ -2421,7 +3029,7 @@ libfive_tree libfive_tetthermal_density(libfive_tetthermal* f)
 {
     auto r = f->problem->densityResult();
     if (!r) return nullptr;
-    Tree t = fea::meshFieldTree(r, 0);
+    Tree t = fea::meshFieldTree(r, 0, true);
     if (!t.is_valid()) return nullptr;
     return t.release();
 }
@@ -2431,7 +3039,7 @@ libfive_tree libfive_tetthermal_density_at(libfive_tetthermal* f, int k)
     if (k < 0) return nullptr;
     auto r = f->problem->densityResultAt(size_t(k));
     if (!r) return nullptr;
-    Tree t = fea::meshFieldTree(r, 0);
+    Tree t = fea::meshFieldTree(r, 0, true);
     if (!t.is_valid()) return nullptr;
     return t.release();
 }
@@ -2923,7 +3531,7 @@ libfive_tree libfive_tetflow_level(libfive_tetflow* f)
 {
     auto r = f->problem->densityResult();
     if (!r) return nullptr;
-    Tree t = fea::meshFieldTree(r, 0);
+    Tree t = fea::meshFieldTree(r, 0, true);
     if (!t.is_valid()) return nullptr;
     return t.release();
 }
@@ -2940,7 +3548,7 @@ libfive_tree libfive_tetflow_level_at(libfive_tetflow* f, int k)
     if (k < 0) return nullptr;
     auto r = f->problem->densityResultAt(size_t(k));
     if (!r) return nullptr;
-    Tree t = fea::meshFieldTree(r, 0);
+    Tree t = fea::meshFieldTree(r, 0, true);
     if (!t.is_valid()) return nullptr;
     return t.release();
 }

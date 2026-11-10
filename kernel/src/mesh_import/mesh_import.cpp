@@ -1442,8 +1442,12 @@ std::shared_ptr<MeshData> buildMesh(std::vector<V3> verts, std::vector<Tri> tris
                     }
                     depth += all;
                 }
-                const bool want_positive = (depth % 2) == 0;
-                if ((volume[c] > 0) != want_positive)
+                // H163 (the user's report, 2026-11-08, "Imported tri meshes become thin bodies instead of full one's": his Mega_Absol_Z_Th.stl has two closed shells, one lying inside the other with
+                // its triangles facing OUT, as a solid does; this made every nested shell a cavity, turned all 541,090 triangles of it inward, and the body came out as a wall of half a millimetre).
+                // A shell that lies inside another is left as the file has it -- a cavity written the way the format says (its triangles facing into the hollow, a negative volume) stays one, a
+                // solid inside a solid stays a solid -- and only a shell that is not inside another is made to enclose positive volume
+                const bool nested = (depth % 2) != 0;
+                if (!nested && volume[c] <= 0)
                 {
                     for (size_t m=compStart[c]; m < compStart[c + 1]; ++m)
                     {

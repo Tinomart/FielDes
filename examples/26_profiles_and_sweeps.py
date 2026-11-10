@@ -6,7 +6,7 @@
 #
 # Things to try, with the viewport focused:
 #   * Press an EDGE of the blue outline and drag: a new point comes out of it (written into the list of the profile).
-#   * Double-click a point: a CORNER (a square dot, a hard edge) becomes a SPLINE POINT (a round dot with a ring: the outline goes smoothly through it),
+#   * Double-click a point: a CORNER (a square dot, a hard edge) becomes a SPLINE POINT (a square dot with round corners: the outline goes smoothly through it),
 #     and back.  The corner at the top right of the plate is a spline point already: smooth=True.
 #   * Select a spline point: its ring turns the direction the curve leaves it in; the gold ring round it scales it -- for a profile, how strongly the
 #     curve leaves it; for the tube below, how THICK the tube is there (the middle point of the path is drawn at 1.8 times the thickness).

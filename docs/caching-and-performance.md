@@ -96,7 +96,7 @@ struts of a lattice (the cell map included), any expression of them. A field wit
 TPMS lattice, a field an analysis solved, a mesh distance field) is kept in memory for the session and is computed again in
 the next one — the cache never writes a file it could not read back. The files are in `field-cache` beside the render
 cache (`FIELDES_FIELD_CACHE_DIR` moves them); the folder holds at most 3 GB, oldest first out.
-**Settings → Clear the caches** deletes them together with the kept meshes of the render cache.
+**Settings → Clear the caches** deletes them together with the kept meshes of the render cache. Pressing the restart button of a script does the same before it runs again: a restart is a clean run.
 
 A call of `lattice_surface_conform` has **one bar** from its first step to its last, so you can tell when that line of the
 script will be over. The text says which of the steps it is in (`step 6 of 17: joining the samples into a surface`, with

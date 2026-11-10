@@ -264,7 +264,7 @@ public slots:
     QVector3D snapPlace(QPoint pos, const Shape* exclude = nullptr, bool toPoints = true) const;
     QVector3D snapNodeAlongRay(QPoint pos, bool* hit = nullptr) const;
     /*  For a test window (the automation command snapcheck): the cursor put on each junction that the lattice picture draws, and the node the pick gives there; the report says where they differ  */
-    QString snapSelfCheck(int limit);
+    QString snapSelfCheck(int limit, bool throughPlace = false);
     bool surfacePointAt(QPoint pos, QVector3D& point) const;
     // The coarse mesh of what the entry of a menu under the mouse would make (x, y, z, ... and the corners of its triangles), drawn see-through where it would be made; empty takes it away
     void setPreviewMesh(QVector<float> vertices, QVector<int> triangles, bool flat);
@@ -418,6 +418,7 @@ signals:
      */
     void dragStart();
     void dragEnd();
+    void newPointWait(bool on);            // (a press on the surface of a body made of points has put a point into the script and the drag waits for it: the tree must be read when the run is done, drag or not -- see Editor::wantOutline)
     /*  The provisional gizmo was pressed: the model is made ready to be dragged now, without waiting  */
     void provisionalPressed();
 
@@ -752,6 +753,9 @@ protected:
     QOpenGLVertexArrayObject m_latticeVao;
     QOpenGLShaderProgram* m_latticeProgram = nullptr;
     bool m_latticeFailed = false;            // (the program did not build in this context: it is not tried again at every frame)
+    QScopedPointer<QOpenGLFramebufferObject> m_latticeWarmFbo;   // (H169: a small buffer the hidden grid is drawn into, with the state of the real draw, so that the driver compiles the program before the grid is shown)
+    bool m_latticeWarm = false;              // (H169: the program has been drawn once, with the colours masked, while the grid was hidden: the driver's first-draw compile is then done before the grid is shown)
+    unsigned m_snapPrerenderGen = 0;         // (H169: the lines are chosen again for a camera that stands still, when the grid is hidden or the mode is off: the last camera's call is the one that runs)
     QString m_latticeError;                  // (what the graphics driver said of it: written on the viewport, where it is seen)
     mutable bool m_latticeFresh = false;     // (the vertices are new: sent to the graphics card at the next draw)
     int m_latticeCount = 0;

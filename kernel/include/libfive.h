@@ -1183,6 +1183,30 @@ libfive_tree libfive_mesh_from_arrays(const float* xyz, uint32_t vertex_count,
                                       float scale, libfive_mesh_import_info* info);
 const char* libfive_import_mesh_last_message(void);
 
+/*  THE LEVELS OF A CATMULL-CLARK SUBDIVISION AS WEIGHTS.  A mesh of `quad_count` quadrilaterals (4 vertex numbers each) on `vertex_count` vertices, `kind` of every vertex
+ *  (0: a vertex that a step made -- a crease through it where two crease edges meet, a corner where more; 1: a corner; 2: smooth) and `crease_count` crease edges
+ *  (two vertex numbers each).  Every vertex of the mesh after `level` - 1 steps of the rule, at its LIMIT position, as weights over the vertices of the mesh it
+ *  started from (a weight of 1e-9 or less is left out); the quadrilaterals of that mesh, for each the quadrilateral of the first mesh it is part of and where its four
+ *  corners are in it, (s, t) each, 8 numbers.  NULL where the mesh is not a closed surface.  Sizes, then the arrays to fill: row_start has vertex_count + 1 numbers,
+ *  column and weight weight_count, quads 4 * quad_count, parent quad_count, corner 8 * quad_count.  */
+typedef struct libfive_cc_levels_s libfive_cc_levels_t;
+libfive_cc_levels_t* libfive_cc_levels(int32_t vertex_count, int32_t quad_count, const int32_t* quads, const int32_t* kind,
+                                       int32_t crease_count, const int32_t* creases, int32_t level);
+void libfive_cc_sizes(const libfive_cc_levels_t* levels, int32_t* vertex_count, int32_t* weight_count, int32_t* quad_count);
+void libfive_cc_copy(const libfive_cc_levels_t* levels, int32_t* row_start, int32_t* column, double* weight, int32_t* quads,
+                     int32_t* parent, double* corner);
+void libfive_cc_free(libfive_cc_levels_t* levels);
+
+/*  THE CONTROL POINTS OF A BODY OF POINTS as weights (morph.py _subdiv_topology): for each of `vertex_count` points the weights, over the points within `reach` edges of it,
+ *  that make the control point there -- the solution of G y = L e_i, G = L L^T + 1e-7 I, for the limit weights L (CSR: l_start has vertex_count + 1 numbers, l_column / l_weight the
+ *  entries), kept for those points and made to add up to 1; a point with sharp[i] != 0 is its own control point.  The edges between points are `near_*` (CSR, each edge in both
+ *  directions).  It is solved on patches of `cluster` points and every point within reach + halo edges of them, one patch (the dense solution) for a body of up to 400 points.
+ *  The result is read like the levels (libfive_cc_sizes: vertex_count rows and the weights; libfive_cc_copy with NULL for quads, parent and corner; libfive_cc_free).  NULL where the
+ *  numbers are no body.  */
+libfive_cc_levels_t* libfive_cc_controls(int32_t vertex_count, const int32_t* l_start, const int32_t* l_column, const double* l_weight,
+                                         const int32_t* near_start, const int32_t* near_column, const int32_t* sharp,
+                                         int32_t reach, int32_t halo, int32_t cluster);
+
 /*  Executes the remapping operation returning a tree
  *  q(x, y, z) = p(x'(x, y, z), y'(x, y, z), z'(x, y, z)) */
 libfive_tree libfive_tree_remap(libfive_tree p,

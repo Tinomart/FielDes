@@ -139,6 +139,9 @@ protected:
     bool dropEvent_(QDropEvent *event);
     void closeEvent(QCloseEvent* event) override;
 
+    /*  Settings > Clear the caches, and the restart button of the script (H166): deletes what the render cache, the field cache and the result cache kept on disk.  `announce`: the status bar says how much  */
+    void clearCaches(bool announce);
+
     /*  File > Open recent  */
     void addRecentFile(const QString& f);
     /*  The files imported with Import model (and the arrows beside the Open and Import icons list them, and the scripts opened):

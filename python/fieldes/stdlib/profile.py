@@ -163,7 +163,7 @@ def profile(source, smooth=False, radius=0):
         items = list(source.points)
         smooth = bool(smooth) or source.smooth          # (a curve that is a spline is a spline as the outline too)
     else:
-        items = list(source)
+        items = C.expand_points(source)
     smooth = bool(smooth)
     if C.value_of(radius) < 0:
         raise ValueError('profile(..., radius=%g): a radius is not negative (0 is a hard corner)' % C.value_of(radius))

@@ -177,6 +177,17 @@ static PyObject* var_func(PyObject* host_mod, PyObject* args) {
 // The interpreter a run's helper thread (fieldes.runner) reports to
 static FielDes::Python::Interpreter* g_interpreter = nullptr;
 
+// A point is ONE shape.  Iterating it gives its three coordinates, and the loops that record the items of a result made three shapes of them -- each with an optimized tree and eight evaluators, 1 to 3 ms each:
+// the images of the points of the horn made 150 of them after every run of the script, and the run was that much longer before the point followed the cursor (the user, 2026-11-10: putting a point in a body takes seconds)
+static bool isAPoint(PyObject* obj)
+{
+    PyObject* kind = PyObject_GetAttrString(obj, "_kind");
+    const bool yes = kind && PyUnicode_Check(kind) && std::string(PyUnicode_AsUTF8(kind)) == "point";
+    Py_XDECREF(kind);
+    PyErr_Clear();
+    return yes;
+}
+
 static PyObject* partial_scene(PyObject*, PyObject* args) {
     const char* json;
     if (!PyArg_ParseTuple(args, "s", &json)) {
@@ -1039,7 +1050,7 @@ void Interpreter::evaluate(QString script, bool resuming)
             recordShape(obj, out, vars, line);
             const bool viaViewport = s && PyObject_HasAttrString(s, "_is_viewport");
 
-            const auto iter = PyObject_GetIter(obj);
+            const auto iter = isAPoint(obj) ? nullptr : PyObject_GetIter(obj);
             if (iter) {
                 PyObject* item = NULL;
                 while ((item = PyIter_Next(iter))) {
@@ -1357,7 +1368,7 @@ void Interpreter::publishPartial(PyObject* snapshot, PyObject* linesList, int ru
         PyObject* obj = shown ? shown : s;
         recordShape(obj, out, vars, line);
         const bool viaViewport = s && PyObject_HasAttrString(s, "_is_viewport");
-        const auto iter = PyObject_GetIter(obj);
+        const auto iter = isAPoint(obj) ? nullptr : PyObject_GetIter(obj);
         if (iter)
         {
             PyObject* item = NULL;
@@ -1954,21 +1965,67 @@ void Interpreter::recordShape(
             // (a body made of points is DRAWN from the numbers of its points: the control points of the patches of its surface as expressions -- three to a control point --, every vertex of the
             // surface as a sum of control points times weights (`_morph_vstart`, `_morph_vctrl`, `_morph_vweight`) and the triangles between the vertices, evaluated at every render and at every
             // step of a drag; see fieldes.stdlib.morph and Shape::morphNow)
-            PyObject* cp = PyObject_GetAttrString(obj, "_morph_controls");
+            // (H164: a body made on a TAPE says `_morph_tape` = (ops, a, b, constants, outputs) and `_morph_inputs` = the numbers of its points as expressions, one each; the tape makes the control points from them)
+            PyObject* tape = PyObject_GetAttrString(obj, "_morph_tape");
+            PyErr_Clear();
+            PyObject* cp = tape ? PyObject_GetAttrString(obj, "_morph_inputs") : PyObject_GetAttrString(obj, "_morph_controls");
+            const bool tapeMode = tape && cp && PyTuple_Check(tape) && PyTuple_Size(tape) == 5;
+            std::vector<int32_t> tapeOp, tapeA, tapeB;
+            std::vector<double> tapeConst;
+            std::vector<uint32_t> tapeOut;
+            if (tapeMode)
+            {
+                PyObject* lists[5];
+                for (int q = 0; q < 5; ++q) lists[q] = PyTuple_GetItem(tape, q);
+                bool tapeGood = true;
+                for (int q = 0; q < 5; ++q) tapeGood = tapeGood && PyList_Check(lists[q]);
+                const Py_ssize_t ops = tapeGood ? PyList_Size(lists[0]) : 0;
+                tapeGood = tapeGood && PyList_Size(lists[1]) == ops && PyList_Size(lists[2]) == ops && PyList_Size(lists[4]) >= 9;
+                for (Py_ssize_t i = 0; i < ops && tapeGood; ++i)
+                {
+                    const long op = PyLong_AsLong(PyList_GetItem(lists[0], i)), a = PyLong_AsLong(PyList_GetItem(lists[1], i)), b = PyLong_AsLong(PyList_GetItem(lists[2], i));
+                    // (an operand is an earlier operation, except for an input -- the number of the input -- and a constant -- its place in the list)
+                    const bool leaf = op == 0 || op == 1;
+                    if (op < 0 || op > 12 || (leaf ? a < 0 : (a < 0 || a >= i || (op != 8 && op != 9 && op != 10 && op != 11 && op != 12 && (b < 0 || b >= i))))) tapeGood = false;
+                    if (op == 0 && a >= PyList_Size(cp)) tapeGood = false;
+                    if (op == 1 && a >= PyList_Size(lists[3])) tapeGood = false;
+                    tapeOp.push_back(int32_t(op));
+                    tapeA.push_back(int32_t(a));
+                    tapeB.push_back(int32_t(b));
+                }
+                for (Py_ssize_t i = 0; i < PyList_Size(lists[3]) && tapeGood; ++i) tapeConst.push_back(PyFloat_AsDouble(PyList_GetItem(lists[3], i)));
+                for (Py_ssize_t i = 0; i < PyList_Size(lists[4]) && tapeGood; ++i)
+                {
+                    const long o = PyLong_AsLong(PyList_GetItem(lists[4], i));
+                    if (o < 0 || o >= ops) tapeGood = false;
+                    tapeOut.push_back(uint32_t(o));
+                }
+                if (!tapeGood || tapeOut.size() % 3 != 0) { tapeOp.clear(); tapeOut.clear(); Py_XDECREF(cp); cp = nullptr; }
+            }
+            else if (tape) { Py_XDECREF(cp); cp = nullptr; }
+            // (the vertices of the surface come as the recipe of each -- `_morph_vstart`, `_morph_vctrl`, `_morph_vweight` -- and the triangles between them, `_morph_tris`)
             PyObject* vs = cp ? PyObject_GetAttrString(obj, "_morph_vstart") : nullptr;
-            PyObject* vc = vs ? PyObject_GetAttrString(obj, "_morph_vctrl") : nullptr;
-            PyObject* vw = vc ? PyObject_GetAttrString(obj, "_morph_vweight") : nullptr;
-            PyObject* tr = vw ? PyObject_GetAttrString(obj, "_morph_tris") : nullptr;
-            if (cp && vs && vc && vw && tr && PyList_Check(cp) && PyList_Check(vs) && PyList_Check(vc) && PyList_Check(vw) && PyList_Check(tr)
-                && PyList_Size(cp) >= 3 && PyList_Size(vs) >= 4 && PyList_Size(tr) > 0 && PyList_Size(vc) == PyList_Size(vw))
+            PyObject* vc = cp ? PyObject_GetAttrString(obj, "_morph_vctrl") : nullptr;
+            PyObject* vw = cp ? PyObject_GetAttrString(obj, "_morph_vweight") : nullptr;
+            PyObject* tr = cp ? PyObject_GetAttrString(obj, "_morph_tris") : nullptr;
+            const bool recipe = vs && vc && vw && PyList_Check(vs) && PyList_Check(vc) && PyList_Check(vw) && PyList_Size(vs) >= 4 && PyList_Size(vc) == PyList_Size(vw);
+            if (cp && tr && PyList_Check(cp) && PyList_Check(tr) && PyList_Size(cp) >= 3 && PyList_Size(tr) > 0 && recipe)
             {
                 std::vector<libfive::Tree> controls;
                 std::vector<uint32_t> start, control, triangles;
                 std::vector<double> weight;
                 bool good = true;
-                const long nControls = long(PyList_Size(cp));
+                const long nControls = tapeMode ? long(tapeOut.size() / 3) : long(PyList_Size(cp));
                 const long nVertices = long(PyList_Size(vs)) - 1;
-                for (Py_ssize_t i = 0; i < nControls && good; ++i)
+                if (tapeMode)
+                {
+                    for (Py_ssize_t i = 0; i < PyList_Size(cp) && good; ++i)
+                    {
+                        controls.push_back(treeOfShape(PyList_GetItem(cp, i)));
+                        if (!controls.back().is_valid()) good = false;
+                    }
+                }
+                for (Py_ssize_t i = 0; i < (tapeMode ? 0 : nControls) && good; ++i)
                 {
                     PyObject* at = PyList_GetItem(cp, i);
                     if (!PyTuple_Check(at) || PyTuple_Size(at) != 3) { good = false; break; }
@@ -2004,8 +2061,12 @@ void Interpreter::recordShape(
                         triangles.push_back(uint32_t(v));
                     }
                 }
-                if (good) shape->setMorph(std::move(controls), std::move(start), std::move(control), std::move(weight), std::move(triangles));
+                if (good)
+                {
+                    shape->setMorph(std::move(controls), std::move(start), std::move(control), std::move(weight), std::move(triangles), std::move(tapeOp), std::move(tapeA), std::move(tapeB), std::move(tapeConst), std::move(tapeOut));
+                }
             }
+            Py_XDECREF(tape);
             Py_XDECREF(tr);
             Py_XDECREF(vw);
             Py_XDECREF(vc);
@@ -2375,8 +2436,9 @@ void Interpreter::recordShape(
                             for (int a = 0; a < 3; ++a) hd.rotate[a] = nullptr;
                         if (kind == "corner")
                         {
+                            // (a corner has no scale of its own, but it has its INFLUENCE since 2026-11-09 -- the user, "The region should be adjustable with a gizmo ... just like it is for the other point types": how far its
+                            // edges are crisp, see morph._morph_hull -- so the ring of its gizmo is there and drags that number)
                             for (int a = 0; a < 3; ++a) hd.scale[a] = nullptr;
-                            hd.influence = nullptr;
                         }
                     }
                     Py_XDECREF(pk);
@@ -2435,6 +2497,45 @@ void Interpreter::recordShape(
                     PyObject* dot = PyObject_GetAttrString(obj, "_gizmo_dot_only");
                     hd.dotOnly = dot && PyObject_IsTrue(dot) == 1;
                     Py_XDECREF(dot);
+                    PyErr_Clear();
+                }
+                // H165: the middle of a part whose surfaces were dragged, before the gizmo places it (`_gizmo_centre`, three numbers): the gizmo is drawn and dragged at it, placed live (see Gizmo::centre)
+                if (PyObject_HasAttrString(obj, "_gizmo_centre"))
+                {
+                    PyObject* gc = PyObject_GetAttrString(obj, "_gizmo_centre");
+                    if (gc && PyTuple_Check(gc) && PyTuple_Size(gc) == 3)
+                    {
+                        const float cx = float(PyFloat_AsDouble(PyTuple_GetItem(gc, 0)));
+                        const float cy = float(PyFloat_AsDouble(PyTuple_GetItem(gc, 1)));
+                        const float cz = float(PyFloat_AsDouble(PyTuple_GetItem(gc, 2)));
+                        if (!PyErr_Occurred())
+                        {
+                            hd.hasCentre = true;
+                            hd.centre = QVector3D(cx, cy, cz);
+                        }
+                    }
+                    Py_XDECREF(gc);
+                    PyErr_Clear();
+                }
+                // H165: the slopes of the middle with the numbers that were pulled (`_gizmo_centre_live`: (var, its number at this run, (dx, dy, dz)) each), so that the gizmo follows a pull live
+                if (hd.hasCentre && PyObject_HasAttrString(obj, "_gizmo_centre_live"))
+                {
+                    PyObject* live = PyObject_GetAttrString(obj, "_gizmo_centre_live");
+                    if (live && PyList_Check(live))
+                    {
+                        for (Py_ssize_t i = 0; i < PyList_Size(live); ++i)
+                        {
+                            PyObject* e = PyList_GetItem(live, i);
+                            if (!PyTuple_Check(e) || PyTuple_Size(e) != 3 || !PyTuple_Check(PyTuple_GetItem(e, 2)) || PyTuple_Size(PyTuple_GetItem(e, 2)) != 3) continue;
+                            Shape::Gizmo::CentreSlope cs;
+                            cs.id = idOf(PyTuple_GetItem(e, 0));
+                            cs.v0 = PyFloat_AsDouble(PyTuple_GetItem(e, 1));
+                            for (int a = 0; a < 3; ++a) cs.d[a] = PyFloat_AsDouble(PyTuple_GetItem(PyTuple_GetItem(e, 2), a));
+                            if (cs.id && !PyErr_Occurred()) hd.centreLive.push_back(cs);
+                            PyErr_Clear();
+                        }
+                    }
+                    Py_XDECREF(live);
                     PyErr_Clear();
                 }
                 shape->setGizmo(hd);
@@ -2904,6 +3005,22 @@ void Interpreter::recordShape(
                         shape->setKeyResults(rows);
                     }
                     Py_XDECREF(keys);
+                    PyErr_Clear();
+                }
+                // The residual of the solve after every iteration (a static analysis): `_residual_history`, a list of numbers, for the curve of the convergence on the result card
+                {
+                    PyObject* history = PyObject_GetAttrString(obj, "_residual_history");
+                    if (history && PyList_Check(history))
+                    {
+                        std::vector<float> values;
+                        for (Py_ssize_t k = 0; k < PyList_Size(history); k++)
+                        {
+                            PyObject* item = PyList_GetItem(history, k);
+                            if (item && PyFloat_Check(item)) values.push_back(float(PyFloat_AsDouble(item)));
+                        }
+                        shape->setResidualHistory(std::move(values));
+                    }
+                    Py_XDECREF(history);
                     PyErr_Clear();
                 }
                 // What the shown values are, when the result is no solver's (a map of what a shell changed, of where a rule is broken): `_value_note`, '' for none
