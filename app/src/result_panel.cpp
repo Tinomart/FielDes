@@ -13,8 +13,12 @@ of the License, or (at your option) any later version.
 #include <vector>
 
 #include <QComboBox>
+#include <QEvent>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPolygonF>
 #include <QSlider>
@@ -32,6 +36,124 @@ ColorBar::ColorBar(QWidget* parent)
     : QWidget(parent)
 {
     setMinimumHeight(120);
+    setMouseTracking(true);
+    setToolTip(T("Click the lowest or the highest number to type that end of the colour scale yourself; Auto gives the ends of the values back"));
+}
+
+// H191: the geometry of the scale, the same for the painting and for the clicks
+QRect ColorBar::barRect() const
+{
+    QFont font = this->font();
+    font.setPointSizeF(8);
+    const QFontMetrics fm(font);
+    return QRect(4, fm.height() / 2 + 2, 14, height() - fm.height() - 4);
+}
+
+QRect ColorBar::tickLabel(int k) const
+{
+    QFont font = this->font();
+    font.setPointSizeF(8);
+    const QFontMetrics fm(font);
+    const QRect bar = barRect();
+    const int ticks = 5;
+    const int y = bar.bottom() - (bar.height() * k) / (ticks - 1);
+    return QRect(bar.right() + 8, y - fm.height() / 2, width() - bar.right() - 8, fm.height());
+}
+
+QRect ColorBar::autoPill() const
+{
+    QFont font = this->font();
+    font.setPointSizeF(8);
+    const QFontMetrics fm(font);
+    const int w = fm.horizontalAdvance(T("Auto")) + 14;
+    return QRect(width() - w - 2, barRect().center().y() - fm.height() / 2 - 2, w, fm.height() + 4);
+}
+
+void ColorBar::setManual(bool manual)
+{
+    if (m_manual == manual) return;
+    m_manual = manual;
+    update();
+}
+
+void ColorBar::mouseMoveEvent(QMouseEvent* e)
+{
+    const bool onNumber = scaleShown() && (tickLabel(0).contains(e->pos()) || tickLabel(4).contains(e->pos()));
+    const bool onAuto = scaleShown() && m_manual && autoPill().contains(e->pos());
+    setCursor(onNumber || onAuto ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    e->ignore();
+}
+
+void ColorBar::leaveEvent(QEvent* e)
+{
+    unsetCursor();
+    QWidget::leaveEvent(e);
+}
+
+void ColorBar::mousePressEvent(QMouseEvent* e)
+{
+    if (e->button() == Qt::LeftButton && scaleShown())
+    {
+        if (m_manual && autoPill().contains(e->pos()))
+        {
+            emit(rangeAuto());
+            e->accept();
+            return;
+        }
+        if (tickLabel(4).contains(e->pos())) { startEdit(true); e->accept(); return; }
+        if (tickLabel(0).contains(e->pos())) { startEdit(false); e->accept(); return; }
+    }
+    e->ignore();            // (anywhere else a press drags the card)
+}
+
+void ColorBar::startEdit(bool high)
+{
+    if (!m_edit)
+    {
+        m_edit = new QLineEdit(this);
+        m_edit->setObjectName("legendRangeEdit");
+        // (a solid background: the number that is there under it is drawn by the bar, and shows through a see-through box behind the one that is typed -- the picture of H191)
+        m_edit->setStyleSheet("QLineEdit { color: #eee8d5; background: #0b2230; border: 1px solid rgba(38, 139, 210, 230);"
+                              " border-radius: 3px; padding: 0px 3px; font-size: 8pt; selection-background-color: rgba(38, 139, 210, 200); }");
+        m_edit->installEventFilter(this);
+        connect(m_edit, &QLineEdit::returnPressed, this, [this] { commitEdit(); });
+    }
+    m_editHigh = high;
+    const QRect r = tickLabel(high ? 4 : 0).adjusted(-2, -1, 0, 1);
+    m_edit->setGeometry(r.left(), r.top(), std::max(60, r.width()), r.height());
+    m_edit->setText(QString::number(high ? m_hi : m_lo, 'g', 6));
+    m_edit->show();
+    m_edit->raise();
+    m_edit->setFocus();
+    m_edit->selectAll();
+}
+
+void ColorBar::commitEdit()
+{
+    if (!m_edit) return;
+    bool ok = false;
+    QString text = m_edit->text().trimmed();
+    text.replace(',', '.');                 // (a decimal comma)
+    const double v = text.toDouble(&ok);
+    m_edit->hide();
+    if (!ok || !std::isfinite(v)) return;
+    const float lo = m_editHigh ? m_lo : float(v), hi = m_editHigh ? float(v) : m_hi;
+    if (!(hi > lo)) return;                 // (the scale has to go up: the ends are not swapped, and an empty one is not taken)
+    emit(rangeEdited(lo, hi));
+}
+
+bool ColorBar::eventFilter(QObject* o, QEvent* e)
+{
+    if (o == m_edit)
+    {
+        if (e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape)
+        {
+            m_edit->hide();
+            return true;
+        }
+        if (e->type() == QEvent::FocusOut) m_edit->hide();
+    }
+    return QWidget::eventFilter(o, e);
 }
 
 void ColorBar::setRange(float lo, float hi, const QString& map)
@@ -57,7 +179,7 @@ void ColorBar::paintEvent(QPaintEvent*)
     font.setPointSizeF(8);
     p.setFont(font);
     const QFontMetrics fm(font);
-    const QRect bar(4, fm.height() / 2 + 2, 14, height() - fm.height() - 4);
+    const QRect bar = barRect();
     if (m_map == "change" || m_map == "violation")
     {
         // (the geometry change of a shell is three classes, and a rule check two: not a scale, but swatches, each with what it is.  The words are T() calls written out, so that the
@@ -93,15 +215,40 @@ void ColorBar::paintEvent(QPaintEvent*)
     p.setBrush(g);
     p.setPen(QPen(QColor(0x93, 0xa1, 0xa1), 1));
     p.drawRect(bar);
-    p.setPen(QColor(0xee, 0xe8, 0xd5));
     const int ticks = 5;
     for (int k = 0; k < ticks; k++)
     {
         const int y = bar.bottom() - (bar.height() * k) / (ticks - 1);
         const float v = m_lo + (m_hi - m_lo) * k / (ticks - 1);
+        // (H191: the ends typed in the legend are in the blue of the card's switches that are on)
+        p.setPen(m_manual && (k == 0 || k == ticks - 1) ? QColor(0x7c, 0xc0, 0xff) : QColor(0xee, 0xe8, 0xd5));
         p.drawLine(bar.right(), y, bar.right() + 4, y);
-        p.drawText(QRect(bar.right() + 8, y - fm.height() / 2, width() - bar.right() - 8, fm.height()),
-                   Qt::AlignLeft | Qt::AlignVCenter, QString::number(v, 'g', 4));
+        const QString text = QString::number(v, 'g', 4);
+        const QRect labelRect(bar.right() + 8, y - fm.height() / 2, width() - bar.right() - 8, fm.height());
+        if (k == 0 || k == ticks - 1)
+        {
+            // (H191, the user, 2026-11-14: "NOT COMMUNICATED TO THE USER AT ALL HOW TO EDIT IT. MAKE IT CLEAR WHERE THEY CAN EDIT."): the lowest and the highest number are in a box like a field to type in, with a
+            // pencil after it: a click on them types that end.  The same on every legend
+            const int w = fm.horizontalAdvance(text);
+            const QRect field(labelRect.left() - 3, labelRect.top() - 1, std::min(w + 22, labelRect.width() + 3), labelRect.height() + 2);
+            p.setPen(QPen(QColor(0x7c, 0xc0, 0xff, m_manual ? 230 : 150), 1));
+            p.setBrush(QColor(255, 255, 255, 22));
+            p.drawRoundedRect(field, 3, 3);
+            p.setPen(m_manual ? QColor(0x7c, 0xc0, 0xff) : QColor(0xee, 0xe8, 0xd5));
+            p.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, text);
+            p.setPen(QColor(0x7c, 0xc0, 0xff, 200));
+            p.drawText(QRect(field.right() - 15, field.top(), 14, field.height()), Qt::AlignCenter, QString(QChar(0x270E)));
+        }
+        else p.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, text);
+    }
+    {
+        // (the Auto switch is always there: dim while the ends are the values' own, lit and clickable when they were typed)
+        const QRect pill = autoPill();
+        p.setPen(QPen(m_manual ? QColor(38, 139, 210, 230) : QColor(0x93, 0xa1, 0xa1, 160), 1));
+        p.setBrush(m_manual ? QBrush(QColor(38, 139, 210, 120)) : QBrush(Qt::NoBrush));         // (QBrush on both sides: `QColor : Qt::NoBrush` is a QColor, and Qt::NoBrush a black one -- the Auto pill was drawn black)
+        p.drawRoundedRect(pill, 4, 4);
+        p.setPen(m_manual ? QColor(0xee, 0xe8, 0xd5) : QColor(0x93, 0xa1, 0xa1));
+        p.drawText(pill, Qt::AlignCenter, T("Auto"));
     }
 }
 
@@ -191,6 +338,8 @@ ResultPanel::ResultPanel(QWidget* parent)
         "QToolButton:hover { background: rgba(147, 161, 161, 60); }"
         "QToolButton:checked { background: rgba(38, 139, 210, 170);"
         "  border-color: rgba(38, 139, 210, 230); color: white; }"
+        "QToolButton:disabled { color: rgba(147, 161, 161, 120); background: rgba(147, 161, 161, 14);"
+        "  border-color: rgba(147, 161, 161, 30); }"            // (the Elements button of a result that has more elements than are drawn: H186)
         "QSlider::groove:horizontal { height: 4px; background: rgba(147, 161, 161, 70);"
         "  border-radius: 2px; }"
         "QSlider::sub-page:horizontal { background: rgba(38, 139, 210, 200); border-radius: 2px; }"
@@ -331,7 +480,7 @@ ResultPanel::ResultPanel(QWidget* parent)
         auto notice = new QLabel(T("Not validated for safety-critical use"));
         notice->setObjectName("resultDisclaimer");
         notice->setWordWrap(true);
-        notice->setToolTip(T("FielDes is a design tool, not a certified solver. The program is checked against four known answers (tests/verification/known_answers: a beam, a plate with a hole, "
+        notice->setToolTip(T("FielDes is a design tool, not a certified solver. The program is checked against four known answers (the validation folder: a beam, a plate with a hole, "
                              "a channel flow, the conduction through a slab); compare any result with a hand calculation and a test before you rely on it."));
         layout->addWidget(notice);
     }
@@ -341,6 +490,12 @@ ResultPanel::ResultPanel(QWidget* parent)
 
     connect(m_fields, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int i) {
         if (!m_updating && i >= 0) emit(channelChanged(i));
+    });
+    connect(m_bar, &ColorBar::rangeEdited, this, [this](float lo, float hi) {         // (H191: the ends typed over in the legend)
+        if (!m_updating) emit(rangeEdited(lo, hi));
+    });
+    connect(m_bar, &ColorBar::rangeAuto, this, [this]() {
+        if (!m_updating) emit(rangeAuto());
     });
     connect(m_deform, &QSlider::valueChanged, this, [this](int v) {
         if (m_updating) return;
@@ -419,6 +574,12 @@ void ResultPanel::updateScaleLabel(float s)
                                  : QString::fromUtf8("×") + QString::number(s, 'g', 3));
 }
 
+QRect ResultPanel::endLabelGlobal(bool high) const
+{
+    const QRect r = m_bar->endLabel(high);
+    return QRect(m_bar->mapToGlobal(r.topLeft()), r.size());
+}
+
 int ResultPanel::labelsWidth() const
 {
     QFont bold = m_fields->font();
@@ -444,11 +605,16 @@ void ResultPanel::setState(const State& s)
     m_fields->setToolTip(s.noteHelp.isEmpty() ? T("Field shown") : T("Field shown") + QString("\n") + s.noteHelp);        // (what the values are, and for a principal stress why it can be below zero)
     m_bar->setSupports(s.supports);
     m_bar->setRange(s.lo, s.hi, s.map);
+    m_bar->setManual(s.rangeManual);
     m_deformRow->setVisible(s.hasDeform);
     m_deform->setValue(sliderFor(s.scale, s.autoScale));
     updateScaleLabel(s.scale);
+    // (H186, the user, 2026-11-12: "the element button should also still remain there, just not be greyed out [sic], instead of disappearing completely": a result with more elements than can be
+    // drawn keeps the button, greyed out, and its tooltip says why)
     m_elements->setVisible(s.hasElements);
-    m_elements->setChecked(s.showElements);
+    m_elements->setEnabled(s.hasElements);
+    m_elements->setToolTip(T("Show the solver's elements, each with its own value"));
+    m_elements->setChecked(s.hasElements && s.showElements);
     m_flow->setVisible(s.hasFlow);
     m_flow->setChecked(s.showFlow);
     m_opacityRow->setVisible(s.hasFlow);

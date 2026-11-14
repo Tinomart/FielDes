@@ -437,6 +437,13 @@ void libfive_fea_delete(libfive_fea* f);
  */
 typedef struct libfive_tetmesh_ libfive_tetmesh;
 libfive_tetmesh* libfive_tetmesh_new(libfive_tree shape, libfive_region3 region, float h);
+/*  The same without the clean-up of the edges and rims (see libfive_tetmesh_snap): for a mesh that is refined after it and cleaned up then  */
+libfive_tetmesh* libfive_tetmesh_new_plain(libfive_tree shape, libfive_region3 region, float h);
+/*  H225: the choice between fewer odd elements and more surface conformity (the argument surface_fit of the meshing and analysis functions): the limits that every mesh made after this call starts from --
+ *  the poorest mean ratio and the smallest dihedral angle (degrees) that a move of a node onto an edge may leave a tetrahedron, how far the skin may stand off the exact surface as a fraction of the
+ *  element size, and the mean ratio under which the mender takes a tetrahedron for poor and swaps, collapses or splits it (see MeshLimits in tetmesh.hpp).  The default, 'balanced', is 0.15, 10, 0.06
+ *  and 0.6; the python side sets them around a meshing call and puts the default back  */
+void libfive_tetmesh_set_limits(double floor_ratio, double sliver_angle, double surface_tolerance, double mender_poor);
 const char* libfive_tetmesh_last_message(void);
 /*  vertices, tetrahedra, boundary triangles  */
 void libfive_tetmesh_counts(libfive_tetmesh* m, int64_t* out3);
@@ -448,6 +455,28 @@ void libfive_tetmesh_faces(libfive_tetmesh* m, int32_t* out);       // 3 per bou
  *  tetrahedra, open boundary edges, boundary area, dropped degenerate tetrahedra  */
 void libfive_tetmesh_quality(libfive_tetmesh* m, double* out13);   // (then: folded, sharp-feature vertices, snaps reverted)
 void libfive_tetmesh_delete(libfive_tetmesh* m);
+/*  Mends a tetrahedral mesh made elsewhere (meshing.py's mesh_tet4: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) by the
+ *  passes of Netgen's volume optimization (tetmender.hpp): the nodes smoothed by the sum of the badness of their tetrahedra, edges and faces swapped, nodes collapsed, edges of the worst
+ *  tetrahedra split and -- with `surface` non-zero and a `shape` whose surface the mesh is the inside of -- the needle triangles of the surface flipped and the nodes of the surface
+ *  moved along it.  `rounds` passes of the sequence, `sweeps` sweeps of the smoothing in each; `split_badness` the badness from which an edge is split (Netgen's 100).  Returns a mesh to be
+ *  read with the calls above (and deleted), null when it cannot be made.  `stats` (swaps, flips, splits, nodes moved) is filled when it is not null  */
+libfive_tetmesh* libfive_tetmesh_mend(libfive_tree shape, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets,
+                                      int rounds, int sweeps, double split_badness, int surface, int64_t* stats4);
+/*  H223: the clean-up of the surface of a mesh made elsewhere or refined after libfive_tetmesh_new (the graded mesh of mesh_tet4), the one meshShape does on its own mesh: the edges and corners of the body that
+ *  the lattice cut across put back, then the nodes on the rim of a flat face put on it, kept when no tetrahedron round a node is inside out or poorer than a mean ratio of `rim_floor` (0.3; 0.1 for a graded mesh).
+ *  Returns a mesh to be read with the calls above (and deleted), null when it cannot be made; `stats` (nodes put on an edge, nodes put on a rim) is filled when it is not null  */
+libfive_tetmesh* libfive_tetmesh_snap(libfive_tree shape, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets,
+                                      double rim_floor, int64_t* stats2);
+/*  H193: the vertices of the lattice of a mesh at spacing h that lie near the surface of a shape (see SurfaceProbe in tetmesh.hpp): within `reach` of the spacing of it, either side, the field taken as a
+ *  distance -- a sample of them, to look at how thick the material is there.  Returns null (libfive_tetmesh_last_message says why) or a handle for the calls below, to be deleted.  `max_return` of them at
+ *  most come back as samples (x y z and the field's value, 4 doubles each, every stride-th one).  libfive_probe_counts: lattice vertices, vertices inside, vertices near the surface, samples, stride;
+ *  libfive_probe_spacing: the spacing the lattice was fitted to  */
+typedef struct libfive_probe_ libfive_probe;
+libfive_probe* libfive_tetmesh_probe(libfive_tree shape, libfive_region3 region, float h, double reach, int64_t max_return);
+void libfive_probe_counts(libfive_probe* m, int64_t* out5);
+double libfive_probe_spacing(libfive_probe* m);
+void libfive_probe_samples(libfive_probe* m, double* out);
+void libfive_probe_delete(libfive_probe* m);
 
 /*
  *  Static linear-elastic FEA on a body-fitted tetrahedral mesh (see tetfea.hpp):
@@ -458,13 +487,17 @@ void libfive_tetmesh_delete(libfive_tetmesh* m);
 typedef struct libfive_tetfea_ libfive_tetfea;
 libfive_tetfea* libfive_tetfea_new(libfive_tree shape, libfive_region3 region,
                                    float element_size, float E, float nu);
-/*  Uses a mesh made elsewhere (meshing.py's mesh_volume: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
+/*  Uses a mesh made elsewhere (meshing.py's mesh_tet4: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
  *  the shape: the shape stays what the curved edges of the 10-node element are measured against, and element_size the size a node's distance to a region is
  *  measured in.  Returns 0, and the message says why, when the mesh cannot be used  */
 int libfive_tetfea_set_mesh(libfive_tetfea* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets);
 /*  A support: the directions x, y, z (non-zero: held) of the part inside `region` are held at the displacement dx, dy, dz (mm: 0 does not let the part move there, another
  *  number imposes a displacement; a static analysis solves for the rest of the part)  */
 void libfive_tetfea_add_support(libfive_tetfea* f, libfive_tree region, int x, int y, int z, double dx, double dy, double dz);
+/*  A rotation restraint (H192): the mean turn of the nodes inside `region` about x, y, z (non-zero: restrained) is held at the angle ax, ay, az (radians; 0 does not let the
+ *  region turn).  The turn of a set of nodes is their mean rotation about an axis through their centre; a static analysis on linear tetrahedra holds it with a stiff spring, the other
+ *  analyses refuse it  */
+void libfive_tetfea_add_turn(libfive_tetfea* f, libfive_tree region, int x, int y, int z, double ax, double ay, double az);
 void libfive_tetfea_add_force(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz);
 void libfive_tetfea_set_gravity(libfive_tetfea* f, float gx, float gy, float gz, float density);
 void libfive_tetfea_set_thermal(libfive_tetfea* f, libfive_tree temperature, float alpha, float reference);
@@ -478,6 +511,9 @@ void libfive_tetfea_set_expansion_field(libfive_tetfea* f, libfive_tree alpha);
 void libfive_tetfea_set_order(libfive_tetfea* f, int order);
 void libfive_tetfea_add_force_profile(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz,
                                       int load_case, libfive_tree profile);
+/*  A pressure (MPa; positive pushes into the part, negative pulls on it) at right angles on every boundary face inside the region, see TetProblem::addPressure; the second form spreads it in proportion to a profile  */
+void libfive_tetfea_add_pressure(libfive_tetfea* f, libfive_tree region, float value, int load_case);
+void libfive_tetfea_add_pressure_profile(libfive_tetfea* f, libfive_tree region, float value, int load_case, libfive_tree profile);
 /*  Meshes the part and resolves supports and loads; 1 on success (else the message says why)  */
 int libfive_tetfea_prepare(libfive_tetfea* f);
 uint64_t libfive_tetfea_hash(libfive_tetfea* f);
@@ -626,7 +662,7 @@ void libfive_tetfea_delete(libfive_tetfea* f);
 typedef struct libfive_tetthermal_ libfive_tetthermal;
 libfive_tetthermal* libfive_tetthermal_new(libfive_tree shape, libfive_region3 region, float element_size,
                                            float conductivity);
-/*  Uses a mesh made elsewhere (meshing.py's mesh_volume: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
+/*  Uses a mesh made elsewhere (meshing.py's mesh_tet4: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
  *  the shape: the shape stays what the curved edges of the 10-node element are measured against, and element_size the size a node's distance to a region is
  *  measured in.  Returns 0, and the message says why, when the mesh cannot be used  */
 int libfive_tetthermal_set_mesh(libfive_tetthermal* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets);
@@ -700,7 +736,7 @@ void libfive_tetthermal_delete(libfive_tetthermal* f);
 typedef struct libfive_tetflow_ libfive_tetflow;
 libfive_tetflow* libfive_tetflow_new(libfive_tree domain, libfive_region3 region, float element_size,
                                      float density, float viscosity);
-/*  Uses a mesh made elsewhere (meshing.py's mesh_volume: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
+/*  Uses a mesh made elsewhere (meshing.py's mesh_tet4: `positions` the x y z of the nodes, `tets` the four node numbers of each tetrahedron) in place of meshing
  *  the shape: the shape stays what the curved edges of the 10-node element are measured against, and element_size the size a node's distance to a region is
  *  measured in.  Returns 0, and the message says why, when the mesh cannot be used  */
 int libfive_tetflow_set_mesh(libfive_tetflow* f, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets);
@@ -1182,6 +1218,12 @@ libfive_tree libfive_mesh_from_arrays(const float* xyz, uint32_t vertex_count,
                                       const uint32_t* tri, uint32_t tri_count,
                                       float scale, libfive_mesh_import_info* info);
 const char* libfive_import_mesh_last_message(void);
+
+/*  SMOOTHING THE SURFACE OF A MESH (H178): the vertices `xyz` (3 * vertex_count floats, moved in place) of the triangles `tri` (3 * tri_count vertex numbers), `pairs` times Taubin's two steps -- each vertex
+ *  to the mean of its neighbours by `lambda`, then by `mu` (< -lambda: the volume stays).  The vertices on an edge that one triangle only has, or more than two, are held.  1 when done, 0 when the
+ *  mesh is not one (bad numbers).  */
+int libfive_mesh_smooth(float* xyz, uint32_t vertex_count, const uint32_t* tri, uint32_t tri_count,
+                        int32_t pairs, float lambda, float mu);
 
 /*  THE LEVELS OF A CATMULL-CLARK SUBDIVISION AS WEIGHTS.  A mesh of `quad_count` quadrilaterals (4 vertex numbers each) on `vertex_count` vertices, `kind` of every vertex
  *  (0: a vertex that a step made -- a crease through it where two crease edges meet, a corner where more; 1: a corner; 2: smooth) and `crease_count` crease edges

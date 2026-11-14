@@ -47,7 +47,7 @@ while size > 8:
     size = size - 1
 
 def make_post(r, h):
-    return cylinder(r, h, position=(40, 20, 0))
+    return cylinder(r, h, position=(40, 20, h / 2))
 
 post = make_post(4, 20)
 post

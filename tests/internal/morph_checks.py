@@ -13,6 +13,14 @@ from fieldes import *
 from fieldes import menu_catalog as mc
 from fieldes import profile_edit, runner
 from fieldes.stdlib import curves as C
+from fieldes.stdlib import fields as _fields
+
+
+def _tree_values(body, points):
+    ''' The values of the body's TREE (what the construction made: its symmetry is what is checked), not of its field, which is the distance to the body's surface meshed -- the mesh has its own
+        asymmetries of a few thousandths of a mm (the body law, fieldes.stdlib.body_law) '''
+    return _fields.evaluate(body, points)
+
 
 bad = []
 start = time.time()
@@ -99,7 +107,7 @@ def symmetric_and_drawn():
     worst = 0.0
     for _ in range(40):
         x, y, z = rng.uniform(-5, 45), rng.uniform(-5, 35), rng.uniform(-5, 25)
-        a = evaluate(blob, [(x, y, z), (40 - x, y, z), (x, 30 - y, z), (x, y, 20 - z)])
+        a = _tree_values(blob, [(x, y, z), (40 - x, y, z), (x, 30 - y, z), (x, y, 20 - z)])
         worst = max(worst, abs(a[0] - a[1]), abs(a[0] - a[2]), abs(a[0] - a[3]))
     check('morph_body of a box: the field is the same at a place and at its mirror image in each middle plane (the largest difference %.2g)' % worst, worst < 1e-3)
     # what is drawn (H170, 2026-11-10: the limit of a Catmull-Clark subdivision of control points made from the points, see the module): the control points as expressions of the points' numbers, every vertex as a sum of control
@@ -413,7 +421,7 @@ def toggling():
             before = script
             script = apply_edits(script, answer['edits'])
             found = re.search(r'radius=var\(([-0-9.e]+)\)', script)
-            if found and 'radius=' not in before:
+            if found and 'radius=var(' not in before:        # (the body's own `radius=0` is written with every argument, H201: the point's radius is the one with var)
                 radii.append((float(found.group(1)), profile_edit._floor_figures(0.5 * dot._curve_edge, 2)))
         # (a polyhedron is flat triangles only: its points move and nothing else, a double click changes nothing there -- the user, 2026-11-02, F37a)
         want = ['corner', 'corner', 'corner', 'corner'] if name == 'morph_polyhedron' else ['spline', 'round', 'corner', 'spline']
@@ -693,6 +701,24 @@ def symmetry_menu():
     off = text(30, one)
     check('menu with a symmetry: a cube beside the plane has eight points of its own and its whole mirror image',
           off.count('= point(') == 8 and '= symmetry_image(' not in off and 'symmetry_images(morph_polyhedron_1, symmetry_1)' in off)
+    # The symmetry has to be selected to be in use, and the window then sends it as `body` of every entry that can be made from the selection (a morph body, a field of a point): what is made is
+    # mirrored on creation all the same (H204, the user, 2026-11-14: "when symmetry is active morph body ... DO NOT AUTOMATICALLY GET MIRRORED ON CREATION LIKE OTHER BODIES"), and only a call
+    # made OF the models selected -- the points a body is made through -- has its images in them already
+
+    def selected(name, x, **more):
+        r = dict(kind='primitive', name=name, x=x, y=0, z=0, scale=10, indent=0, var=name + '_1', body='mirror', other='', body_info={'type': 'symmetry', 'role': '', 'cls': '', 'part': ''},
+                 symmetry={'var': 'symmetry_1', 'centre': [0, 0, 0], 'elements': one})
+        r.update(more)
+        return mc.call(json.dumps(r))
+    for kind in ('morph_polyhedron', 'morph_body'):
+        got = selected(kind, 30)
+        check('menu with the symmetry selected: a %s beside the plane has its whole mirror image, as with nothing selected' % kind,
+              got.count('= point(') == 8 and '%s_1_images = symmetry_images(%s_1, symmetry_1)' % (kind, kind) in got, got.count('= point('))
+    check('menu with the symmetry selected: the field of a point has its images too', 'distance_to_point_1_images = symmetry_images(distance_to_point_1, symmetry_1)' in selected('distance_to_point', 30))
+    of_points = selected('morph_body', 30, body='q1', other='q2, q3, q4', body_info={'type': 'point', 'role': '', 'cls': '', 'part': ''},
+                         others=[{'name': n, 'type': 'point', 'role': '', 'cls': ''} for n in ('q2', 'q3', 'q4')])
+    check('... and a body made OF four points selected has none of its own and makes no new point: its points have theirs',
+          'morph_body(' in of_points and all(q in of_points for q in ('q1', 'q2', 'q3', 'q4')) and 'symmetry_images(' not in of_points and of_points.count('= point(') == 0, of_points[:120])
     both = text(0, ({'mirror': [1, 0, 0]}, {'mirror': [0, 1, 0]}, {'mirror': None, 'turn': [[0, 0, 1], 180]}))
     check('menu with two planes: the cube on both has two points of its own (a bottom and a top corner) and six images, three of each', both.count('= point(') == 2 and both.count('= symmetry_image(') == 6, (both.count('= point('), both.count('= symmetry_image(')))
     # the text runs, and its images are where the symmetry puts them
@@ -738,10 +764,10 @@ def example_file():
     import random
     rng = random.Random(5)
     spots = [(rng.uniform(-30, 30), rng.uniform(-22, 22), rng.uniform(-16, 24)) for _ in range(60)]
-    a = evaluate(body, spots)
-    b = evaluate(body, [(-x, y, z) for x, y, z in spots])
+    a = _tree_values(body, spots)
+    b = _tree_values(body, [(-x, y, z) for x, y, z in spots])
     check('the example: the body has two identical sides (largest difference %.2g)' % max(abs(p - q) for p, q in zip(a, b)), max(abs(p - q) for p, q in zip(a, b)) < 1e-3)
-    c = evaluate(clone, [(96.0 - x, y, z) for x, y, z in spots])
+    c = _tree_values(clone, [(96.0 - x, y, z) for x, y, z in spots])
     check('the example: the clone is the whole body mirrored in the plane x = 48 (largest difference %.2g)' % max(abs(p - q) for p, q in zip(a, c)), max(abs(p - q) for p, q in zip(a, c)) < 1e-3
           and inside(body, (0, 0, 0)) and inside(clone, (96, 0, 0)) and not inside(clone, (0, 0, 0)))
 

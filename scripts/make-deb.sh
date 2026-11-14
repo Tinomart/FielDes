@@ -47,7 +47,7 @@ Icon=fieldes
 Terminal=false
 Categories=Graphics;Engineering;Science;
 StartupWMClass=FielDes
-MimeType=application/x-fieldesapp;
+MimeType=application/x-fieldesapp;text/x-python;model/stl;application/sla;model/obj;model/step;application/step;model/3mf;model/gltf-binary;model/gltf+json;
 EOF
 # (the file type of FielDes apps: a double click on a .fieldesapp opens it in its form)
 cat > "$ROOT/usr/share/mime/packages/application-x-fieldesapp.xml" <<'EOF'

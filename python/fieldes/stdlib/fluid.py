@@ -622,7 +622,7 @@ def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, ma
     if element_size is None:
         element_size = default_element_size(shape, lo, hi, 40.0, 300000)
     element_size = float(element_size)
-    pad = 1e-6 * max(max(size), 1e-9)
+    pad = 0.0                       # (the lattice of the tetrahedra is fitted to the region: its faces on the part's faces exactly, not a hair off them -- H202)
     region = libfive_region_t()
     for i, axis in enumerate((region.X, region.Y, region.Z)):
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
@@ -665,7 +665,7 @@ _cache = OrderedDict()
 
 @_with_conditions
 def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-                   tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1):
+                   tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit='balanced'):
     ''' Laminar flow of `fluid` around `body` (a Shape, the solid the flow goes around) in `domain` (a Shape whose inside is the
         fluid, the body's place in it too: the fluid is the domain with the body cut out) with the boundary conditions, the same
         inputs of topology_optimization for a body in a flow, one for each kind (each one item or a list, [] for none):
@@ -689,6 +689,8 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
                        A wake that sheds vortices needs this: it has no steady state
         tolerance      the relative residual of the discrete equations at which to stop
         bounds         ((x0, y0, z0), (x1, y1, z1)) of the domain (found if not given)
+        surface_fit    what the mesh gives up where the exact surface and good elements pull against each other: 'balanced' (the default),
+                       'surface' (more surface conformity) or 'elements' (fewer odd elements); see static_analysis
 
         Returns a FluidResult: the fields (speed, pressure, ...), the flows and the pressure drop,
         the wall force (on every wall, the body's: its drag is the part along the flow), streamlines(), .body and .domain.  An unchanged problem is cached (as a static analysis is).
@@ -697,6 +699,8 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
     max_iterations = 60         # (the nonlinear iterations at most: a flow that has not settled by then is unsteady or its mesh too coarse, which the error says)
     conditions = _flow_conditions(inlets, outlets, boundaries, 'fluid_analysis')
     domain, mesh = _sim_mesh.part(domain, 'fluid_analysis', element_size, 'tet')      # (a mesh is the mesh of the fluid itself)
+    surface_fit = _sim_mesh.surface_fit_value(surface_fit, 'fluid_analysis')
+    _sim_mesh.check_fit_with_mesh(mesh, surface_fit, 'fluid_analysis')
     if not isinstance(body, Shape) or not isinstance(domain, Shape):
         raise TypeError('fluid_analysis: the body and the domain must be Shapes (the flow goes around the body, inside the domain)')
     _use_conditions(conditions, domain)
@@ -705,15 +709,16 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
         around._bounds = bounds if bounds is not None else _bounds(domain)
     else:
         around = domain             # (the user's mesh is of the fluid: the domain with the body cut out, which they made)
-    result = _fluid_analysis(around, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, tolerance, relaxation, cache,
-                             time, store_every, mesh)
+    with _sim_mesh.surface_fit_scope(surface_fit):
+        result = _fluid_analysis(around, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, tolerance, relaxation, cache,
+                                 time, store_every, mesh, surface_fit)
     result.body, result.domain = body, domain
     result._conditions = conditions
     return result
 
 
 def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, mesh=None):
+                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, mesh=None, surface_fit='balanced'):
     if time is not None:
         try:
             duration, dt = float(time[0]), float(time[1])
@@ -726,7 +731,7 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
     ekey = problem_key('flow', mesh=2, shape=shape, part_bounds=getattr(shape, '_bounds', None), conditions=conditions,
                        fluid=fluid, element_size=element_size, bounds=bounds, gravity=gravity, stokes=bool(stokes),
                        max_iterations=int(max_iterations), tolerance=float(tolerance),
-                       relaxation=float(relaxation), time=time, store_every=int(store_every), **_sim_mesh.key(mesh)) if cache else None
+                       relaxation=float(relaxation), time=time, store_every=int(store_every), **_sim_mesh.fit_key(surface_fit), **_sim_mesh.key(mesh)) if cache else None
     if ekey is not None and ekey in _cache:
         _cache.move_to_end(ekey)
         cached = _cache[ekey]
@@ -754,7 +759,7 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
         raise FeaError('fluid_analysis: ' + lib.libfive_tetflow_message(ptr).decode('utf-8', 'replace'))
     if cache:
         try:
-            key = (lib.libfive_tetflow_hash(ptr), float(tolerance), time, int(store_every),
+            key = (lib.libfive_tetflow_hash(ptr), float(tolerance), time, int(store_every), surface_fit,
                    tuple((type(b).__name__, shape_key(b.region)) +
                          tuple(sorted((k2, v) for k2, v in vars(b).items() if k2 != 'region'))
                          for b in items))
@@ -1069,7 +1074,7 @@ def topology_optimization_flow(analysis, conditions=(), iterations=None, filter_
         feels there (1 solid, 0 fluid) '''
     from fieldes.stdlib import optimization_measures as measures
     from fieldes.stdlib.fea import _optimization_analyses
-    iterations = 80 if iterations is None else iterations
+    iterations = 20 if iterations is None else iterations         # (H185: the default of every optimization is 20)
     if getattr(lib, 'libfive_tetflow_optimize_density', None) is None:
         raise FeaError('this FielDes library is too old for the topology optimization of a flow')
     optimization_conditions = conditions                 # (the name `conditions` is the flow's boundary conditions further down)

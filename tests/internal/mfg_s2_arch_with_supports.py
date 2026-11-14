@@ -21,7 +21,7 @@ from mfgkit import *
 t = Table('s2_arch_with_supports: a tunnel with a round roof in a block, an overhang of 45 degrees asked with support="block" and a budget that refuses the teardrop: a block of support under the part of the roof that leans out, with a clearance of 0.3 mm to the roof and to the walls everywhere, and the part itself unchanged')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-part = difference(box((30, 20, 30), position=(15, 10, 15)), union(box((12, 22, 8), position=(15, 10, 8)), rotate_x(cylinder(6, 22, position=(15, 12, -21)), math.pi / 2)))
+part = difference(box((30, 20, 30), position=(15, 10, 15)), union(box((12, 22, 8), position=(15, 10, 8)), rotate_x(cylinder(6, 22, position=(15, 12, -10)), math.pi / 2)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45, overhang_fix='cut', support='block', support_gap=0.3)
 lo, hi = (-3, -3, -3), (33, 23, 33)

@@ -26,7 +26,7 @@ diameters = [0.3, 0.5, 0.62, 1.0]
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 block = box((30, 12, 10), position=(65, 6, 5))
 for i, d in enumerate(diameters):
-    block = difference(block, cylinder(d / 2.0, 12, position=(55 + 6.5 * i, 6, -1)))
+    block = difference(block, cylinder(d / 2.0, 12, position=(55 + 6.5 * i, 6, 5)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 wall_rule = manufacturing_constraint(min_wall=0.8)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)

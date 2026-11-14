@@ -122,6 +122,8 @@ if ($Package) {
         if (Test-Path (Join-Path $Source $doc)) { Copy-Item (Join-Path $Source $doc) $PackageDir -Force }
     }
     Mirror (Join-Path $Source 'docs') (Join-Path $PackageDir 'docs') @()
+    # The scripts of the Help page "Validation and accuracy": the checks that a user can run again (the internal tests folder is not packaged)
+    Mirror (Join-Path $Source 'validation') (Join-Path $PackageDir 'validation') @('/XD', '__pycache__')
     # The translations of the program's texts (translations/<code>.json; English needs no file)
     Mirror (Join-Path $Source 'translations') (Join-Path $PackageDir 'translations') @()
     # The solved problems of the guided tour (seed-cache/result-cache, made by scripts/make-seed-cache.ps1 from the solvers that are packaged): the first time a chapter shows a solved beam or flow it is

@@ -16,6 +16,9 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 __all__ = []
 
+# The most tetrahedra a default element size may allow (a bound on the memory and the time of a default mesh; the elements are always shown, H198, so this is no limit of the viewer)
+DRAWABLE = 4000000
+
 # Tetrahedra to the cube of the element size in the meshes of isosurface stuffing (measured on a cube: 2 678 400 tetrahedra at an element a sixtieth of its side, 12.4 to the cube)
 TETS_PER_CUBE = 12.0
 # The grid the volume is estimated on (the number of samples along one edge of the part's box)
@@ -43,14 +46,28 @@ def tetrahedra(volume, element_size):
     return TETS_PER_CUBE * volume / (element_size ** 3)
 
 
-def default_element_size(shape, lo, hi, divisions, budget):
+def default_element_size(shape, lo, hi, divisions, budget, thin=True, notes=None, quadratic=False, walls=None):
     ''' The element size of an analysis that was not given one: the part's longest side over `divisions`, or -- when that makes more than `budget` tetrahedra -- the size at which
-        the part has `budget` of them '''
+        the part has `budget` of them.  And never a size at which the part could have more tetrahedra than the result card can draw (H186, the user, 2026-11-12: "so that in no
+        circumstance it overshoots the threshold at which the user cannot see the element button"): the part lies in its box, and the box holds at most so many tetrahedra at an
+        element size -- a part whose volume the coarse samples miss (a fine lattice, a thin shell) is held by that bound too.
+        And a size at which the part keeps its thin walls (`thin`, H193): the lattice that the tetrahedra are cut from loses a wall thinner than about 0.7 of its spacing -- a shell box with walls of
+        1.2 mm was refused at the size the rules above gave it -- so where the kernel finds material that the lattice missed (meshing.py thin_size) the size is half the thickness of the thinnest walls
+        a tenth of the surface is thinner than, within the budget as far as that holds them and never more than four times it (a thin wall asks for more elements than a solid body of its size, but the solve and the
+        drawing of them are what the budget is for).  `quadratic`: the 10-node element, which reads a wall well with 1.5 elements across it (the linear one is made two across).  `notes` (a list) gets the sentence that says so when the size was changed for it.  `walls` (a dict) gets the thickness of the walls that a tenth of the surface is thinner than, as 'wall', where the kernel
+        could measure it (the analyses tell of linear tetrahedra that are few across a wall) '''
     size = max(float(hi[i]) - float(lo[i]) for i in range(3))
     h = size / divisions
     volume = estimated_volume(shape, lo, hi)
-    if not volume or volume <= 0.0:
-        return h
-    if tetrahedra(volume, h) <= budget:
-        return h
-    return (TETS_PER_CUBE * volume / budget) ** (1.0 / 3.0)
+    if volume and volume > 0.0 and tetrahedra(volume, h) > budget:
+        h = (TETS_PER_CUBE * volume / budget) ** (1.0 / 3.0)
+    box = 1.0
+    for i in range(3):
+        box *= max(float(hi[i]) - float(lo[i]), 0.0)
+    h = max(h, (TETS_PER_CUBE * box / DRAWABLE) ** (1.0 / 3.0))
+    if thin:
+        from fieldes.stdlib.meshing import thin_size, THIN_COARSEST
+        h, note = thin_size(shape, lo, hi, h, budget, TETS_PER_CUBE, min(DRAWABLE, 4 * budget), THIN_COARSEST if quadratic else None, walls)
+        if note and notes is not None:
+            notes.append(note)
+    return h

@@ -14,8 +14,10 @@ of the License, or (at your option) any later version.
 #include <map>
 #include <memory>
 
+#include <QColor>
 #include <QFrame>
 #include <QImage>
+#include <QString>
 #include <QVector>
 #include <QVector3D>
 #include <QVector4D>
@@ -28,6 +30,7 @@ class QDoubleSpinBox;
 class QLabel;
 class QSlider;
 class QToolButton;
+class QLineEdit;
 
 namespace FielDes {
 
@@ -78,6 +81,7 @@ struct FieldSlice
     float colorLo = 0, colorHi = 1;
     QString colorMap = "turbo";
     QString colorLabel;
+    bool colorManual = false;        // the ends of the colour scale were typed by the user (H191): the legend says so and offers Auto
 
     // A deformed model's displacements (unscaled) on a coarser grid of
     // vertices over the plane (gw x gh, row-major from low v), so the plane
@@ -105,6 +109,7 @@ struct FieldSource
     float lo = 0, hi = 1;
     QString map = "turbo";
     QString label;
+    bool manual = false;             // (lo and hi were typed by the user)
     // Its displacements, if it is drawn deformed
     libfive::Tree disp[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(),
                              libfive::Tree::invalid()};
@@ -148,11 +153,16 @@ public:
     FieldView(QWidget* parent=nullptr);
     void setSlice(const FieldSlice& s);
     QSize sizeHint() const override { return QSize(260, 200); }
+    /*  The plot as an image file (.png or .jpg), as the card draws it: +v up, on the card's dark ground, enlarged to a longer side of at least 1000 pixels; false when there is no plot or the file cannot be written  */
+    bool saveImage(const QString& path) const;
 
 protected:
     void paintEvent(QPaintEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
+    void mousePressEvent(QMouseEvent* e) override;         // (the plot takes its presses and releases: they do not go on to the viewport behind the card, which opens a menu of its own)
+    void mouseReleaseEvent(QMouseEvent* e) override;
     void leaveEvent(QEvent* e) override;
+    void contextMenuEvent(QContextMenuEvent* e) override;
     QRect imageRect() const;
 
     FieldSlice m_slice;
@@ -167,16 +177,61 @@ class FieldLegend : public QWidget
 public:
     FieldLegend(QWidget* parent=nullptr);
     void setSlice(const FieldSlice& s);
-    QSize sizeHint() const override { return QSize(240, 30); }
+    QSize sizeHint() const override { return QSize(240, 46); }
+    /*  The ends were typed: they are lit and Auto gives the values' own back (H191)  */
+    void setManual(bool manual);
+    /*  The middle of a part of the legend, in its own coordinates (for scripted tests): 0 the lowest number, 1 the highest, 2 the Auto pill  */
+    QPoint partCentre(int part) const;
+
+signals:
+    /*  The lowest (high = false) or the highest end of the colour scale typed over by the user, as the number that was typed  */
+    void rangeTyped(bool high, float value);
+    /*  The Auto switch was clicked while the ends were typed  */
+    void autoClicked();
 
 protected:
     void paintEvent(QPaintEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void leaveEvent(QEvent* e) override;
+    bool eventFilter(QObject* o, QEvent* e) override;
+    QRectF endRect(bool high) const;        // (the box of the lowest or the highest number: where it is drawn, and where a click types it)
+    QRect autoPill() const;
+    QString endText(bool high) const;
+    void startEdit(bool high);
+    void commitEdit();
+    bool m_manual = false;
+    bool m_editHigh = false;
+    QLineEdit* m_edit = nullptr;
     float m_in = 0, m_out = 0;
     bool m_valid = false;
     // (a plane coloured by a field -- an analysis result, a field model: its own colour map and range, not the distance scale)
     bool m_hasColor = false;
     QString m_map, m_label;
     float m_lo = 0, m_hi = 1;
+};
+
+/*
+ *  The key of the boundary conditions -- a colour and a name for each kind that is drawn -- as a card of the viewport like the others (H191, the user, 2026-11-14: "the boundary conditions [legend],
+ *  which are not movable for some reason"): it is dragged anywhere by any empty place, sized from its edges, kept off the other cards, and closed with its x
+ */
+class KeyCard : public QFrame
+{
+public:
+    struct Row { QColor colour; QString text; };
+    KeyCard(const QString& cardKey, QWidget* parent);
+    void setKey(const QString& title, const QVector<Row>& rows);
+    QSize sizeHint() const override;
+    std::function<void()> onClose;          // (the x was clicked)
+
+protected:
+    void paintEvent(QPaintEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
+
+private:
+    QString m_title;
+    QVector<Row> m_rows;
+    QToolButton* m_close;
 };
 
 /*
@@ -220,9 +275,16 @@ signals:
     /*  The close button: the section should be switched off  */
     void closeRequested();
 
+    /*  H191: the ends of the colour scale of a model coloured by a field, typed in the card's legend (the numbers as the card shows them), and Auto: the values' own ends again  */
+    void colourRangeSet(float lo, float hi);
+    void colourRangeAuto();
+
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
     void place();
+    void showPlotFully(bool shown);         // (the card has the room for the 2D plot at once, and is the size it was when the plot is closed again, H182)
+    int m_heightBeforePlot = 0;             // (the height of the card when the plot was opened, and the height it had been made when the plot was shown: closed again at that height it goes back to the first)
+    int m_heightWithPlot = 0;
     void emitChange();
     void syncOffsetWidgets();
     float preferredOffset(int axis) const;
@@ -284,10 +346,6 @@ public:
     FieldPanel(QWidget* parent=nullptr);
     const FieldViewSettings& settings() const { return m_settings; }
 
-    /*  The section view is a card of its own that is open when the user wants it, with or without a field: where both are open
-     *  (and neither was moved by hand) this card sits below that one instead of over it  */
-    void stackBelow(QWidget* sectionCard);
-
 public slots:
     /*  The open viewers (their keys and the names shown) and the one the card is about; the menu is there for two or more  */
     void setFields(const QStringList& keys, const QStringList& names, int current);
@@ -304,9 +362,16 @@ signals:
     /*  The menu chose another of the open fields  */
     void fieldChosen(QString key);
 
+    /*  H191: the ends of this viewer's colours typed in its legend, and Auto: the field's own ends again  */
+    void rangeSet(QString key, float lo, float hi);
+    void rangeAuto(QString key);
+
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
     void place();
+    void showPlotFully(bool shown);         // (the card has the room for the 2D plot at once, and is the size it was when the plot is closed again, H182)
+    int m_heightBeforePlot = 0;
+    int m_heightWithPlot = 0;
     void emitChange();
     void syncWidgets();
     void updateInfo();
@@ -320,7 +385,6 @@ protected:
     FieldSlice m_slice;
     QString m_readout, m_name;
     QStringList m_keys;
-    QWidget* m_sectionCard = nullptr;
 
     QToolButton* m_header;
     QComboBox* m_combo;

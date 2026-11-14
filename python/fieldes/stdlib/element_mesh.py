@@ -11,17 +11,14 @@ import ctypes
 
 from fieldes.i18n import tr as _tr
 
-# More tetrahedra than this are not handed to the viewer (every field's value in every one of them goes with them: about 100 bytes a tetrahedron, and the viewer's copies of them): the
-# card says so instead of showing no button.  The default mesh of a solid part had millions of them (the largest extent over 60: a cube had 2.7 million) until the default was given a budget of a million (see element_size.py), and the elements are
-# what a user opens a result to see
-MAX_DRAWN = 8000000
+# H198 (the user, 2026-11-13: "Make element shown by default for every analysis. Remove the threshold at which they are not shown, elements should always be shown"): there is no limit on
+# the number of elements handed to the viewer any more -- every result with elements has them to show, and the Elements view is on by default.  (It was 8 million tetrahedra, and the card said
+# that none were shown over it: H186.)
 
 
 def elements_note(count):
-    ''' What the card says of a result with more tetrahedra than are drawn: how many it has, and that none are shown ('' when it is not too many) '''
-    if count <= MAX_DRAWN:
-        return ''
-    return _tr('%s tetrahedra: more than the %s that can be drawn, so the elements are not shown') % ('{:,}'.format(count), '{:,}'.format(MAX_DRAWN))
+    ''' What the card says of a result that has elements it does not show: nothing, ever (no result is too large to show its elements) '''
+    return ''
 
 
 def default_text(nodes, elements):
@@ -41,7 +38,7 @@ def element_mesh(counts, mesh, values, field_ids, text, displacement=None):
     c = (ctypes.c_int64 * 3)()
     counts(c)
     nv, nt, nf = int(c[0]), int(c[1]), int(c[2])
-    if not 0 < nt <= MAX_DRAWN:
+    if not nt > 0:
         return None
     verts = (ctypes.c_float * (3 * nv))()
     tets = (ctypes.c_int32 * (4 * nt))()

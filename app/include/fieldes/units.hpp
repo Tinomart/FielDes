@@ -142,6 +142,13 @@ inline double shownValue(const QString& label, double v)
     return c.known ? v * c.scale + c.offset : v;
 }
 
+/*  A number typed in the unit shown, as the program keeps it (the inverse of shownValue: H191, the ends of a legend are typed in the unit its numbers are shown in)  */
+inline double storedValue(const QString& label, double shown)
+{
+    const Conversion c = ofLabel(label);
+    return c.known && c.scale != 0 ? (shown - c.offset) / c.scale : shown;
+}
+
 /*  A key number of a result {label, text, unit}, as it is shown (a text that is no number is left as it is)  */
 inline QStringList shownRow(const QStringList& row)
 {

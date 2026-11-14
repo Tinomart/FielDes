@@ -86,6 +86,7 @@ def menu():
         text = mc._build_operation(name, {'body': 'edge_1', 'body_info': {'type': 'curve'}}, others)
         check('the menu writes every edge that is selected (%s)' % name, text is not None and 'edge_1' in text and 'edge_2' in text and 'edge_3' in text, text)
     alone = mc._build_operation('fillet', {'body': 'box_1', 'body_info': {'type': 'solid'}}, [])
+    # (what the entry builds, before the completion writes every argument -- see completion_every_function_checks.py)
     check('a body alone is still the body (every concave edge)', alone == 'fillet(box_1)', alone)
 
 

@@ -20,8 +20,8 @@ from mfgkit import *
 t = Table('n8_thick_block_with_hole_and_boss: a block 14 x 14 x 8 with a round hole of radius 3 and a round boss of radius 2 that stands 0.5 mm from two of its edges, for a 0.8 mm wall rule: nothing here is thin, so nothing may be added, nothing reported, and the window draws it as fast as the part itself (found by a speed test: a remedy that looks for strips and wedges added specks along the edges of such a part)')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-block = difference(box((14, 14, 8), position=(7, 7, 4)), cylinder(3.0, 10, position=(7, 7, -1)))
-part = union(block, cylinder(2.0, 6.0, position=(2.5, 2.5, 8)))
+block = difference(box((14, 14, 8), position=(7, 7, 4)), cylinder(3.0, 10, position=(7, 7, 4)))
+part = union(block, cylinder(2.0, 6.0, position=(2.5, 2.5, 11.0)))
 lo, hi = (-2, -2, -2), (16, 16, 16)
 res = control(t, part, lo, hi, 'thick block', res_=6, rules=manufacturing_constraint(min_wall=0.8))
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them

@@ -20,7 +20,7 @@ t = Table('u6_nothing_to_fill: three parts with nothing out of reach along z -- 
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 pocket = difference(box(16, position=(8, 8, 8)), box((8, 8, 11), position=(8, 8, 11.5)))
-along = difference(box(16, position=(30, 8, 8)), cylinder(3.0, 18, position=(30, 8, -1)))
+along = difference(box(16, position=(30, 8, 8)), cylinder(3.0, 18, position=(30, 8, 8)))
 ledge = union(box((6, 16, 16), position=(47, 8, 8)), box((16, 16, 6), position=(52, 8, 13)))
 part = union(union(pocket, along), ledge)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)

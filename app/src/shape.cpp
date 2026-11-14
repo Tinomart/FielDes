@@ -2692,7 +2692,23 @@ void Shape::placeHint()
 
 bool Shape::wouldRenderDifferently(const Settings& s) const
 {
-    return !m_geometry_known || !(renderGeometry(s) == m_geometry);
+    if (!m_geometry_known) return true;
+    const RenderGeometry g = renderGeometry(s);
+    if (g == m_geometry) return false;
+    // H189 (the user, 2026-11-12: "A large render should never have its render interrupted when nothing in it changes from a script change and when rendered once, never rerender when things are
+    // change that dont affect it."): the region of the scene grows with the models that are shown -- a model made visible, a model that is moved -- and a body whose box is known and lies inside the
+    // region it was meshed over AND inside the new one, at the same resolution and quality, is the same mesh in either: nothing in it changes, so nothing is drawn again and the render that is going is
+    // not interrupted (measured on the small bowl: box_1 made visible grew the region from 334 to 636 mm, and difference_2, whose tree and box were the same, was meshed twice more)
+    if (g.res != m_geometry.res || g.quality != m_geometry.quality || g.exact != m_geometry.exact) return true;
+    if (!g.exact.empty()) return false;                 // (drawn from triangles of its own: the region is no part of it)
+    if (!s.autoScale || !m_ext_valid || m_ext_stale || has_hint) return true;
+    const double cell = g.res > 0 ? 1.0 / g.res : 0.0;
+    const QVector3D pad(float(3 * cell), float(3 * cell), float(3 * cell));
+    auto holds = [&](const QVector3D& lo, const QVector3D& hi) {
+        const QVector3D a = m_ext_lo - pad, b = m_ext_hi + pad;
+        return a.x() >= lo.x() && a.y() >= lo.y() && a.z() >= lo.z() && b.x() <= hi.x() && b.y() <= hi.y() && b.z() <= hi.z();
+    };
+    return !(holds(m_geometry.lo, m_geometry.hi) && holds(g.lo, g.hi));
 }
 
 Shape::RenderGeometry Shape::renderGeometry(const Settings& s) const
@@ -3447,6 +3463,7 @@ void Shape::setResult(std::vector<FieldChannel> channels, int current,
     // the smooth fields.
     m_elem_lo.clear();
     m_elem_hi.clear();
+    m_user_range.clear();                // (a new result: the ends typed for the one before are not its own -- the viewer puts them back, View::applyViewerChoices)
     if (m_grid.isMesh || !m_grid.fraction.empty())
     {
         size_t expect = 0;
@@ -3459,6 +3476,10 @@ void Shape::setResult(std::vector<FieldChannel> channels, int current,
                    m_grid.mtets.size() == 4 * nt && m_grid.mfaces.size() % 3 == 0 &&
                    m_grid.mfaceTet.size() == m_grid.mfaces.size() / 3;
             for (int32_t v : m_grid.mtets) good = good && v >= 0 && size_t(v) < nv;
+            // (the diagonals not drawn, and the element of each tetrahedron: pairs of vertices, and one number per tetrahedron or none)
+            good = good && m_grid.mhidden.size() % 2 == 0 && (m_grid.mowner.empty() || m_grid.mowner.size() == nt);
+            for (int32_t v : m_grid.mhidden) good = good && v >= 0 && size_t(v) < nv;
+            for (int32_t v : m_grid.mowner) good = good && v >= 0;
             if (good)
             {
                 buildAdjacency(m_grid);
@@ -3490,13 +3511,39 @@ void Shape::setResult(std::vector<FieldChannel> channels, int current,
             for (const auto& v : m_grid.values)
             {
                 float lo = v[0], hi = v[0];
-                for (float x : v)
+                if (m_grid.isMesh && m_grid.visibleRange && !m_grid.mfaceTet.empty())
                 {
-                    lo = std::min(lo, x);
-                    hi = std::max(hi, x);
+                    // (H219: the range of a displayed mesh is the one of the cells that are drawn -- the tetrahedra of its boundary faces; the cells inside cannot be seen, and a range over all of them put every
+                    // visible cell of a cube at the dark end of the map: "WHY IS EVERYTHING THE LOWEST VALUE???")
+                    lo = std::numeric_limits<float>::max();
+                    hi = std::numeric_limits<float>::lowest();
+                    for (int32_t t : m_grid.mfaceTet)
+                    {
+                        if (t < 0 || size_t(t) >= v.size()) continue;
+                        const float x = v[size_t(t)];
+                        lo = std::min(lo, x);
+                        hi = std::max(hi, x);
+                    }
+                    if (!(hi >= lo)) lo = hi = v[0];            // (no valid boundary face: the range stays the one of the first cell, widened below)
+                }
+                else
+                {
+                    for (float x : v)
+                    {
+                        lo = std::min(lo, x);
+                        hi = std::max(hi, x);
+                    }
+                }
+                if (!(hi > lo))
+                {
+                    // (every element has the same value -- a mesh of cubes of one size: the value is the middle of the colour map, not the dark end that the lowest value of a range of no width gets; the mesh was
+                    // drawn all black and its edges were lost on it, H203)
+                    const float half = lo != 0.0f ? 0.5f * std::abs(lo) : 0.5f;
+                    lo -= half;
+                    hi += half;
                 }
                 m_elem_lo.push_back(lo);
-                m_elem_hi.push_back(hi > lo ? hi : lo + 1e-6f * (1 + std::abs(lo)));
+                m_elem_hi.push_back(hi);
             }
         }
         else
@@ -3534,6 +3581,7 @@ void Shape::applyChannel()
     color_field = c.tree;
     color_lo = c.lo;
     color_hi = c.hi > c.lo ? c.hi : c.lo + 1e-6f * (1 + std::abs(c.lo));
+    applyUserRange();                    // (H191: the ends typed in the legend for this channel stand over the values' own)
     color_label = c.label;
     const Step* st = currentStep();
     if (st && !st->channels.empty() && !st->tree.is_valid())
@@ -4011,7 +4059,8 @@ void Shape::buildElements()
             if (m_grid.fraction[q] > 0) slot[q] = n++;
     }
     const std::vector<float>& values = m_grid.values[size_t(m_channel)];
-    const float vlo = m_elem_lo[size_t(m_channel)], vhi = m_elem_hi[size_t(m_channel)];
+    float vlo, vhi;
+    elementRange(vlo, vhi);                 // (the ends of the legend: the elements' own, or the ones typed in it -- H191)
     const float span = vhi - vlo;
 
     std::vector<GLfloat> tri, line;
@@ -4125,6 +4174,7 @@ void Shape::buildElements()
             }
     elem_tris = int(tri.size() / 9);
     elem_lines = int(line.size() / 9);
+    measureElementEdges(line);
     auto upload = [&](QOpenGLVertexArrayObject& vao_, QOpenGLBuffer& vbo, const std::vector<GLfloat>& data) {
         if (!vbo.isCreated())
         {
@@ -4147,6 +4197,30 @@ void Shape::buildElements()
     upload(elem_line_vao, elem_line_vbo, line);
 }
 
+// H193 (a thin plate of 303,584 elements came out SOLID BLACK in the window: the outline of every element, 5 pixels across, covers the colours): the mean length of the outline segments and
+// the middle of them, so that the outlines can be left out where the elements are only a few pixels across (drawElements)
+void Shape::measureElementEdges(const std::vector<float>& line)
+{
+    elem_edge = 0;
+    elem_centre = QVector3D(0, 0, 0);
+    const size_t segments = line.size() / 18;               // (two vertices of nine floats each)
+    if (segments == 0) return;
+    const size_t step = std::max<size_t>(1, segments / 20000);
+    double sum = 0;
+    QVector3D centre(0, 0, 0);
+    size_t count = 0;
+    for (size_t s = 0; s < segments; s += step)
+    {
+        const QVector3D a(line[18 * s], line[18 * s + 1], line[18 * s + 2]);
+        const QVector3D b(line[18 * s + 9], line[18 * s + 10], line[18 * s + 11]);
+        sum += double((b - a).length());
+        centre += 0.5f * (a + b);
+        ++count;
+    }
+    elem_edge = float(sum / double(count));
+    elem_centre = centre / float(count);
+}
+
 void Shape::buildMeshElements()
 {
     const ElementGrid& g = m_grid;
@@ -4161,20 +4235,56 @@ void Shape::buildMeshElements()
         if (moved) p += m_deform * QVector3D(g.mdisp[3 * size_t(v)], g.mdisp[3 * size_t(v) + 1], g.mdisp[3 * size_t(v) + 2]);
         return p;
     };
-    // (the section plane is in the undeformed model; a tetrahedron is kept by its centre)
+    // The edges of the drawn tetrahedra that are not an edge of their element (the diagonal across a face of a cube) are not drawn: a hexahedron has its twelve edges and nothing else (H203)
+    std::unordered_set<uint64_t> hiddenEdges;
+    hiddenEdges.reserve(g.mhidden.size());
+    for (size_t i = 0; i + 1 < g.mhidden.size(); i += 2)
+    {
+        const uint64_t a = uint64_t(std::min(g.mhidden[i], g.mhidden[i + 1])), b = uint64_t(std::max(g.mhidden[i], g.mhidden[i + 1]));
+        hiddenEdges.insert((a << 32) | b);
+    }
+    auto edgeShown = [&](int u, int v) {
+        if (hiddenEdges.empty()) return true;
+        const uint64_t a = uint64_t(std::min(u, v)), b = uint64_t(std::max(u, v));
+        return hiddenEdges.find((a << 32) | b) == hiddenEdges.end();
+    };
+    // (the section plane is in the undeformed model; an element is kept by its centre -- a tetrahedron by its own, an element made of tetrahedra by the mean of theirs, so that it is cut away whole)
     std::vector<char> kept;
     if (cut)
     {
         kept.assign(nt, 0);
+        std::vector<QVector3D> centre(nt);
         for (size_t t = 0; t < nt; ++t)
         {
             QVector3D c(0, 0, 0);
             for (int p = 0; p < 4; ++p) c += rest(g.mtets[4 * t + size_t(p)]);
-            kept[t] = QVector4D::dotProduct(QVector4D(c / 4.0f, 1.0f), m_sec_plane) >= 0;
+            centre[t] = c / 4.0f;
+        }
+        if (!g.mowner.empty())
+        {
+            int32_t cells = 0;
+            for (int32_t o : g.mowner) cells = std::max(cells, o + 1);
+            std::vector<QVector3D> sum(size_t(cells), QVector3D(0, 0, 0));
+            std::vector<int> count(size_t(cells), 0);
+            for (size_t t = 0; t < nt; ++t)
+            {
+                sum[size_t(g.mowner[t])] += centre[t];
+                ++count[size_t(g.mowner[t])];
+            }
+            for (size_t t = 0; t < nt; ++t)
+            {
+                const size_t o = size_t(g.mowner[t]);
+                kept[t] = QVector4D::dotProduct(QVector4D(sum[o] / float(count[o]), 1.0f), m_sec_plane) >= 0;
+            }
+        }
+        else
+        {
+            for (size_t t = 0; t < nt; ++t) kept[t] = QVector4D::dotProduct(QVector4D(centre[t], 1.0f), m_sec_plane) >= 0;
         }
     }
     const std::vector<float>& values = g.values[size_t(m_channel)];
-    const float vlo = m_elem_lo[size_t(m_channel)], vhi = m_elem_hi[size_t(m_channel)];
+    float vlo, vhi;
+    elementRange(vlo, vhi);                 // (the ends of the legend: the elements' own, or the ones typed in it -- H191)
     const float span = vhi - vlo;
 
     std::vector<GLfloat> tri, line;
@@ -4191,6 +4301,7 @@ void Shape::buildMeshElements()
         for (int q = 0; q < 3; ++q) vertex(tri, v[q], r, gg, bb);
         for (int q = 0; q < 3; ++q)
         {
+            if (!edgeShown(v[q], v[(q + 1) % 3])) continue;         // (the diagonal of a face of an element that is not a tetrahedron)
             vertex(line, v[q], 0.08f, 0.1f, 0.12f);
             vertex(line, v[(q + 1) % 3], 0.08f, 0.1f, 0.12f);
         }
@@ -4224,6 +4335,7 @@ void Shape::buildMeshElements()
     }
     elem_tris = int(tri.size() / 9);
     elem_lines = int(line.size() / 9);
+    measureElementEdges(line);
     auto upload = [&](QOpenGLVertexArrayObject& vao_, QOpenGLBuffer& vbo, const std::vector<GLfloat>& data) {
         if (!vbo.isCreated())
         {
@@ -4248,6 +4360,7 @@ void Shape::buildMeshElements()
 
 float Shape::displayLo() const
 {
+    if (has_result && hasUserRange()) return m_user_range.at(m_channel).first;            // (typed in the legend: H191)
     if (has_result && m_show_elements && hasElements() && size_t(m_channel) < m_elem_lo.size())
         return m_elem_lo[size_t(m_channel)];
     return color_lo;
@@ -4255,9 +4368,76 @@ float Shape::displayLo() const
 
 float Shape::displayHi() const
 {
+    if (has_result && hasUserRange()) return m_user_range.at(m_channel).second;
     if (has_result && m_show_elements && hasElements() && size_t(m_channel) < m_elem_hi.size())
         return m_elem_hi[size_t(m_channel)];
     return color_hi;
+}
+
+// H191: the ends of the colour scale, as typed in the legend.  An empty range (high not above low) is not taken: the legend keeps what it had
+void Shape::setUserRange(float lo, float hi)
+{
+    setUserRangeOf(rangeKey(), lo, hi);
+}
+
+void Shape::setUserRangeOf(int key, float lo, float hi)
+{
+    if (!std::isfinite(lo) || !std::isfinite(hi) || !(hi > lo)) return;
+    if (!has_result && m_user_range.count(key) == 0) m_range_before = {color_lo, color_hi};
+    m_user_range[key] = {lo, hi};
+    if (key != rangeKey()) return;
+    applyUserRange();
+    gl_ready = false;
+    elem_dirty = true;
+    emit(redraw());
+}
+
+void Shape::clearUserRange()
+{
+    if (!m_user_range.erase(rangeKey())) return;
+    if (has_result) applyChannel();
+    else if (has_color && color_auto && !color_values.empty()) autoRangeFromValues();
+    else { color_lo = m_range_before.first; color_hi = m_range_before.second; }
+    gl_ready = false;
+    elem_dirty = true;
+    emit(redraw());
+}
+
+void Shape::applyUserRange()
+{
+    const auto it = m_user_range.find(rangeKey());
+    if (it == m_user_range.end()) return;
+    color_lo = it->second.first;
+    color_hi = it->second.second;
+}
+
+// (the range of a colouring that is automatic: the lowest and the highest value of the vertices)
+void Shape::autoRangeFromValues()
+{
+    float lo = std::numeric_limits<float>::infinity(), hi = -lo;
+    for (float v : color_values)
+    {
+        if (std::isfinite(v)) { lo = std::min(lo, v); hi = std::max(hi, v); }
+    }
+    if (lo <= hi)
+    {
+        color_lo = lo;
+        color_hi = hi > lo ? hi : lo + 1e-6f * (1.0f + std::abs(lo));
+    }
+}
+
+// The ends the elements are coloured between: their own, or the ones typed in the legend
+void Shape::elementRange(float& lo, float& hi) const
+{
+    const auto it = m_user_range.find(m_channel);
+    if (has_result && it != m_user_range.end())
+    {
+        lo = it->second.first;
+        hi = it->second.second;
+        return;
+    }
+    lo = m_elem_lo[size_t(m_channel)];
+    hi = m_elem_hi[size_t(m_channel)];
 }
 
 namespace {
@@ -4276,7 +4456,7 @@ QString Shape::valueNote() const
     if (m_hasValueNote) return m_valueNote;             // (the script says what the values are: they are no solver's)
     const bool solved = solvedAtNodes(m_channels[size_t(m_channel)].name);
     if (m_show_elements && hasElements()) return T("Element values");
-    return solved ? T("Solver values at nodes") : T("Nodal average");
+    return solved ? T("Solver values at nodes") : T("Recovered at nodes");
 }
 
 QString Shape::valueNoteHelp() const
@@ -4291,7 +4471,7 @@ QString Shape::valueNoteHelp() const
                       : T("Each element's own value, not averaged.");
     else
         help = solved ? T("The solver's values at the nodes, interpolated between them.")
-                      : T("The elements' values averaged at each node and interpolated between them. "
+                      : T("The elements' values recovered at each node (a plane fitted through the values of the elements round it, taken at the node) and interpolated between the nodes. "
                         "Peaks are lower than the elements' own: switch on Elements to see those.");
     // (the tester of version 1.2.0: "how can the stress be negative there?" -- the largest principal stress is below zero where the part is pressed in every direction)
     if (name == "max_principal")
@@ -4308,7 +4488,7 @@ QString Shape::probeLabel() const
     if (!has_result || m_channel < 0 || size_t(m_channel) >= m_channels.size()) return color_label;
     if (m_hasValueNote) return m_channels[size_t(m_channel)].label;
     if (m_show_elements && hasElements()) return color_label + " [element]";
-    return solvedAtNodes(m_channels[size_t(m_channel)].name) ? color_label : color_label + " [nodal average]";
+    return solvedAtNodes(m_channels[size_t(m_channel)].name) ? color_label : color_label + " [recovered at nodes]";
 }
 
 namespace {
@@ -4389,7 +4569,28 @@ void Shape::drawElements(const QMatrix4x4& M, bool monochrome, QColor color)
     glDrawArrays(GL_TRIANGLES, 0, elem_tris);
     elem_vao.release();
     glDisable(GL_POLYGON_OFFSET_FILL);
-    if (!monochrome && elem_lines)
+    // The outline of the elements: left out where they are only a few pixels across (H193: the plate of 303,584 elements, each 5 pixels, was solid black -- the outlines covered the colours).  The
+    // length of an element's edge on the screen is the mean length of the outline segments (made with them), at the middle of them, through the matrix of the picture, the largest of the three axes
+    bool outline = !monochrome && elem_lines;
+    if (outline && elem_edge > 0.0f)
+    {
+        GLint vp[4] = {0, 0, 0, 0};
+        glGetIntegerv(GL_VIEWPORT, vp);
+        const QVector4D c0 = M * QVector4D(elem_centre, 1.0f);
+        float pixels = 0.0f;
+        for (int a = 0; a < 3; ++a)
+        {
+            QVector3D d(0, 0, 0);
+            d[a] = elem_edge;
+            const QVector4D c1 = M * QVector4D(elem_centre + d, 1.0f);
+            if (!(c0.w() > 1e-6f) || !(c1.w() > 1e-6f)) continue;
+            const float dx = (c1.x() / c1.w() - c0.x() / c0.w()) * 0.5f * float(vp[2]);
+            const float dy = (c1.y() / c1.w() - c0.y() / c0.w()) * 0.5f * float(vp[3]);
+            pixels = std::max(pixels, std::sqrt(dx * dx + dy * dy));
+        }
+        if (pixels > 0.0f && pixels < 4.0f) outline = false;
+    }
+    if (outline)
     {
         glUniform1i(Shader::basic->uniformLocation("shading"), 0);
         glUniform4f(Shader::basic->uniformLocation("color_mul"), 1, 1, 1, 1);
@@ -4887,6 +5088,8 @@ void Shape::draw(const QMatrix4x4& M)
             const int category = color_label.section(':', 1).split(',', Qt::SkipEmptyParts).value(0).toInt();
             patchT = float(std::max(0, std::min(kBcCategories, category))) / float(kBcCategories);
         }
+        // A continuous colour map is made per fragment from the interpolated value; the categories of the boundary conditions' map and a patch (one colour for all its vertices) are the colours themselves
+        lut_in_use = has_color && color_values.size() == mesh->verts.size() && !has_cutoff && color_map != "bc";
         size_t vk = 0;
         for (auto& v0 : mesh->verts)
         {
@@ -4918,11 +5121,21 @@ void Shape::draw(const QMatrix4x4& M)
             {
                 const float span = color_hi - color_lo;
                 const float t = has_cutoff ? patchT : (span > 0 ? (color_values[vi] - color_lo) / span : 0.5f);
-                float r, g, b;
-                colormapRGB(color_map, t, r, g, b);
-                verts[i++] = r;
-                verts[i++] = g;
-                verts[i++] = b;
+                if (lut_in_use)
+                {
+                    // (the value, for the fragment shader to make the colour of: see lut_tex)
+                    verts[i++] = std::min(1.0f, std::max(0.0f, t));
+                    verts[i++] = 0.0f;
+                    verts[i++] = 0.0f;
+                }
+                else
+                {
+                    float r, g, b;
+                    colormapRGB(color_map, t, r, g, b);
+                    verts[i++] = r;
+                    verts[i++] = g;
+                    verts[i++] = b;
+                }
                 if (has_cutoff) outside = color_values[vi] - color_cutoff;
                 else if (has_floor) outside = color_floor - color_values[vi];      // (above zero below the floor: not drawn)
             }
@@ -5024,6 +5237,38 @@ void Shape::draw(const QMatrix4x4& M)
                         0.03 * s, 0.21 * s, 0.26 * s, 0.0f);
         }
         glUniform1i(Shader::basic->uniformLocation("shading"), colored ? 3 : 2);
+        const bool byValue = colored && lut_in_use;
+        if (byValue)
+        {
+            // The table of the colour map, 1024 colours: the shader looks the interpolated value up in it (the vertices carry values, see lut_in_use)
+            if (!lut_tex || lut_map != color_map)
+            {
+                if (lut_tex) glDeleteTextures(1, &lut_tex);
+                const int n = 1024;
+                std::vector<GLubyte> table(size_t(n) * 3);
+                for (int k = 0; k < n; ++k)
+                {
+                    float r, g, b;
+                    colormapRGB(color_map, float(k) / float(n - 1), r, g, b);
+                    table[size_t(k) * 3] = GLubyte(std::lround(255.0f * std::min(1.0f, std::max(0.0f, r))));
+                    table[size_t(k) * 3 + 1] = GLubyte(std::lround(255.0f * std::min(1.0f, std::max(0.0f, g))));
+                    table[size_t(k) * 3 + 2] = GLubyte(std::lround(255.0f * std::min(1.0f, std::max(0.0f, b))));
+                }
+                glGenTextures(1, &lut_tex);
+                glBindTexture(GL_TEXTURE_2D, lut_tex);
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, n, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, table.data());
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                lut_map = color_map;
+            }
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, lut_tex);
+            glUniform1i(Shader::basic->uniformLocation("color_lut"), 0);
+        }
+        glUniform1i(Shader::basic->uniformLocation("lut_mode"), byValue ? 1 : 0);
         const QMatrix4x4 shown = previewed(M);          // (a shape that is being dragged is drawn where its numbers say now, from the mesh it has)
         glUniformMatrix4fv(Shader::basic->uniformLocation("M"),
                            1, GL_FALSE, shown.data());
@@ -5032,6 +5277,7 @@ void Shape::draw(const QMatrix4x4& M)
         vao.bind();
         glDrawElements(GL_TRIANGLES, mesh->branes.size() * 3, GL_UNSIGNED_INT, NULL);
         vao.release();
+        glUniform1i(Shader::basic->uniformLocation("lut_mode"), 0);
         glUniform1i(Shader::basic->uniformLocation("patch_mode"), 0);
         glUniform1i(Shader::basic->uniformLocation("use_rest"), 0);
         Shader::basic->release();
@@ -5188,6 +5434,10 @@ void Shape::startRender(RenderSettings s)
         colour_progress.store(0.0);
 
         placeHint();
+        // (the box of the body, as the render that starts now knows it: the worker reads these, not the members the GUI's search writes -- see renderCacheKey)
+        run_ext_known = s.settings.autoScale && m_ext_valid && !m_ext_stale && !has_hint;
+        run_ext_lo = m_ext_lo;
+        run_ext_hi = m_ext_hi;
         // (the resolution of this level, before m_geometry is this render's: a box that is out of date does not raise it above the last one's -- see autoResolution)
         s.res = autoResolution(s.settings);
         if (std::getenv("FIELDES_TIMING"))
@@ -5417,19 +5667,8 @@ void Shape::onFutureFinished()
             disp = std::move(bm.disp);
             applyChannel();
         }
-        if (has_color && color_auto && !color_values.empty())
-        {
-            float lo = std::numeric_limits<float>::infinity(), hi = -lo;
-            for (float v : color_values)
-            {
-                if (std::isfinite(v)) { lo = std::min(lo, v); hi = std::max(hi, v); }
-            }
-            if (lo <= hi)
-            {
-                color_lo = lo;
-                color_hi = hi > lo ? hi : lo + 1e-6f * (1.0f + std::abs(lo));
-            }
-        }
+        if (has_color && color_auto && !color_values.empty()) autoRangeFromValues();
+        applyUserRange();                       // (H191: the ends typed in the legend stand over the values' own, after every mesh)
 
         gl_ready = false;
         emit(gotMesh());
@@ -5510,6 +5749,12 @@ void Shape::freeGL()
         tri_vbo.destroy();
 
         gl_ready = false;
+    }
+    if (lut_tex)
+    {
+        glDeleteTextures(1, &lut_tex);
+        lut_tex = 0;
+        lut_map.clear();
     }
     if (elem_vbo.isCreated())
     {
@@ -6453,12 +6698,40 @@ std::string Shape::renderCacheKey(const RenderSettings& s, const libfive::Region
         }
         resultKey += "|map|" + color_map.toStdString();
     }
+    // H189: a body whose box is known and lies inside the region it is meshed over is the same mesh whatever the room round it is -- the scene's region grows with the models that are shown --, so
+    // its key says its box (the box of the render that starts, rounded out to 64ths of its length and a few cells: the search that finds it may differ in the last digits from one region to another),
+    // not the region: the mesh that was kept when a model was shown is the one that is read when it is hidden again, and in another session whose region is another
+    Eigen::Vector3d keyLo(region.lower.x(), region.lower.y(), region.lower.z()), keyHi(region.upper.x(), region.upper.y(), region.upper.z());
+    bool boxKey = false;
+    if (run_ext_known && res > 0)
+    {
+        const double cell = 1.0 / res;
+        const Eigen::Vector3d blo(run_ext_lo.x() - 3 * cell, run_ext_lo.y() - 3 * cell, run_ext_lo.z() - 3 * cell);
+        const Eigen::Vector3d bhi(run_ext_hi.x() + 3 * cell, run_ext_hi.y() + 3 * cell, run_ext_hi.z() + 3 * cell);
+        bool inside = true;
+        double longest = 0;
+        for (int k = 0; k < 3; ++k)
+        {
+            inside = inside && blo[k] >= keyLo[k] && bhi[k] <= keyHi[k];
+            longest = std::max(longest, bhi[k] - blo[k]);
+        }
+        if (inside && longest > 0)
+        {
+            const double step = std::max(longest / 64.0, cell);
+            for (int k = 0; k < 3; ++k)
+            {
+                keyLo[k] = std::floor(blo[k] / step) * step;
+                keyHi[k] = std::ceil(bhi[k] / step) * step;
+            }
+            boxKey = true;
+        }
+    }
     char buf[400];
     std::snprintf(buf, sizeof(buf), "|%a %a %a %a %a %a|%a|%a|%d",
-                  region.lower.x(), region.lower.y(), region.lower.z(),
-                  region.upper.x(), region.upper.y(), region.upper.z(),
+                  keyLo.x(), keyLo.y(), keyLo.z(),
+                  keyHi.x(), keyHi.y(), keyHi.z(),
                   res, double(s.settings.quality), int(s.alg));
-    return std::string(kRenderCacheVersion) + "|" + cache_tree_key + resultKey + buf + (m_flat ? "|flat" : "");
+    return std::string(kRenderCacheVersion) + "|" + cache_tree_key + resultKey + buf + (m_flat ? "|flat" : "") + (boxKey ? "|box" : "");
 }
 
 bool Shape::readRenderCache(const std::string& key, BoundedMesh& out) const

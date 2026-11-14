@@ -626,18 +626,15 @@ bool TetThermalProblem::solve(int maxIterations, double tolerance, std::string& 
     res->elementStress.resize(nt);
     for (size_t t = 0; t < nt; ++t)
         res->elementStress[t] = {float(flux[t].x()), float(flux[t].y()), float(flux[t].z()), float(flux[t].norm()), 0.0f, 0.0f, 0.0f};
+    // (the flux at the nodes: the plane through the fluxes of the elements round each node, taken at the node, not their average -- see patchRecovery, H199)
+    std::vector<double> elementFlux(nt * 3), nodalFlux;
+    for (size_t t = 0; t < nt; ++t)
+        for (size_t a = 0; a < 3; ++a) elementFlux[t * 3 + a] = flux[t][Eigen::Index(a)];
+    patchRecovery(mesh, A, elementFlux, 3, nodalFlux);
     parallelRange(nv, [&](size_t b0, size_t b1) {
         for (size_t i = b0; i < b1; ++i)
         {
-            Vec3 q = Vec3::Zero();
-            double w = 0;
-            for (uint32_t e = A.vtStart[i]; e < A.vtStart[i + 1]; ++e)
-            {
-                const size_t t = A.vtList[e];
-                q += A.geom[t].vol * flux[t];
-                w += A.geom[t].vol;
-            }
-            if (w > 0) q /= w;
+            Vec3 q = Vec3(nodalFlux[i * 3], nodalFlux[i * 3 + 1], nodalFlux[i * 3 + 2]);
             res->fields[0][i] = float(T[i]);
             res->fields[1][i] = float(q.norm());
             res->fields[2][i] = float(q.x());

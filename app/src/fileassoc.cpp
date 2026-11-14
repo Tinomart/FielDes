@@ -71,6 +71,17 @@ bool writeDefault(const QString& subKey, const QString& value)
     return ok;
 }
 
+bool writeNamed(const QString& subKey, const QString& name, const QString& value)
+{
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, reinterpret_cast<LPCWSTR>(("Software\\Classes\\" + subKey).utf16()), 0, nullptr, 0, KEY_WRITE, nullptr,
+                        &key, nullptr) != ERROR_SUCCESS)
+        return false;
+    const bool ok = RegSetValueExW(key, reinterpret_cast<LPCWSTR>(name.utf16()), 0, REG_SZ, reinterpret_cast<const BYTE*>(value.utf16()), DWORD((value.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+    RegCloseKey(key);
+    return ok;
+}
+
 }   // anonymous namespace
 
 bool isRegistered()
@@ -89,6 +100,16 @@ bool registerForUser(QString* why)
     ok = ok && writeDefault("FielDes.App\\DefaultIcon", "\"" + exe + "\",0");
     ok = ok && writeDefault("FielDes.App\\shell\\open", "Open");
     ok = ok && writeDefault("FielDes.App\\shell\\open\\command", "\"" + exe + "\" \"%1\"");
+    // "Open with" (H180, the user, 2026-11-12): FielDes is offered for the Python scripts and for the model files it imports (a model opens as a new script with its import statement); no file type
+    // has it as its default after this
+    ok = ok && writeNamed("Applications\\FielDes.exe", "FriendlyAppName", "FielDes");
+    ok = ok && writeDefault("Applications\\FielDes.exe\\DefaultIcon", "\"" + exe + "\",0");
+    ok = ok && writeDefault("Applications\\FielDes.exe\\shell\\open\\command", "\"" + exe + "\" \"%1\"");
+    for (const QString type : {".py", ".step", ".stp", ".stl", ".obj", ".ply", ".3mf", ".glb", ".gltf"})
+    {
+        ok = ok && writeNamed("Applications\\FielDes.exe\\SupportedTypes", type, "");
+        ok = ok && writeDefault(type + "\\OpenWithList\\FielDes.exe", "");
+    }
     if (!ok)
     {
         if (why) *why = "The registry of this user could not be written.";
@@ -144,7 +165,7 @@ bool registerForUser(QString* why)
                   "Type=Application\n"
                   "Name=FielDes app\n"
                   "Exec=\"" + exe + "\" %f\n"
-                  "MimeType=application/x-fieldesapp;\n"
+                  "MimeType=application/x-fieldesapp;text/x-python;model/stl;application/sla;model/obj;model/step;application/step;model/3mf;model/gltf-binary;model/gltf+json;\n"
                   "NoDisplay=true\n"
                   "Terminal=false\n");
     if (!ok)

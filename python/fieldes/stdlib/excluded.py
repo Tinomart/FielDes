@@ -213,7 +213,7 @@ NO_BODY = {
     'points': ['point', 'surface', 'plane', 'sphere_surface', 'cylinder_surface', 'wave_surface'],
     'curves': ['polyline', 'spline'],
     'profile': ['profile'],
-    'fea': ['fixed', 'force', 'gravity', 'thermal_expansion'],
+    'fea': ['fixed', 'force', 'pressure', 'gravity', 'thermal_expansion'],
     'thermal': ['fixed_temperature', 'heat_input', 'heat_generation', 'convection'],
     'fluid': ['inlet', 'outlet', 'wall', 'slip', 'symmetry'],
     'manufacturing': ['manufacturing_constraint', 'fff_constraint', 'cnc_constraint', 'molding_constraint'],

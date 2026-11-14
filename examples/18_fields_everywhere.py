@@ -41,7 +41,7 @@ joined = smooth_union(post, block, blend,
     rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
-joined = handles(joined, [var(105.0), var(20.0), var(10.0), var(30.0), var(0.0), var(110.0), var(30.0), var(20.0), var(12.0), var(5.0), var(5.0), var(30.0), var(12.0), var(5.0), var(80.0), var(10.0), var(30.0), var(12.0), var(5.0), var(30.0), var(12.0), var(5.0)])
+joined = handles(joined, [var(105.0), var(20.0), var(10.0), var(15.0), var(-15.0), var(15.0), var(110.0), var(30.0), var(20.0), var(12.0), var(5.0), var(5.0), var(30.0), var(12.0), var(5.0), var(80.0), var(10.0), var(-15.0), var(15.0), var(30.0), var(12.0), var(5.0), var(30.0), var(12.0), var(5.0)])
 joined
 # 3. A lattice whose cell size is a field.  Big cells where the field is large, small ones where it is small;
 #    a graded cell size blends lattices a factor of two apart, so it can change by a factor of up to 16.

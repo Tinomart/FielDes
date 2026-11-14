@@ -229,7 +229,9 @@ protected:
     bool goToDefinition(const QString& name, int fromLine, const QString& owner=QString());
     int findDefinitionLine(const QString& name, int fromLine, bool onlyDefs=false) const;
     bool resolvable(const QString& name, const QString& owner);
-    static QString ownerBefore(const QString& line, int wordStart);
+    // The identifier in front of the dot ("*" for "(a + b).max"); for a name that may be the keyword of a call (after "(" or ",", or first on its line, and followed by "="): "@line:column" -- the
+    // resolver finds in the syntax tree whether it is one and whose parameter it names (H216)
+    static QString ownerBefore(const QString& line, int wordStart, int blockNumber = -1);
     bool handleMultiCursorKey(QKeyEvent* e);
     int indentOf(const QTextBlock& b) const;
     bool isBlankOrComment(const QTextBlock& b) const;

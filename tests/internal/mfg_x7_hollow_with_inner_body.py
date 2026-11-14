@@ -41,9 +41,11 @@ t.check('and the cavity between the ball and the shell is still air (at 6.5 mm f
 cmp_ = compare(part, res, lo, hi, n=240000)
 ball_pts, ball_vol = added_in(cmp_, (-4.5, -4.5, 5.5), (4.5, 4.5, 14.5))
 t.check('nothing was added to the ball (%.2f mm3)' % ball_vol, ball_vol < 1.5, '%.2f mm3' % ball_vol, '< 1.5')
-hand = 4.0 / 3.0 * math.pi * ((10.15 ** 3 - 9.35 ** 3) - (10.0 ** 3 - 9.5 ** 3))
+# (by hand: the wall asked is 0.8 mm and docs/manufacturing.md says min_wall adds what the wall lacks to the limit AND A MARGIN OF 4 % of it, so that the check passes it: the wall is raised from 0.5 to 0.8 x 1.04 = 0.832 mm,
+# half on each side, to the radii 10 + 0.166 and 9.5 - 0.166 = 9.334: (4/3) pi ((10.166^3 - 9.334^3) - (10^3 - 9.5^3)))
+hand = 4.0 / 3.0 * math.pi * ((10.166 ** 3 - 9.334 ** 3) - (10.0 ** 3 - 9.5 ** 3))
 a_, r_, _ = changed_volumes(part, res, lo, hi, n_coarse=240000, n_dense=240000)
-t.near('the material added to the shell, (4/3) pi ((10.15^3 - 9.35^3) - (10^3 - 9.5^3)) = %.1f' % hand, a_, hand, 0.08 * hand, ' mm3')
+t.near('the material added to the shell, (4/3) pi ((10.166^3 - 9.334^3) - (10^3 - 9.5^3)) = %.1f' % hand, a_, hand, 0.08 * hand, ' mm3')
 t.check('nothing cut', r_ < 2.0, '%.3g mm3' % r_, 0)
 after = manufacturing_analysis(res, constraints=[rule], samples=6000)
 if not after.compliant:

@@ -1749,7 +1749,6 @@ for _fn in (morph_polyhedron, morph_body):
     _fn.__signature__ = _sig.replace(parameters=[_p for _p in _sig.parameters.values() if _p.name != '_faces'])
     _fn._makes = 'solid'
     _fn._makes_no_gizmo = True
-    _fn._short_call = True
 
 # ---- a measurement for the lag after a point is added to a morph body (H68c): with FIELDES_TIMING set (a test window's launcher sets it, the program as the user starts it does not) each stage that takes more
 # than 20 ms writes a line of the window's log with the clock the automation lines use

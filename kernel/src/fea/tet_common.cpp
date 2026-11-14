@@ -215,10 +215,40 @@ void assemble(const TetMesh& mesh, const Mat6& D, const std::vector<double>* sca
     }, 16);
 }
 
+void addTurnOperator(const Assembly& A, const double* x, double* y)
+{
+    for (const auto& t : A.turns)
+    {
+        double turn = 0;
+        for (size_t q = 0; q < t.node.size(); ++q)
+        {
+            const size_t i = t.node[q];
+            turn += t.coef[q][0] * x[3 * i] + t.coef[q][1] * x[3 * i + 1] + t.coef[q][2] * x[3 * i + 2];
+        }
+        const double pull = t.stiffness * turn;
+        for (size_t q = 0; q < t.node.size(); ++q)
+        {
+            const size_t i = t.node[q];
+            y[3 * i] += pull * t.coef[q][0];
+            y[3 * i + 1] += pull * t.coef[q][1];
+            y[3 * i + 2] += pull * t.coef[q][2];
+        }
+    }
+}
+
 void buildPreconditioner(const std::vector<unsigned char>& fixed, Assembly& A)
 {
     const size_t nv = A.K.n;
     A.inv.assign(nv * 9, 0.0);
+    // (the springs on the turns add k coef coef^T to the diagonal block of every node they hold: the block-Jacobi preconditioner sees them, or the stiff spring would slow the solve down)
+    std::unordered_map<uint32_t, Eigen::Matrix3d> springs;
+    for (const auto& t : A.turns)
+        for (size_t q = 0; q < t.node.size(); ++q)
+        {
+            auto it = springs.find(t.node[q]);
+            if (it == springs.end()) it = springs.emplace(t.node[q], Eigen::Matrix3d::Zero()).first;
+            it->second += t.stiffness * t.coef[q] * t.coef[q].transpose();
+        }
     parallelRange(nv, [&](size_t b0, size_t b1) {
         for (size_t i = b0; i < b1; ++i)
         {
@@ -228,6 +258,14 @@ void buildPreconditioner(const std::vector<unsigned char>& fixed, Assembly& A)
                 for (int c = 0; c < 3; ++c)
                     B(r, c) = (fixed[3 * i + size_t(r)] || fixed[3 * i + size_t(c)]) ? (r == c ? 1.0 : 0.0)
                                                                                     : A.K.val[pos * 9 + size_t(3 * r + c)];
+            if (!springs.empty())
+            {
+                const auto it = springs.find(uint32_t(i));
+                if (it != springs.end())
+                    for (int r = 0; r < 3; ++r)
+                        for (int c = 0; c < 3; ++c)
+                            if (!fixed[3 * i + size_t(r)] && !fixed[3 * i + size_t(c)]) B(r, c) += it->second(r, c);
+            }
             const Eigen::Matrix3d Bi = B.inverse();
             for (int r = 0; r < 3; ++r)
                 for (int c = 0; c < 3; ++c) A.inv[i * 9 + size_t(3 * r + c)] = Bi(r, c);
@@ -244,6 +282,7 @@ void applyOperator(const Assembly& A, const std::vector<unsigned char>& fixed, c
         for (size_t i = b0; i < b1; ++i) xm[i] = fixed[i] ? 0.0 : x[i];
     }, 8192);
     A.K.matvec(xm.data(), y.data());
+    if (!A.turns.empty()) addTurnOperator(A, xm.data(), y.data());
     pfor(n, kSerialDofs, [&](size_t b0, size_t b1) {
         for (size_t i = b0; i < b1; ++i) if (fixed[i]) y[i] = x[i];
     }, 8192);
@@ -284,10 +323,17 @@ double dotProduct(const std::vector<double>& a, const std::vector<double>& b)
 
 bool cgSolve(const Assembly& A, const std::vector<unsigned char>& fixed, const std::vector<double>& b,
              std::vector<double>& u, double tolerance, int maxIterations, const std::atomic<bool>* cancel,
-             const std::function<void(double, const std::string&)>& progress, CgResult& out, std::string& error)
+             const std::function<void(double, const std::string&)>& progress, CgResult& out, std::string& error, bool multigrid)
 {
     const size_t n = 3 * A.K.n;
     std::vector<double> r(n), z(n), p(n), Ap(n), scratch(n);
+    // (the preconditioner: block-Jacobi, or the multigrid once the solve has been seen to stall -- see below)
+    std::shared_ptr<Amg> amg;
+    bool amgTried = false;
+    auto precondition = [&](const double* rv, double* zv) {
+        if (amg) applyAmg(*amg, rv, zv);
+        else tet::precondition(A, rv, zv);
+    };
     if (u.size() != n) u.assign(n, 0.0);
     for (size_t i = 0; i < n; ++i) if (fixed[i]) u[i] = 0.0;
     applyOperator(A, fixed, u, Ap, scratch);
@@ -306,10 +352,19 @@ bool cgSolve(const Assembly& A, const std::vector<unsigned char>& fixed, const s
         out.residual = rel;
         return true;
     }
-    precondition(A, r.data(), z.data());
+    precondition(r.data(), z.data());
     p = z;
     double rz = dotProduct(r, z);
     const double rel0 = std::max(rel, 1e-300);
+    // A new start from the iterate we have, with the preconditioner that is now in force (the true residual, not the recurrence's)
+    auto restart = [&]() {
+        applyOperator(A, fixed, u, Ap, scratch);
+        for (size_t i = 0; i < n; ++i) r[i] = fixed[i] ? 0.0 : b[i] - Ap[i];
+        rel = std::sqrt(dotProduct(r, r)) / fnorm;
+        precondition(r.data(), z.data());
+        p = z;
+        rz = dotProduct(r, z);
+    };
     int it = 0;
     for (it = 0; it < maxIterations; ++it)
     {
@@ -322,6 +377,13 @@ bool cgSolve(const Assembly& A, const std::vector<unsigned char>& fixed, const s
         const double pAp = dotProduct(p, Ap);
         if (!(pAp > 0))
         {
+            if (amg)
+            {
+                // (the multigrid's cycle was not positive definite here: back to the block-Jacobi preconditioner)
+                amg.reset();
+                restart();
+                continue;
+            }
             error = "the supports don't hold the part: fix more of it, or in more directions";
             return false;
         }
@@ -356,7 +418,38 @@ bool cgSolve(const Assembly& A, const std::vector<unsigned char>& fixed, const s
             ++it;
             break;
         }
-        precondition(A, r.data(), z.data());
+        // A plate or a shell of tetrahedra: the block-Jacobi preconditioner brings the residual down more and more slowly (the iterations grow with the square of
+        // length over thickness).  After 100 iterations, and every 50 after that, the rate of the last 50 says how many more are needed; more than 300 is a stall,
+        // and the multigrid takes over (H193)
+        if (multigrid && !amg && !amgTried && it >= 100 && (it - 100) % 50 == 0 && out.history.size() > 51 && A.turns.empty() &&
+            A.coords.size() == 3 * A.K.n)
+        {
+            const double before = std::max(double(out.history[out.history.size() - 51]), 1e-300);
+            const double rate = std::pow(std::max(rel, 1e-300) / before, 1.0 / 50.0);
+            const double left = rate < 1.0 ? std::log(tolerance / std::max(rel, 1e-300)) / std::log(rate) : 1e30;
+            if (left > 300)
+            {
+                amgTried = true;
+                if (progress) progress(std::max(0.0, std::min(1.0, std::log(rel0 / std::max(rel, 1e-300)) / std::log(rel0 / std::max(tolerance, 1e-300)))),
+                                       "building the multigrid solver");
+                std::string why;
+                amg = buildAmg(A, fixed, why);
+                if (std::getenv("FIELDES_FEA_DEBUG"))
+                    fprintf(stderr, "[tetfea]   iteration %d: %.0f more needed at the rate of the last 50: %s\n", it, left,
+                            amg ? ("multigrid " + amgSummary(*amg)).c_str() : ("no multigrid: " + why).c_str());
+                if (amg)
+                {
+                    restart();
+                    if (!(rz > 0) || !std::isfinite(rel))
+                    {
+                        amg.reset();
+                        restart();
+                    }
+                    continue;
+                }
+            }
+        }
+        precondition(r.data(), z.data());
         const double rzNew = dotProduct(r, z);
         const double beta = rzNew / rz;
         rz = rzNew;
@@ -432,9 +525,21 @@ bool lobpcg(const Assembly& A, const std::vector<unsigned char>& fixed, const st
     bool haveP = false;
     Vec lam(m);
     int it = 0;
+    // The preconditioner of the residuals, K^-1 r approximately: one cycle of the multigrid when the matrix can have one (the positions of the nodes are given and the problem
+    // is big enough to have coarse levels), else the conjugate gradients below.  A plate or a shell of tetrahedra is where it matters (H193: block-Jacobi conjugate gradients
+    // took 29 s for a 2.4 mm plate and could not finish a thin one)
+    std::shared_ptr<Amg> amg;
+    if (A.turns.empty() && A.coords.size() == 3 * A.K.n)
+    {
+        std::string why;
+        amg = buildAmg(A, fixed, why);
+        if (std::getenv("FIELDES_FEA_DEBUG"))
+            fprintf(stderr, "[lobpcg] %s\n", amg ? ("multigrid " + amgSummary(*amg)).c_str() : ("no multigrid: " + why).c_str());
+    }
     // (an eigenvalue is right to the square of the residual: 1e-5 is plenty, and pushing the block to
     // round-off ruins its conditioning)
     const double tol = std::max(tolerance, 1e-5);
+    std::vector<Vec> wantedHistory;
     for (it = 0; it < maxIterations; ++it)
     {
         if (cancel && cancel->load())
@@ -442,13 +547,22 @@ bool lobpcg(const Assembly& A, const std::vector<unsigned char>& fixed, const st
             error = "cancelled";
             return false;
         }
+        // (H193: AX and AP are carried from step to step by the combinations of the block; over hundreds of iterations on a mesh of a million unknowns they drift from K X and K P, and a Ritz value that is
+        // made of them can fall under the lowest eigenvalue of K, which is impossible -- the strip of 0.6 mm ended at a quarter of its frequency.  Every 20 iterations they are made again from X and P)
+        if (it > 0 && it % 20 == 0)
+        {
+            applyK(X, AX);
+            if (haveP) applyK(P, AP);
+        }
         for (long j = 0; j < m; ++j) lam[j] = X.col(j).dot(AX.col(j));
         const Mat R = AX - (M.asDiagonal() * X) * lam.asDiagonal();
         std::vector<long> active;
         bool done = true;
+        double relWanted = 0;
         for (long j = 0; j < m; ++j)
         {
             const double rel = R.col(j).norm() / std::max(AX.col(j).norm(), 1e-300);
+            if (j < count) relWanted = std::max(relWanted, rel);
             if (rel > tol)
             {
                 active.push_back(j);
@@ -456,8 +570,22 @@ bool lobpcg(const Assembly& A, const std::vector<unsigned char>& fixed, const st
             }
         }
         if (std::getenv("FIELDES_FEA_DEBUG") && it % 10 == 0)
-            fprintf(stderr, "[lobpcg] iteration %d, %zu active, lambda0 %.6g\n", it, active.size(), lam[0]);
+            fprintf(stderr, "[lobpcg] iteration %d, %zu active, lambda0 %.6g, residual of the wanted pairs %.2e\n", it, active.size(), lam[0], relWanted);
         if (done) break;
+        // (H193: the wanted eigenvalues have not moved by 1e-9 in 20 iterations and their residuals are under 1e-3: a pair whose residual will not come down to the tolerance -- a twin, the round-off of
+        // a mesh of a million unknowns -- is settled, and 300 iterations of a big mesh are minutes: the frequencies are those of the mesh, the mode shapes right to the residual)
+        wantedHistory.push_back(Vec(lam.head(count)));
+        if (wantedHistory.size() > 20 && relWanted < 1e-3)
+        {
+            const Vec& before = wantedHistory[wantedHistory.size() - 21];
+            bool settled = true;
+            for (long j = 0; j < count; ++j) settled = settled && std::abs(lam[j] - before[j]) <= 1e-9 * std::abs(lam[j]);
+            if (settled)
+            {
+                if (std::getenv("FIELDES_FEA_DEBUG")) fprintf(stderr, "[lobpcg] the wanted eigenvalues have settled at iteration %d (residual %.2e)\n", it, relWanted);
+                break;
+            }
+        }
         // The preconditioned residuals of the pairs still moving: K^-1 r, approximately, by a few
         // conjugate-gradient iterations on the stiffness matrix itself (block Jacobi alone is far
         // too weak for the lowest modes of a fine mesh)
@@ -469,10 +597,17 @@ bool lobpcg(const Assembly& A, const std::vector<unsigned char>& fixed, const st
             {
                 for (size_t i = 0; i < n; ++i) rr[i] = R(long(i), active[c]);
                 ww.assign(n, 0.0);
-                CgResult cr;
-                std::string err;
-                if (!cgSolve(A, fixed, rr, ww, 1e-3, inner, cancel, std::function<void(double, const std::string&)>(), cr, err))
-                    precondition(A, rr.data(), ww.data());
+                if (amg)
+                {
+                    applyAmg(*amg, rr.data(), ww.data());
+                }
+                else
+                {
+                    CgResult cr;
+                    std::string err;
+                    if (!cgSolve(A, fixed, rr, ww, 1e-3, inner, cancel, std::function<void(double, const std::string&)>(), cr, err))
+                        tet::precondition(A, rr.data(), ww.data());
+                }
                 if (cancel && cancel->load())
                 {
                     error = "cancelled";
@@ -550,6 +685,8 @@ bool lobpcg(const Assembly& A, const std::vector<unsigned char>& fixed, const st
         }
     }
     iterations = it;
+    // (the Ritz values of the vectors we return: from K X itself, so that a value is always the Rayleigh quotient of its vector, never of a drifted AX)
+    applyK(X, AX);
     for (long j = 0; j < m; ++j) lam[j] = X.col(j).dot(AX.col(j));
     lambda.assign(size_t(count), 0.0);
     vectors.assign(size_t(count), std::vector<double>(n, 0.0));
@@ -690,6 +827,94 @@ void liveSurfaceIndexed(const TetMesh& mesh, const std::vector<float>& d, double
         tris.push_back(id[t + 1]);
         tris.push_back(id[t + 2]);
     }
+}
+
+void patchRecovery(const TetMesh& mesh, const Assembly& A, const std::vector<double>& values, int channels, std::vector<double>& out)
+{
+    const size_t nv = mesh.pos.size(), nt = mesh.tets.size();
+    const size_t nc = size_t(channels);
+    out.assign(nv * nc, 0.0);
+    std::vector<Vec3> centre(nt);
+    parallelRange(nt, [&](size_t b0, size_t b1) {
+        for (size_t t = b0; t < b1; ++t)
+        {
+            const auto& v = mesh.tets[t];
+            centre[t] = 0.25 * (mesh.pos[size_t(v[0])] + mesh.pos[size_t(v[1])] + mesh.pos[size_t(v[2])] + mesh.pos[size_t(v[3])]);
+        }
+    }, 1024);
+
+    parallelRange(nv, [&](size_t b0, size_t b1) {
+        std::vector<uint32_t> patch, wide;
+        Eigen::MatrixXd R(4, channels);
+        for (size_t i = b0; i < b1; ++i)
+        {
+            patch.assign(A.vtList.begin() + std::ptrdiff_t(A.vtStart[i]), A.vtList.begin() + std::ptrdiff_t(A.vtStart[i + 1]));
+            const Vec3& at = mesh.pos[i];
+
+            // the plane through the values of `elems`, at the node: false when they cannot fix one
+            auto fit = [&](const std::vector<uint32_t>& elems) -> bool {
+                if (elems.size() < 4) return false;
+                double meanVol = 0;
+                for (uint32_t t : elems) meanVol += A.geom[t].vol;
+                meanVol /= double(elems.size());
+                if (!(meanVol > 0)) return false;
+                const double h = std::cbrt(meanVol);                  // (a length of the patch: the plane is fitted in units of it, so that the matrix is well conditioned)
+                Eigen::Matrix4d M = Eigen::Matrix4d::Zero();
+                R.setZero();
+                std::vector<double> lo(nc, std::numeric_limits<double>::max()), hi(nc, -std::numeric_limits<double>::max());
+                for (uint32_t t : elems)
+                {
+                    const Vec3 d = (centre[t] - at) / h;
+                    Eigen::Vector4d p(1.0, d.x(), d.y(), d.z());
+                    const double w = A.geom[t].vol / meanVol;
+                    M += w * p * p.transpose();
+                    for (size_t q = 0; q < nc; ++q)
+                    {
+                        const double v = values[size_t(t) * nc + q];
+                        R.col(Eigen::Index(q)) += w * v * p;
+                        lo[q] = std::min(lo[q], v);
+                        hi[q] = std::max(hi[q], v);
+                    }
+                }
+                Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> eig(M, Eigen::EigenvaluesOnly);
+                const Eigen::Vector4d ev = eig.eigenvalues();
+                if (!(ev[0] > 1e-7 * ev[3])) return false;
+                const Eigen::MatrixXd a = M.ldlt().solve(R);
+                for (size_t q = 0; q < nc; ++q)
+                {
+                    const double range = hi[q] - lo[q];
+                    out[i * nc + q] = std::min(std::max(a(0, Eigen::Index(q)), lo[q] - range), hi[q] + range);
+                }
+                return true;
+            };
+
+            // The plane is fitted through TWO rings of elements: the elements of the node and those of its neighbours.  The linear tetrahedron has one stress to an element and in a bending beam 2.5 elements through
+            // the thickness give the elements' values an oscillation of the size of an element; a plane through the one ring of a node passes through it and keeps it (measured on the cantilever, the 279 nodes of
+            // its top face against the beam formula: the scatter 3.63 for the average, 2.88 for one ring, 1.33 for two, 0.90 for three; the whole error 6.96, 3.75, 2.55, 3.04 -- three rings smooth the
+            // values and take the surface's level down).  A field that is a plane comes out right from two rings as from one
+            wide = patch;
+            for (uint32_t t : patch)
+                for (int p = 0; p < 4; ++p)
+                {
+                    const size_t nb = size_t(mesh.tets[t][size_t(p)]);
+                    wide.insert(wide.end(), A.vtList.begin() + std::ptrdiff_t(A.vtStart[nb]), A.vtList.begin() + std::ptrdiff_t(A.vtStart[nb + 1]));
+                }
+            std::sort(wide.begin(), wide.end());
+            wide.erase(std::unique(wide.begin(), wide.end()), wide.end());
+            if (fit(wide)) continue;
+            if (fit(patch)) continue;
+            // last, the average of the elements of the node
+            double w = 0;
+            for (uint32_t t : patch)
+            {
+                const double vol = A.geom[t].vol;
+                w += vol;
+                for (size_t q = 0; q < nc; ++q) out[i * nc + q] += vol * values[size_t(t) * nc + q];
+            }
+            if (w > 0)
+                for (size_t q = 0; q < nc; ++q) out[i * nc + q] /= w;
+        }
+    }, 64);
 }
 
 }   // namespace tet

@@ -7,8 +7,7 @@ code, and the same code however it was asked for.  This module is that one way. 
     * what the call cannot do without and was not given is a placeholder, `...`, written after the argument's name (`region=...`: the run
       stops there until it is written, and the name says what goes there);
     * every other argument it was not given is written with its default, as a keyword -- so that what exists is in front of you,
-      and what is not needed can be read, kept or deleted -- except for a function that says it is meant to be called short (`_short_call`: a mesh, where nearly
-      everything is a default that nobody needs to see);
+      and what is not needed can be read, kept or deleted.  For EVERY function of the library, a mesh as much as any: a function has no way to ask to be written short;
     * the arguments are laid out ONE TO A LINE, always, whenever the call has two or more (the one exception is `handles`, whose numbers nobody edits by hand:
       one long line); a call inside it, a list or a position stays on one line when it fits (88 columns) and is laid out the same way when it does not.
 
@@ -137,9 +136,9 @@ def _complete_call_node(call):
                 new_pos.append(hole)
             else:
                 added[p.name] = ast.keyword(arg=p.name, value=hole)               # (the name says what goes there)
-        elif getattr(_library()[call.func.id], '_short_call', False):
-            continue                    # (a function that is meant to be called with what it needs alone -- a mesh -- is not written with every default)
         else:
+            # (every argument a call was not given is written with its default -- for every function of the library, with no list of names and no flag on a function that asks to be left out: the user,
+            # 2026-11-13, "THE FEATURE ... THAT MAKES EVERY FUNCTION EXPOSE ITS VARIABLES ON CREATION ... SHOULD ALWAYS AUTOMATICALLY HAPPEN ... IT WAS HARD CODED NOT FUNDAMENTAL")
             text = _default_source(p.default)
             if text is None:
                 continue

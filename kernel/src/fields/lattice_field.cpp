@@ -1774,6 +1774,11 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
     if (!P.negate && P.tanSlope > 0.0 && P.mode == 0)
     {
         uint64_t unsupported = 0;
+        // (H200, found 2026-11-14 on a ledge at 50 to 65 degrees: a flank that leans more than 45 degrees moves MORE THAN ONE NODE sideways from one layer to the next -- tan 60 x 0.95 = 1.6 -- so no node of the
+        // layer under a node of the flank is within one node of it, and the whole of the flank was taken for hanging in the air and dropped, layer by layer from the plate up, down to a flank of 45 degrees that
+        // starts where the gusset meets the wall: depth = d - 2.0, 5.05, 7.6, 9.95 mm at 50, 55, 60, 65 degrees where d / tan(angle) was asked; the plates of o6 at 47 and 50 degrees, whose faces move 1.07 and
+        // 1.19 nodes a layer, got no gusset.  A gusset rests when the layer under it holds a node within as many nodes as the flank moves in a layer: the slope, rounded up, and never fewer than two)
+        const int restR = std::max(2, int(std::ceil(P.tanSlope)));
         for (int k = 0; k < nz; ++k)
         {
             const bool onPlate = k == 0 || double(k - 1) * h < P.minZ;
@@ -1784,8 +1789,8 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
                     const size_t q = (size_t(k) * size_t(ny) + size_t(j)) * size_t(nx) + size_t(i);
                     if (S[q] != 1) continue;
                     bool rests = false;
-                    for (int dj = -1; dj <= 1 && !rests; ++dj)
-                        for (int di = -1; di <= 1 && !rests; ++di)
+                    for (int dj = -restR; dj <= restR && !rests; ++dj)
+                        for (int di = -restR; di <= restR && !rests; ++di)
                         {
                             const int ii = i + di, jj = j + dj;
                             if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue;

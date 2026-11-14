@@ -29,7 +29,7 @@ for k in range(6):
     elif k == 1:
         cube = difference(cube, box(((cx + 12) - (cx + 4), (cy + 12) - (cy + 4), 11), position=(((cx + 4) + (cx + 12)) / 2, ((cy + 4) + (cy + 12)) / 2, 11.5)))
     elif k == 2:
-        cube = difference(cube, cylinder(3.0, 18, position=(cx + 8, cy + 8, -1)))
+        cube = difference(cube, cylinder(3.0, 18, position=(cx + 8, cy + 8, 8)))
     elif k == 3:
         cube = difference(cube, box(((cx + 17) - (cx - 1), (cy + 11) - (cy + 5), 6), position=(((cx - 1) + (cx + 17)) / 2, ((cy + 5) + (cy + 11)) / 2, 8)))
     elif k == 4:

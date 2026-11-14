@@ -204,6 +204,10 @@ def _apply(shape, position=None, rotation=None, scale=None, alpha=None, origin=N
         except AttributeError:
             raise TypeError('alpha=: a %s has no surface to draw see-through' % type(shape).__name__)
     out._placement_args = (position, rotation, scale, alpha, origin, frame)
+    # A copy of a model (instance) that is placed again -- FielDes writes `copy = instance(...)` and `copy = place(copy, ...)` for the copy it makes -- carries the parts of the model through this place too
+    if isinstance(shape, Shape) and shape.__dict__.get('_linked') and getattr(shape, '_placed_parts', None) is not None:
+        from fieldes.stdlib.instances import _carry_parts
+        _carry_parts(out, None)
     return out
 
 

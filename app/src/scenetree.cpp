@@ -1990,6 +1990,8 @@ bool ScenePanel::eventFilter(QObject* obj, QEvent* e)
         if (m_propTab && m_propTab->isVisible()) placePropertyTab();
     }
     if (obj == this && e->type() == QEvent::Hide) hidePropertyTab();
+    // (the panel pulled out into a window of its own, or put back: the gutter for the tab of the properties)
+    if (obj == this && e->type() == QEvent::DynamicPropertyChange && static_cast<QDynamicPropertyChangeEvent*>(e)->propertyName() == "floating") applyPropertyGutter();
     // (the modifiers of a click on the tree: itemClicked, which comes after the release, does not carry them)
     if (obj == m_tree->viewport() && (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease))
     {
@@ -2345,7 +2347,11 @@ void ScenePanel::fitRegion()
     // not touched -- there is nothing to fit it to)
     const double regionLongest = std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2]));
     const bool shrink = allowShrink && !outside && regionLongest > 2.5 * (boxLongest + 2 * room);
-    if (!outside && !shrink) return;
+    if (!outside && !shrink)
+    {
+        m_frameAfterFit = false;        // (the region holds the models already: the camera was framed on the settings of this run)
+        return;
+    }
     // The region grown on the sides that are reached (or, shrinking, fitted to the models): whole numbers, with that room
     QStringList text;
     for (int pass = 0; pass < 2; ++pass)
@@ -2358,6 +2364,12 @@ void ScenePanel::fitRegion()
         }
     }
     writeRegion(text, nlo, nhi);
+    if (m_frameAfterFit)
+    {
+        // (H180: the settings of the run that imported the model had the region it started with, and the camera was framed on that; the run that follows has the grown one)
+        m_frameAfterFit = false;
+        emit(frameRegionNext());
+    }
 }
 
 // The call that sets the region, written with the six numbers `text` (a corner at a time: low x y z, high x y z); `nlo` / `nhi` the box of the models, which a region
@@ -3993,11 +4005,12 @@ QVector<int> ScenePanel::originAfter(const QStringList& before, const QList<Text
 }
 
 bool ScenePanel::editFollowed(const QList<TextEdit>& edits, const QString& what,
-                              const std::function<void(QJsonObject&, const QVector<int>&)>& patch)
+                              const std::function<void(QJsonObject&, const QVector<int>&)>& patch, bool silent)
 {
     if (!m_source)
     {
-        emit(editScript(edits, what));
+        if (silent) emit(editScriptSilent(edits, what));
+        else emit(editScript(edits, what));
         return false;
     }
     // An edit that starts or ends before the first line is not one: the rows it was worked out from do not fit the script (the editor
@@ -4015,7 +4028,8 @@ bool ScenePanel::editFollowed(const QList<TextEdit>& edits, const QString& what,
     const QStringList before = m_source().split('\n');
     QElapsedTimer clock;
     clock.start();
-    emit(editScript(edits, what));
+    if (silent) emit(editScriptSilent(edits, what));        // (the viewport has done what the edit says: it is written, and the script is not run for it, H208)
+    else emit(editScript(edits, what));
     if (!fits) return false;
     const QStringList after = m_source().split('\n');
     if (after == before) return false;
@@ -4244,14 +4258,22 @@ void ScenePanel::toggleVisible(const QJsonObject& it)
         QList<QJsonObject> withIt{it};
         addPointsVisibility(it, show, edits, &withIt);
         if (edits.isEmpty()) return;
+        // H208 (the user, 2026-11-14: "When setting a cached object from visible to hidden and back and forth and so on, it is not instant. It should be."): the shape of a statement that is drawn is put away, or
+        // put back with the mesh it has, by the viewport, and the line is written without a run of the script.  Only the plain case: one line (`x` and `# hidden: x`, nothing else moves), one shape.  Anything
+        // else -- a model never drawn since the last run, a shape that is not done, a result -- is the edit and the run it always was
+        bool silent = false;
+        if (m_fastVisible && withIt.size() == 1 && edits.size() == 1 && edits[0].line0 == edits[0].line1 && (it.contains("display_line") || it.contains("hidden_line")))
+            silent = m_fastVisible(edits[0].line0, show);
         // The tree follows the edit at once (its eye, its dimmed name, every line under it), without waiting for the run
-        editFollowed(edits, (show ? "Show " : "Hide ") + var, [withIt, show](QJsonObject& scene, const QVector<int>& moved) {
+        const bool followed = editFollowed(edits, (show ? "Show " : "Hide ") + var, [withIt, show](QJsonObject& scene, const QVector<int>& moved) {
             for (const auto& item : withIt)
             {
                 const int line = moved.value(item["line"].toInt() - 1, -1) + 1;
                 if (line > 0) patchAt(scene, line, item["var"].toString(), [show](QJsonObject& o) { patchVisible(o, show); });
             }
-        });
+        }, silent);
+        // (an edit that the tree could not follow waits for a scene that only a run brings: with no run for the eye, the script is run, so that the rows are not left waiting for it)
+        if (silent && !followed) emit(rerunRequested());
         return;
     }
     if (it["kind"].toString() == "display")
@@ -4296,6 +4318,13 @@ namespace {
 bool linkedModel(const QJsonObject& it)
 {
     return (it["linked"].toBool() || it["callee"].toString() == "instance") && !it["symmetry_image"].toBool() && it["callee"].toString() != "symmetry_image";
+}
+
+// A linked copy has a scale of its own, as it has a position and a rotation of its own (H174, the user, 2026-11-12: "I also want scale to follow that exclusion rule. So all of the gizmo operations are completely independent
+// for clones") -- except the copy of a profile or a line: it is placed through the images of its points, moved and turned
+bool copyHasNoScale(const QJsonObject& it)
+{
+    return linkedModel(it) && (it["type"].toString() == "profile" || it["type"].toString() == "curve");
 }
 
 // The image of another model (`image = symmetry_image(model, ...)`): it has no numbers of its own, it is the model's
@@ -4639,7 +4668,7 @@ void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& ne
         changed << t;
         if (next != "never" && (!placementHasNumbers(t) || pointLacksInfluence(t)) && !t["no_gizmo"].toBool() && !t.contains("locked") && t["visible"].toBool() && !t["failed"].toBool() && !t["reassigned"].toBool())
         {
-            if (placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), pointTakesInfluence(t), !pointTakesInfluence(t) || pointIsUsed(m_scene["items"].toArray(), t), positionDefault(t)), QStringList(), edits, imports)) names << t["var"].toString();
+            if (placementEdits(t, gizmoArguments(!copyHasNoScale(t) && !symmetryModel(t), pointTakesInfluence(t), !pointTakesInfluence(t) || pointIsUsed(m_scene["items"].toArray(), t), positionDefault(t)), QStringList(), edits, imports)) names << t["var"].toString();
         }
     }
     if (changed.isEmpty()) return;
@@ -4969,7 +4998,7 @@ void ScenePanel::writePlacement(const QJsonObject& target, const QString& argume
     }
     QList<QPair<QString, QString>> wanted;
     if (argument == "alpha") wanted << qMakePair(QString("alpha"), placementDefault("alpha"));
-    else wanted = gizmoArguments(!linkedModel(target) && !symmetryModel(target), pointTakesInfluence(target), !pointTakesInfluence(target) || pointIsUsed(m_scene["items"].toArray(), target), positionDefault(target));
+    else wanted = gizmoArguments(!copyHasNoScale(target) && !symmetryModel(target), pointTakesInfluence(target), !pointTakesInfluence(target) || pointIsUsed(m_scene["items"].toArray(), target), positionDefault(target));
     // (what is written stays as it is: only what is missing is added)
     const QJsonObject written = target["placement"].toObject()["args"].toObject();
     QList<QPair<QString, QString>> fresh;
@@ -5494,7 +5523,7 @@ void ScenePanel::snapSelected()
     // The gizmo's arguments of the body: the position and the rotation that snap it, and a scale (as the gizmo writes them) when the call has none
     QList<QPair<QString, QString>> set;
     set << qMakePair(QString("position"), doc["position"].toString()) << qMakePair(QString("rotation"), doc["rotation"].toString());
-    if (doc["scale"].toBool() && !linkedModel(moving) && !symmetryModel(moving) && !placementArgs.contains("scale")) set << qMakePair(QString("scale"), placementDefault("scale"));
+    if (doc["scale"].toBool() && !copyHasNoScale(moving) && !symmetryModel(moving) && !placementArgs.contains("scale")) set << qMakePair(QString("scale"), placementDefault("scale"));
     QList<TextEdit> edits;
     ModeImports imports;
     m_lineMismatch.clear();
@@ -5909,7 +5938,20 @@ void ScenePanel::linkModels(const QList<QJsonObject>& selected)
             }
             return QString();
         };
-        QString move = tupleOf("position"), rotate = tupleOf("rotation");
+        QString move = tupleOf("position"), rotate = tupleOf("rotation"), scaleText = tupleOf("scale");
+        // (a body of points is placed by its points: it has no placement of its own, and the clone starts where it is -- the middle of its box, the position a model without one has, see the rows of the tree -- with a gizmo
+        // of its own that moves, turns and scales it from there: H174, the user, 2026-11-12, "that copy moves together with the original, meaning the are always on top of each other")
+        const bool pointsBody = it["callee"].toString() == "morph_body" || it["callee"].toString() == "morph_polyhedron";
+        if (pointsBody && (move.isEmpty() || rotate.isEmpty()))
+        {
+            const QJsonArray box = it["bounds"].toArray();
+            if (box.size() == 2 && box[0].toArray().size() == 3 && box[1].toArray().size() == 3)
+            {
+                auto n = [&](int i) { return "var(" + QString::number(0.5 * (box[0].toArray()[i].toDouble() + box[1].toArray()[i].toDouble()), 'g', 8) + ")"; };
+                move = "(" + n(0) + ", " + n(1) + ", " + n(2) + ")";
+                rotate = "(var(0), var(0), var(0))";
+            }
+        }
         // (an original that has no placement yet -- it was never selected -- is given the clone's from zero: a clone with none would be the very same shape, and is not drawn apart from it.
         // A profile or a line has a gizmo without numbers -- its points have them -- but its clone has numbers of its own)
         if ((move.isEmpty() || rotate.isEmpty()) && (!it["no_gizmo"].toBool() || it["outline"].toBool()))
@@ -5917,11 +5959,15 @@ void ScenePanel::linkModels(const QList<QJsonObject>& selected)
             move = "(var(0), var(0), var(0))";
             rotate = move;
         }
+        // (a copy has a scale of its own like a position and a rotation -- the numbers of the original's, so that it starts as the original is -- except the copy of a profile or a line: placed through the images of its points)
+        const bool outlineClone = it["type"].toString() == "profile" || it["type"].toString() == "curve";
+        if (!outlineClone && scaleText.isEmpty() && !move.isEmpty()) scaleText = "(var(1), var(1), var(1))";
         QString call = indent + name + " = instance(" + old + ")";
         if (!move.isEmpty() && !rotate.isEmpty())
         {
             const QString in = indent + "    ";
-            call = indent + name + " = instance(\n" + in + old + ",\n" + in + "position=" + move + ",\n" + in + "rotation=" + rotate + ",\n" + indent + ")";
+            call = indent + name + " = instance(\n" + in + old + ",\n" + in + "position=" + move + ",\n" + in + "rotation=" + rotate + ",\n"
+                   + (outlineClone || scaleText.isEmpty() ? QString() : in + "scale=" + scaleText + ",\n") + indent + ")";
         }
         // (the original is only referred to -- `# shadow:` -- always: taken into the copy it would move away from where it is and look like what the copy is made of)
         const QString statement = markShadow(call, old);
@@ -8162,7 +8208,7 @@ void ScenePanel::prepareSelection()
         {
             const bool together = statement && !hasHandles;             // (the handles and the statement are one edit: they stand in that order)
             const QList<QPair<QString, QString>> wanted = foundPointTakesInfluence(t) ? QList<QPair<QString, QString>>{qMakePair(QString("influence"), QString("var(1)"))}
-                                                                                      : gizmoArguments(!linkedModel(t) && !symmetryModel(t), pointTakesInfluence(t), !pointTakesInfluence(t) || pointIsUsed(m_scene["items"].toArray(), t), positionDefault(t));
+                                                                                      : gizmoArguments(!copyHasNoScale(t) && !symmetryModel(t), pointTakesInfluence(t), !pointTakesInfluence(t) || pointIsUsed(m_scene["items"].toArray(), t), positionDefault(t));
             if (!placementEdits(t, wanted, QStringList(), edits, imports, together ? handlesText : QString()))
             {
                 refuseOutOfDate();
@@ -8833,7 +8879,9 @@ bool ScenePanel::linkSymmetryToSelection()
     if (answer.isEmpty())
     {
         // (nothing selected can be mirrored: Shift+S is the old Shift+S then; anything else that stops it is said)
-        if (error.isEmpty() || error.contains("cannot be mirrored") || error.contains("nothing here can be mirrored")) return false;
+        // (a model that is in the symmetry already -- "box_2 is in the symmetry mirror already" -- has nothing to add either: Shift+S is then the symmetry in use or not, the key that closes the card and
+        // opens it again; with a notice in its place the key did nothing with the added model selected: H177)
+        if (error.isEmpty() || error.contains("cannot be mirrored") || error.contains("nothing here can be mirrored") || error.contains("is in the symmetry")) return false;
         notify(error);
         return true;
     }
@@ -10250,8 +10298,12 @@ bool ScenePanel::canDrop(QTreeWidgetItem* over, int at, bool copy, QString* why)
     {
         if (at == DropOn)
         {
+            // dropped ON a shadow of the call with models that are inputs of that call whose rows stand elsewhere (the very model of the shadow, or several selected points of the body dropped on the shadow of one of them):
+            // the models become the call's own, their definitions move to stand above the call (H175: this refusal used to answer "changes nothing"; the second test: four selected points on one shadow were refused)
+            const QString shadowName = over->data(COL_NAME, ROLE_PART).toString();
+            if (!copy && claimable(models, t)) return true;
             // dropped ON a shadow: a model of its kind takes its place in the call (the reference goes)
-            const OnPlan plan = planReplace(models, t, over->data(COL_NAME, ROLE_PART).toString());
+            const OnPlan plan = planReplace(models, t, shadowName);
             return plan.ok ? true : refuse(plan.why);
         }
         parent = t;
@@ -10266,6 +10318,8 @@ bool ScenePanel::canDrop(QTreeWidgetItem* over, int at, bool copy, QString* why)
     }
     if (at == DropOn)
     {
+        // (on the row of a call that holds the dropped models as inputs whose rows are not under it: they become its own, H175)
+        if (!copy && claimable(models, t)) return true;
         const bool nests = takesInput(t) || t["hole"].toBool() || (allFields(models) && takesNumber(t)) || (allPoints(models) && takesPoint(t))
                            || regionDrop(t, models);
         QString nestWhy;
@@ -11376,6 +11430,8 @@ void ScenePanel::finishDrop(const QString& overKey, int at, const QPoint& global
     }
     m_prepareTimer.stop();
     const QList<QJsonObject> models = !m_dropModels.isEmpty() ? m_dropModels : draggedModels();
+    static const bool dropTiming = std::getenv("FIELDES_TIMING") != nullptr;
+    if (dropTiming) std::fprintf(stderr, "[drop] over '%s' at %d copy %d, %d dragged model(s)\n", overKey.toUtf8().constData(), at, int(copy), int(models.size()));
     if (models.isEmpty()) return;
     QJsonObject target;                     // the model of the row dropped over (for a shadow or a placeholder: the statement it is in)
     QString shadowOf;                       // ... and, for a shadow, the model it stands for
@@ -11449,6 +11505,9 @@ void ScenePanel::finishDrop(const QString& overKey, int at, const QPoint& global
         }
         if (!shadowOf.isEmpty())
         {
+            // On a shadow of the call with models that are inputs of that call whose rows stand elsewhere (the very model of the shadow, or several selected points dropped on the shadow of one of them): the models
+            // become the call's own, their definitions move to stand above the call (H175)
+            if (!copy && claimIntoCall(models, target)) return;
             // On a shadow: a model of its kind takes its place in the call, and the reference goes
             const OnPlan plan = planReplace(models, target, shadowOf);
             if (!plan.ok)
@@ -11459,6 +11518,8 @@ void ScenePanel::finishDrop(const QString& overKey, int at, const QPoint& global
             dropOnModel(models, target, copy, &plan);
             return;
         }
+        // On the row of a call that holds the dropped models as inputs whose rows are not under it: they become its own (H175: "I cannot drag the points of the morph body onto its shadow references")
+        if (!copy && claimIntoCall(models, target)) return;
         // On a row: what can go into it goes into it; what cannot, and is of the kind of a model a call is given, takes its place
         const bool nests = takesInput(target) || target["hole"].toBool() || (allFields(models) && takesNumber(target))
                            || (allPoints(models) && takesPoint(target)) || regionDrop(target, models);
@@ -11835,6 +11896,97 @@ void ScenePanel::insertAmong(const QList<QJsonObject>& models, const QJsonObject
     wireDropGone(lines, origin);
     applyLines(before, lines, what, origin, QList<ColShift>(), targets, newLength);
     m_prepareAgain = true;
+}
+
+// A model that a call holds as an input -- it stands in the call's list, and a shadow of it is a row under the call -- whose own row is not under the call (the definitions of the inputs are not directly above the call:
+// other statements stand between them, the points of two bodies written in turn) is made the call's OWN by dropping it on the call or on its shadow: its definition, and those of the other inputs of the call that are
+// made of it, move to stand directly above the call, and its row moves in under the call (H175, the user, 2026-11-12: "I cannot drag the points of the morph body onto its shadow references, to have them not be
+// exposed like they are now. Fieldes tells me that they are already there and nothing would change, which is not true.").  True when the drop is dealt with (done, or refused with the reason); false when it is not
+// this kind of drop
+// Whether the drop of these models on this call is the claim above: every one of them is an input of the call, and at least one has its row elsewhere (what canDrop asks, before the rules that answer
+// "changes nothing" to it: the drop was refused there, and claimIntoCall in finishDrop was never reached -- the first test of H175 on the build changed nothing)
+bool ScenePanel::claimable(const QList<QJsonObject>& models, const QJsonObject& target) const
+{
+    if (target["var"].toString().isEmpty() || target["failed"].toBool() || models.isEmpty() || !m_source) return false;
+    const QString targetKey = keyOf(target);
+    const QStringList direct = directInputs(target);
+    bool any = false;
+    for (const auto& m : models)
+    {
+        const QString name = m["var"].toString();
+        if (name.isEmpty() || !direct.contains(name)) return false;
+        if (m["owner"].toString() != targetKey) any = true;
+    }
+    return any;
+}
+
+bool ScenePanel::claimIntoCall(const QList<QJsonObject>& models, const QJsonObject& target)
+{
+    static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
+    const QString tname = target["var"].toString();
+    if (tname.isEmpty() || target["failed"].toBool() || models.isEmpty() || !m_source)
+    {
+        if (timing) std::fprintf(stderr, "[claim] not made: target '%s' failed %d models %d source %d\n", tname.toUtf8().constData(), int(target["failed"].toBool()), int(models.size()), int(bool(m_source)));
+        return false;
+    }
+    const QString targetKey = keyOf(target);
+    const QStringList direct = directInputs(target);
+    if (timing) std::fprintf(stderr, "[claim] target '%s' key '%s' has %d direct inputs, %d dragged models\n", tname.toUtf8().constData(), targetKey.toUtf8().constData(), int(direct.size()), int(models.size()));
+    QList<QJsonObject> claimed;
+    QSet<QString> names;
+    for (const auto& m : models)
+    {
+        const QString name = m["var"].toString();
+        if (timing) std::fprintf(stderr, "[claim]   dragged '%s' owner '%s' direct %d\n", name.toUtf8().constData(), m["owner"].toString().toUtf8().constData(), int(direct.contains(name)));
+        if (name.isEmpty() || !direct.contains(name)) return false;             // (not an input of the call: the other rules decide)
+        if (m["owner"].toString() == targetKey) continue;                       // (its row stands under the call already)
+        claimed << m;
+        names << name;
+    }
+    if (claimed.isEmpty()) return false;                                        // (they all stand under it: "changes nothing" is true, and the other rules say it)
+    // What is made of them and is an input of the call too moves with them: it has to stay below what it is made of
+    bool grew = true;
+    while (grew)
+    {
+        grew = false;
+        for (const QString& name : direct)
+        {
+            if (names.contains(name)) continue;
+            const QJsonObject in = itemBefore(name, target["line"].toInt());
+            if (in.isEmpty() || in["owner"].toString() == targetKey) continue;
+            for (const auto d : in["deps"].toArray())
+            {
+                if (!names.contains(d.toString())) continue;
+                claimed << in;
+                names << name;
+                grew = true;
+                break;
+            }
+        }
+    }
+    const QStringList before = m_source().split('\n');
+    QStringList lines = before;
+    QVector<int> origin(lines.size());
+    for (int i = 0; i < origin.size(); ++i) origin[i] = i;
+    // (a reference the call held to one of them, `# shadow: name`, goes: it is the call's own now)
+    for (const auto& m : claimed)
+        for (int l = target["line"].toInt() - 1; l <= target["end_line"].toInt() - 1 && l < lines.size(); ++l)
+            lines[l] = unmarkShadow(lines[l], m["var"].toString());
+    QString why;
+    if (!moveGroups(lines, &origin, claimed, groupStart(target), false, &why))
+    {
+        if (timing) std::fprintf(stderr, "[claim] the statements cannot be moved: %s\n", why.toUtf8().constData());
+        notify(why);
+        return true;
+    }
+    if (timing) std::fprintf(stderr, "[claim] moved %d model(s) above '%s'; the text %s\n", int(claimed.size()), tname.toUtf8().constData(), lines == before ? "is the same" : "changed");
+    QStringList listed;
+    for (const auto& m : claimed) listed << m["var"].toString();
+    const QString what = listed.size() <= 3 ? T("Make %1 part of %2").arg(listed.join(", "), tname)
+                                            : T("Make %1 and %2 more part of %3").arg(listed.mid(0, 2).join(", ")).arg(listed.size() - 2).arg(tname);
+    applyLines(before, lines, what, origin, QList<ColShift>(), QStringList{tname}, QHash<QString, int>());
+    m_prepareAgain = true;
+    return true;
 }
 
 void ScenePanel::dropOnModel(const QList<QJsonObject>& models, const QJsonObject& target, bool copy, const OnPlan* given)
@@ -12810,6 +12962,9 @@ void ScenePanel::showPropertyTab(QTreeWidgetItem* row)
 void ScenePanel::placePropertyTab()
 {
     if (!m_propTab || !parentWidget()) return;
+    // H194 (the user, 2026-11-13: "pulling out the model tree into its own window does not make the property window come with it, that stays in the viewport"): the tab belongs to the
+    // panel's parent, wherever that is now -- the panel pulled out into a window of its own is in the window, and the tab, made as the child of the viewport, stayed in the viewport
+    if (m_propTab->parentWidget() != parentWidget()) m_propTab->setParent(parentWidget());
     QTreeWidgetItem* row = nullptr;
     for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
         if ((*i)->data(COL_NAME, ROLE_KEY).toString() == m_propTabKey) { row = *i; break; }
@@ -12819,7 +12974,9 @@ void ScenePanel::placePropertyTab()
     const QPoint top = m_tree->viewport()->mapTo(parentWidget(), QPoint(0, r.top()));
     const QString var = row->data(COL_NAME, ROLE_ITEM).toJsonObject()["var"].toString();
     m_propTab->setToolTip(T("Properties of %1: its fields and numbers").arg(var));
-    m_propTab->setGeometry(geometry().right() - 1, top.y() - 1, 20, std::max(22, r.height() + 2));
+    // (in the viewport the tab sticks out of the panel's right edge; in a window of its own the panel fills the window, and the tab stands inside its edge)
+    const int tabX = property("floating").toBool() ? geometry().right() - 19 : geometry().right() - 1;
+    m_propTab->setGeometry(tabX, top.y() - 1, 20, std::max(22, r.height() + 2));
     m_propTab->show();
     m_propTab->raise();
 }
@@ -12827,6 +12984,19 @@ void ScenePanel::placePropertyTab()
 void ScenePanel::hidePropertyTab()
 {
     if (m_propTab && m_propTab->isVisible() && !m_drawer) m_propTab->hide();
+}
+
+// H194 (the user, 2026-11-14: "H194 does technically work now, but the arrow obscures the trash icon, meaning we loose functionality. The trash can should OBVIOUSLY be displaced to the left left for objects that
+// have a properties arrow."): in a window of its own the tab that opens the properties stands INSIDE the right edge of the panel (placePropertyTab), over the last column of the rows -- the trash.  In the viewport it
+// sticks out of the edge and covers nothing.  The panel in a window of its own keeps a gutter as wide as the tab, so that the buttons of every row end to the left of it, and every row has its trash at the same place
+void ScenePanel::applyPropertyGutter()
+{
+    QMargins m = contentsMargins();
+    const int gutter = property("floating").toBool() ? 20 : 0;
+    if (m.right() == gutter) return;
+    m.setRight(gutter);
+    setContentsMargins(m);
+    if (m_propTab && m_propTab->isVisible()) placePropertyTab();
 }
 
 QPoint ScenePanel::propertyArrowPoint(const QString& prefix, QWidget* in)

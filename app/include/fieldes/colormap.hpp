@@ -21,7 +21,7 @@ namespace FielDes {
 
 /*  The categories of the colour map "bc" (boundary conditions, a selected surface): the field's value over
  *  (0, kBcCategories) is the number of the category, 0 being the part itself  */
-constexpr int kBcCategories = 13;
+constexpr int kBcCategories = 14;
 
 inline void bcCategoryRGB(int k, float& r, float& g, float& b)
 {
@@ -39,7 +39,8 @@ inline void bcCategoryRGB(int k, float& r, float& g, float& b)
         {0.550f, 0.800f, 0.950f},   // 10 slip (light blue)
         {0.950f, 0.550f, 0.150f},   // 11 fixed temperature (bright orange)
         {0.700f, 0.450f, 0.800f},   // 12 convection (purple)
-        {0.950f, 0.780f, 0.250f}};  // 13 heat generated (gold)
+        {0.950f, 0.780f, 0.250f},   // 13 heat generated (gold)
+        {0.690f, 0.180f, 0.360f}};  // 14 pressure (crimson)
     k = std::max(0, std::min(kBcCategories, k));
     r = table[k][0];
     g = table[k][1];

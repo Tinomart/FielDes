@@ -19,6 +19,8 @@ of the License, or (at your option) any later version.
 #include <QRegularExpression>
 #include <QSettings>
 #include <QTextDocument>
+#include <QTimer>
+#include <QVariant>
 #include <QWidget>
 
 #include "fieldes/carddrag.hpp"
@@ -28,11 +30,121 @@ namespace FielDes {
 
 namespace {
 const int kEdge = 6;                // (the margin of a card that resizes it)
+const int kGap = 4;                 // (the space that is kept between two cards)
+
+bool isCard(const QWidget* w) { return w && w->property("fdCard").toBool(); }
+
+// The rectangles a card stays off: the other cards that are shown in its viewport (not those in a window of their own), and the legends the viewport draws itself (the property `fixedCardRects`)
+QList<QRect> obstaclesOf(const QWidget* card)
+{
+    QList<QRect> out;
+    QWidget* parent = card->parentWidget();
+    if (!parent) return out;
+    for (QObject* o : parent->children())
+    {
+        auto w = qobject_cast<QWidget*>(o);
+        if (!w || w == card || !isCard(w) || !w->isVisible() || w->property("floating").toBool()) continue;
+        out << w->geometry();
+    }
+    for (const QVariant& v : parent->property("fixedCardRects").toList()) out << v.toRect();
+    return out;
+}
+
+bool collides(const QRect& r, const QList<QRect>& others)
+{
+    const QRect wide = r.adjusted(-kGap, -kGap, kGap, kGap);
+    for (const QRect& o : others)
+        if (wide.intersects(o)) return true;
+    return false;
+}
+
+QRect clampedInto(QRect r, const QRect& room)
+{
+    r.moveLeft(std::max(room.left(), std::min(room.right() + 1 - r.width(), r.left())));
+    r.moveTop(std::max(room.top(), std::min(room.bottom() + 1 - r.height(), r.top())));
+    return r;
+}
+
+// Where a card of the size of `wanted` goes so that it lies over no other: where it is, or else the nearest place that is free -- against the edges of the others and the corners of the room --, or
+// (when there is none) where it is
+QRect freeRect(const QRect& wanted, const QRect& room, const QList<QRect>& others)
+{
+    const QRect w0 = clampedInto(wanted, room);
+    if (!collides(w0, others)) return w0;
+    const int w = w0.width(), h = w0.height();
+    QList<QPoint> candidates;
+    candidates << room.topLeft() << QPoint(room.right() + 1 - w, room.top()) << QPoint(room.left(), room.bottom() + 1 - h) << QPoint(room.right() + 1 - w, room.bottom() + 1 - h);
+    for (const QRect& o : others)
+    {
+        const int xs[] = {o.right() + 1 + kGap, o.left() - kGap - w, o.left(), o.right() + 1 - w, w0.left()};
+        const int ys[] = {o.bottom() + 1 + kGap, o.top() - kGap - h, o.top(), o.bottom() + 1 - h, w0.top()};
+        for (int x : xs)
+            for (int y : ys) candidates << QPoint(x, y);
+    }
+    QRect best = w0;
+    int bestDistance = -1;
+    for (const QPoint& p : candidates)
+    {
+        const QRect r = clampedInto(QRect(p, w0.size()), room);
+        if (collides(r, others)) continue;
+        const int d = (r.topLeft() - w0.topLeft()).manhattanLength();
+        if (bestDistance < 0 || d < bestDistance)
+        {
+            bestDistance = d;
+            best = r;
+        }
+    }
+    return best;
+}
+}
+
+void CardController::settle(QWidget* card)
+{
+    QWidget* parent = card ? card->parentWidget() : nullptr;
+    if (!parent || !isCard(card) || !card->isVisible() || card->property("floating").toBool() || card->property("fdDragging").toBool()) return;
+    const QRect now = card->geometry();
+    const QRect to = freeRect(now, parent->rect(), obstaclesOf(card));
+    if (to != now) card->move(to.topLeft());
+}
+
+// Every card against every other, until none lies over another (H184, the user, 2026-11-14: "H184 straight up does not work" -- the cards of his picture lay over each other by a few tens of pixels: a card that
+// grew, or was put somewhere by what shows it, after the cards beside it had settled).  A card that is being dragged is the user's and is left where the hand has it
+void CardController::settleAll(QWidget* parent)
+{
+    if (!parent) return;
+    for (int pass = 0; pass < 6; ++pass)
+    {
+        bool moved = false;
+        for (QObject* o : parent->children())
+        {
+            auto w = qobject_cast<QWidget*>(o);
+            if (!w) continue;
+            const QPoint before = w->pos();
+            settle(w);
+            if (w->pos() != before) moved = true;
+        }
+        if (!moved) break;
+    }
+}
+
+// (after the card has been placed by what shows it -- its own place(), the window's layout --: the next turn of the event loop)
+void CardController::scheduleSettle()
+{
+    if (m_settleQueued || m_mode) return;
+    m_settleQueued = true;
+    QTimer::singleShot(0, m_card, [this] {
+        m_settleQueued = false;
+        if (m_mode) return;
+        // (all of them: the cards that settled before this one was put where it is are looked at again)
+        if (QWidget* parent = m_card->parentWidget()) settleAll(parent);
+        else settle(m_card);
+    });
 }
 
 CardController::CardController(QWidget* card, const QString& key, QWidget* handle, QSize minimum)
     : QObject(card), m_card(card), m_handle(handle), m_key(key), m_min(minimum)
 {
+    card->setProperty("fdCard", true);
     card->setMouseTracking(true);
     card->installEventFilter(this);
     if (handle) handle->installEventFilter(this);
@@ -101,11 +213,24 @@ void CardController::drag(const QPoint& global)
     if (!parent) return;
     const QPoint d = global - m_press;
     const QRect room = parent->rect();
+    // (H184: a card that does not lie over another where the drag began stops at the edge of the others: it slides along an edge it meets, and does not go through it; one that does lie over
+    // another is free to go, so that it can leave)
+    const QList<QRect> others = obstaclesOf(m_card);
+    const bool bound = !collides(m_start, others);
     if (m_mode == 1)
     {
         QRect r = m_start.translated(d);
         r.moveLeft(std::max(0, std::min(room.width() - r.width(), r.left())));
         r.moveTop(std::max(0, std::min(room.height() - r.height(), r.top())));
+        if (bound && collides(r, others))
+        {
+            const QRect alongX(QPoint(r.left(), m_validRect.top()), r.size()), alongY(QPoint(m_validRect.left(), r.top()), r.size());
+            const bool okX = !collides(alongX, others), okY = !collides(alongY, others);
+            if (okX && (!okY || (alongX.topLeft() - r.topLeft()).manhattanLength() <= (alongY.topLeft() - r.topLeft()).manhattanLength())) r = alongX;
+            else if (okY) r = alongY;
+            else r = m_validRect;
+        }
+        m_validRect = r;
         m_card->move(r.topLeft());
     }
     else if (m_mode == 2)
@@ -116,6 +241,8 @@ void CardController::drag(const QPoint& global)
         if (m_edges & Top) r.setTop(std::min(r.top() + d.y(), r.bottom() - m_min.height() + 1));
         if (m_edges & Bottom) r.setBottom(std::max(r.bottom() + d.y(), r.top() + m_min.height() - 1));
         r = r.intersected(room);
+        if (bound && collides(r, others)) r = m_validRect;          // (a card that is sized grows up to the edge of another and no farther)
+        m_validRect = r;
         m_card->setGeometry(r);
     }
 }
@@ -124,7 +251,9 @@ void CardController::remember()
 {
     QWidget* parent = m_card->parentWidget();
     if (!parent) return;
-    if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION")) return;       // (a scripted test never changes the user's settings)
+    // (a scripted test never changes the user's settings -- except a test window that has settings of its own, FIELDES_SETTINGS_DIR, an .ini file of the test: the places the cards were left at are part of what
+    // they do, and a card restored over another at the start is a path no test window went by (H184, the user, 2026-11-14))
+    if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION") && !qEnvironmentVariableIsSet("FIELDES_SETTINGS_DIR")) return;
     const int fw = std::max(1, parent->width() - m_card->width()), fh = std::max(1, parent->height() - m_card->height());
     m_fx = std::max(0.0, std::min(1.0, double(m_card->x()) / fw));
     m_fy = std::max(0.0, std::min(1.0, double(m_card->y()) / fh));
@@ -153,6 +282,8 @@ void CardController::finish()
     m_edges = 0;
     m_dragged = false;
     m_handlePressed = false;
+    m_card->setProperty("fdDragging", false);
+    scheduleSettle();               // (a card let go of, or sized, where another is, or another is now over: all are looked at)
 }
 
 // A card that the user placed keeps its place along the free space of the viewport when the viewport changes size
@@ -171,7 +302,7 @@ void CardController::restore()
 {
     if (m_restored) return;
     m_restored = true;
-    if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION")) return;
+    if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION") && !qEnvironmentVariableIsSet("FIELDES_SETTINGS_DIR")) return;       // (see remember)
     QSettings s;
     s.beginGroup("cards/" + m_key);
     if (!s.contains("fx")) return;
@@ -224,15 +355,21 @@ bool CardController::eventFilter(QObject* obj, QEvent* e)
     if (m_card->property("floating").toBool()) return false;       // (in a window of its own: the layout of that window places and sizes it)
     if (obj == m_card->parentWidget())
     {
-        if (e->type() == QEvent::Resize) layoutInParent();
+        if (e->type() == QEvent::Resize)
+        {
+            layoutInParent();
+            scheduleSettle();
+        }
         return false;
     }
     if (obj == m_card && e->type() == QEvent::Show)
     {
         restore();
         tameLabels();           // (the labels that were made after the card was)
+        scheduleSettle();       // (H184: a card that opens where another is opens at the nearest free place)
         return false;
     }
+    if (obj == m_card && (e->type() == QEvent::Resize || e->type() == QEvent::Move) && m_card->isVisible()) scheduleSettle();       // (it grew, or was put somewhere by what shows it)
     switch (e->type())
     {
         case QEvent::MouseMove:
@@ -255,7 +392,8 @@ bool CardController::eventFilter(QObject* obj, QEvent* e)
             {
                 // (the header was pressed and pulled: it is a drag, not a click)
                 m_mode = 1;
-                m_start = m_card->geometry();
+                m_card->setProperty("fdDragging", true);
+                m_start = m_validRect = m_card->geometry();
                 m_dragged = true;
                 if (auto b = qobject_cast<QAbstractButton*>(m_handle)) b->setDown(false);
                 drag(me->globalPos());
@@ -277,9 +415,10 @@ bool CardController::eventFilter(QObject* obj, QEvent* e)
             if (obj == m_card)
             {
                 m_press = me->globalPos();
-                m_start = m_card->geometry();
+                m_start = m_validRect = m_card->geometry();
                 m_edges = edgeAt(me->pos());
                 m_mode = m_edges ? 2 : 1;
+                m_card->setProperty("fdDragging", true);
                 m_dragged = false;
                 return true;
             }

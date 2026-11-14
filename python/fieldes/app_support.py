@@ -258,13 +258,118 @@ def _package_methods(name):
     return [(p, l) for _, p, l in hits]
 
 
+_TREES = {}         # path -> (mtime, ast tree)
+
+
+def _tree(path):
+    ''' The syntax tree of a Python file on disk (kept while the file is not changed), or None '''
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    hit = _TREES.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        import tokenize
+        with tokenize.open(path) as f:
+            tree = ast.parse(f.read(), path)
+    except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+        return None
+    _TREES[path] = (mtime, tree)
+    return tree
+
+
+def _parameter_line(path, def_line, name):
+    ''' The line of the parameter `name` of the function defined at `def_line` of the file `path` (of a class: of its __init__, or the field of that name of its body); the line of the function
+        itself when it takes **options and has no parameter of that name; None when it has neither '''
+    tree = _tree(path)
+    if tree is None:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) or node.lineno != def_line:
+            continue
+        target = node
+        if isinstance(node, ast.ClassDef):
+            inits = [n for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == '__init__']
+            if not inits:
+                for n in node.body:
+                    if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == name:
+                        return n.lineno
+                return None
+            target = inits[0]
+        a = target.args
+        for arg in list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs):
+            if arg.arg == name:
+                return arg.lineno
+        return target.lineno if a.kwarg else None
+    return None
+
+
+def _keyword_target(here, name, position, text):
+    ''' Where the keyword `name=` of a call is defined: the parameter of the function the call is of (H216, the user, 2026-11-14: "when I tried stepping into the argument with ctrl click in the editor,
+        it did not work").  `position` is "line:column" of the name in the text (counted from 0, in characters); the call that has a keyword there is found in the syntax tree of the text, its function
+        is followed like any other name (a name, `module.name`, or a method of the library's classes).  (file, line), or None when the name there is not the keyword of a call that can be followed '''
+    try:
+        line0, col0 = [int(v) for v in position.split(':')]
+    except ValueError:
+        return None
+    source = text
+    if not source:
+        try:
+            import tokenize
+            with tokenize.open(here) as f:
+                source = f.read()
+        except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+            return None
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None
+    lines = source.split('\n')
+    if not 0 <= line0 < len(lines):
+        return None
+    byte_col = len(lines[line0][:col0].encode('utf-8'))          # (the syntax tree counts the bytes of a line)
+    call = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg == name and kw.lineno - 1 == line0 and kw.col_offset == byte_col:
+                    call = node
+                    break
+        if call is not None:
+            break
+    if call is None:
+        return None
+    func = call.func
+    if isinstance(func, ast.Name):
+        hit = _bind(here, func.id, set())
+        if hit and hit[0] == 'def' and hit[1]:
+            return hit[1], _parameter_line(hit[1], hit[2], name) or hit[2]
+        return None
+    if isinstance(func, ast.Attribute):
+        if isinstance(func.value, ast.Name):
+            hit = _bind(here, func.value.id, set())
+            if hit and hit[0] == 'module' and hit[1]:
+                inner = _bind(hit[1], func.attr, set())
+                if inner and inner[0] == 'def' and inner[1]:
+                    return inner[1], _parameter_line(inner[1], inner[2], name) or inner[2]
+                return None
+        methods = _package_methods(func.attr)
+        if methods:
+            file, line = methods[0]
+            return file, _parameter_line(file, line, name) or line
+    return None
+
+
 def find_definition(arg):
     ''' Where a name used in a file is defined, for the editor's go-to-definition.
 
         arg: "name<US>owner<US>file<US>text" (US: the character \\x1f) -- owner is the identifier
-        before a "." (or empty), file the file the name is used in (empty: a script that was never
-        saved; its folder is the current one), text what is being edited in it, which may differ
-        from the file on disk.
+        before a "." (or empty; "@line:column" for a name that is followed by "=": it may be the keyword of
+        a call, and then it is defined as the parameter of the function called), file the file the name is
+        used in (empty: a script that was never saved; its folder is the current one), text what is being
+        edited in it, which may differ from the file on disk.
         Returns "file<TAB>line", or "" when the name is not defined in any Python file we can read.
         Everything is read from the files (imports are followed, `from m import *` included);
         nothing is imported.
@@ -279,6 +384,11 @@ def find_definition(arg):
         except (SyntaxError, ValueError):
             pass            # (half-typed: the saved file will have to do)
     try:
+        if owner.startswith('@'):
+            found = _keyword_target(here, name, owner[1:], text)
+            if found:
+                return '{}\t{}'.format(*found)
+            owner = ''                  # (not the keyword of a call: an assignment, or a name like any other)
         if owner:
             hit = _bind(here, owner, set())
             if hit and hit[0] == 'module' and hit[1]:
@@ -1297,7 +1407,219 @@ def blocks_used(source):
     return '1' if any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(tree)) else ''
 
 
-_console = {'base': None, 'mine': {}}      # (the names of the library, and what was assigned in the console)
+_modules = {'at': 0.0, 'key': None, 'names': []}
+
+
+def _module_names():
+    ''' The names of the modules that can be imported NOW -- the standard library, what is on the path (FielDes's folder of packages, an environment in use: `pip install` puts packages there while the program runs)
+        -- read again when the path has changed or a few seconds have passed (H206, the user, 2026-11-14: after `pip install numpy`, `import nump` was not completed to numpy) '''
+    import pkgutil
+    import sys
+    import time
+    key = tuple(sys.path)
+    now = time.time()
+    if _modules['key'] == key and now - _modules['at'] < 3.0:
+        return _modules['names']
+    names = set(sys.builtin_module_names)
+    try:
+        names.update(m.name for m in pkgutil.iter_modules())
+    except Exception:
+        pass
+    stdlib = getattr(sys, 'stdlib_module_names', ())
+    names.update(stdlib)
+    _modules.update(at=now, key=key, names=sorted(n for n in names if n))
+    return _modules['names']
+
+
+def _submodule_names(parent):
+    ''' The submodules of the package `parent` (a dotted name), without importing it '''
+    import importlib.util
+    import pkgutil
+    try:
+        spec = importlib.util.find_spec(parent)
+    except Exception:
+        return []
+    places = getattr(spec, 'submodule_search_locations', None) if spec is not None else None
+    if not places:
+        return []
+    try:
+        return sorted(m.name for m in pkgutil.iter_modules(list(places)))
+    except Exception:
+        return []
+
+
+def _members_of(obj, prefix):
+    ''' The names an object offers after a dot: what `dir()` says, the private ones only when asked for with an underscore '''
+    try:
+        names = dir(obj)
+    except Exception:
+        return []
+    if not prefix.startswith('_'):
+        names = [n for n in names if not n.startswith('_')]
+    return names
+
+
+def _owner_object(owner, imports, namespace):
+    ''' The object the dotted name `owner` stands for: the first name through the namespace of the console (what was assigned there, the library's names, the script's) or the imports of the script
+        (`import numpy as np`, `from os import path`), then attributes.  None when it cannot be told without running anything '''
+    import importlib
+    import sys
+    parts = owner.split('.')
+    head = parts[0]
+    obj = None
+    found = False
+    if namespace is not None and head in namespace:
+        obj, found = namespace[head], True
+    elif head in imports:
+        module, attr = imports[head]
+        try:
+            obj = importlib.import_module(module)
+            if attr:
+                obj = getattr(obj, attr)
+            found = True
+        except Exception:
+            return None
+    elif head in sys.modules:
+        obj, found = sys.modules[head], True
+    else:
+        try:
+            obj = importlib.import_module(head)
+            found = True
+        except Exception:
+            return None
+    if not found:
+        return None
+    for part in parts[1:]:
+        try:
+            obj = getattr(obj, part)
+        except Exception:
+            try:
+                obj = importlib.import_module(getattr(obj, '__name__', head) + '.' + part)
+            except Exception:
+                return None
+    return obj
+
+
+def complete_python(request):
+    ''' The words that complete what is typed, for every kind of Python the editor and the console take (H206, the user, 2026-11-14: "it should obviously do auto completes for everything python realted in real time, not
+        just parts internal to FielDes"): `request` is JSON {"before": the line up to the cursor, "source": the text of the script (its imports say what `np` is), "console": true for the console}; the answer is
+        a JSON list of words.  After `import` and `from`: the modules that can be imported now, and the submodules of a package; after `from m import`: the names in m; after `owner.`: what the object offers; in the console
+        a plain name: what the console has assigned, the library's names and the built-ins '''
+    import ast
+    import builtins
+    import json
+    import keyword
+    import re
+    req = json.loads(request)
+    before = req.get('before', '')
+    source = req.get('source', '') or ''
+    console = bool(req.get('console'))
+    out = set()
+    imports = {}
+    try:
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    imports[(a.asname or a.name).split('.')[0]] = (a.name if a.asname else a.name.split('.')[0], None)
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                for a in node.names:
+                    imports[a.asname or a.name] = (node.module, a.name)
+    except Exception:
+        pass
+    namespace = None
+    if console:
+        from fieldes import runner
+        namespace = {}
+        if _console['base'] is not None:
+            namespace.update(_console['base'])
+        glob = runner.last_globals if isinstance(runner.last_globals, dict) else {}
+        namespace.update(glob)
+        namespace.update(_console['mine'])
+    m = re.match(r'^\s*from\s+([\w.]+)\s+import\s+(?:[\w, ]*,\s*)?(\w*)$', before)
+    if m:
+        module, prefix = m.group(1), m.group(2)
+        obj = _owner_object(module, {}, None)
+        if obj is not None:
+            out.update(_members_of(obj, prefix))
+        out.update(_submodule_names(module))
+        return json.dumps(sorted(w for w in out if w.lower().startswith(prefix.lower()))[:400])
+    m = re.match(r'^\s*(?:import\s+(?:[\w., ]*,\s*)?|from\s+)([\w.]*)$', before)
+    if m:
+        dotted = m.group(1)
+        parent, _, prefix = dotted.rpartition('.')
+        names = _submodule_names(parent) if parent else _module_names()
+        return json.dumps(sorted(n for n in names if n.lower().startswith(prefix.lower()) and (prefix.startswith('_') or not n.startswith('_')))[:400])
+    m = re.search(r'([A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)*)\.(\w*)$', before)
+    if m:
+        owner, prefix = m.group(1), m.group(2)
+        obj = _owner_object(owner, imports, namespace)
+        if obj is not None:
+            out.update(_members_of(obj, prefix))
+            if hasattr(obj, '__path__'):
+                out.update(_submodule_names(getattr(obj, '__name__', owner)))
+        return json.dumps(sorted(w for w in out if w.lower().startswith(prefix.lower()))[:400])
+    if console:
+        m = re.search(r'(\w*)$', before)
+        prefix = m.group(1) if m else ''
+        out.update(k for k in namespace if not k.startswith('_') or prefix.startswith('_'))
+        out.update(n for n in dir(builtins) if not n.startswith('_'))
+        out.update(keyword.kwlist)
+        return json.dumps(sorted(w for w in out if w.lower().startswith(prefix.lower()))[:400])
+    return json.dumps([])
+
+
+_console = {'base': None, 'mine': {}, 'live': None}      # (the names of the library, and what was assigned in the console; the output of the command that is running)
+
+
+class _Live(object):
+    ''' What a console command prints, kept whole and handed out in pieces WHILE it runs (H205, the user, 2026-11-14: "I want the fieldes console to display things in real time like other consoles"): the window asks
+        for what is new every fraction of a second (terminal_poll), and what it has not asked for comes with the answer.  Only COMPLETE lines go out while the command runs; the end of a line that is not
+        finished waits for its newline (or for the answer) '''
+    encoding = 'utf-8'
+
+    def __init__(self):
+        import threading
+        self.parts = []
+        self.sent = 0
+        self.lock = threading.Lock()
+
+    def write(self, text):
+        if not text:
+            return 0
+        with self.lock:
+            self.parts.append(text)
+        return len(text)
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+    def take(self, whole):
+        ''' The text not handed out yet: whole, or up to the last newline '''
+        with self.lock:
+            text = ''.join(self.parts[self.sent:])
+            if not whole:
+                cut = text.rfind('\n')
+                if cut < 0:
+                    return ''
+                head, tail = text[:cut + 1], text[cut + 1:]
+                self.parts = self.parts[:self.sent] + [head, tail] if tail else self.parts[:self.sent] + [head]
+                self.sent += 1
+                return head
+            self.sent = len(self.parts)
+            return text
+
+    def getvalue(self):
+        with self.lock:
+            return ''.join(self.parts)
+
+
+def terminal_poll(_arg=''):
+    ''' The complete lines the running console command has printed since the last call, or '' (the window asks while a command runs: see Editor::runConsole) '''
+    live = _console.get('live')
+    return live.take(False) if live is not None else ''
 
 
 def terminal_exec(request):
@@ -1310,8 +1632,27 @@ def terminal_exec(request):
     import io
     import json
     import traceback
+    from fieldes import pyenv
     from fieldes import runner
     code = json.loads(request).get('code', '')
+    # What the command prints is kept in one place that the window reads from while the command runs (see _Live)
+    out = _Live()
+    _console['live'] = out
+    try:
+        return _terminal_run(code, out, json, ast, contextlib, traceback, pyenv, runner)
+    finally:
+        _console['live'] = None
+
+
+def _terminal_run(code, out, json, ast, contextlib, traceback, pyenv, runner):
+    # `pip install ...` and `env use ...` are lines of the console that are not Python: the Python environment of FielDes (install packages, switch environments), see pyenv.py.  What pip prints goes to `out` line by
+    # line as it prints it (H205)
+    pyenv.activate()
+    answer = pyenv.command(code, out.write)
+    if answer is not None:
+        if answer:
+            out.write(answer + '\n')
+        return json.dumps({'output': out.take(True), 'value': '', 'error': ''})
     if _console['base'] is None:
         base = {'__name__': '__console__'}
         exec('from fieldes import *', base)
@@ -1320,7 +1661,6 @@ def terminal_exec(request):
     ns = dict(_console['base'])
     ns.update(glob)
     ns.update(_console['mine'])
-    out = io.StringIO()
     value, error = '', ''
     try:
         tree = ast.parse(code, '<console>', 'exec')
@@ -1346,7 +1686,7 @@ def terminal_exec(request):
             continue
         if (k not in glob or glob[k] is not v) and (k not in _console['base'] or _console['base'][k] is not v):
             _console['mine'][k] = v
-    return json.dumps({'output': out.getvalue(), 'value': value, 'error': error})
+    return json.dumps({'output': out.take(True), 'value': value, 'error': error})
 
 
 def _edge_line_of(values, point, size, reach):
@@ -2162,7 +2502,7 @@ def export_model(arg):
             host = E._host('__bounds', None)
             E.export_field(value, path, bounds=host)
         elif kind == 'meshfile':
-            value.export(path)              # (a mesh of mesh_volume or mesh_surface: the file's format is its extension)
+            value.export(path)              # (a mesh of mesh_tet4 or mesh_surface_tri: the file's format is its extension)
         else:
             raise ValueError('unknown kind of export %r' % kind)
     except Exception as e:
@@ -2304,8 +2644,9 @@ def exact_view_tree(key):
             return ''
         exact = _view_exact.get(key)
         if exact is None:
-            from fieldes.stdlib.fields import _dist
-            exact = _dist(shape)
+            # (H190: the viewers show the DISTANCE of a body -- exact_of: what it carries, or the distance to its own surface -- whatever made it)
+            from fieldes.stdlib.fields import exact_of
+            exact = exact_of(shape)
             if exact is shape and getattr(shape, '_display_field', None) is None:
                 return ''
             # (a distance field the viewport meshes from its own, plainer field: the distance the viewers show is the shape's itself)

@@ -136,7 +136,7 @@ In the model tree the call has its `a` and `b` as dim rows: click one to change 
 (see *Auto scale* in [the interface](interface.md)).
 
 **Dragging an extrusion, whatever 2D shape it is made of.** The two **end faces** -- the faces parallel to the 2D shape -- are the length of the extrusion: select the extrusion, press one of them and pull, and `a` (the face on the
-shape's side) or `b` (the far face) follows the mouse; `handles(extrude_1, [a, b])` is written once you let go. That holds for a circle, a rectangle, a rounded rectangle, a triangle, a polygon and a ring. **Not yet for a profile of points** (measured 2026-11-04): the handles line is written and the press finds the face, but the pull changes nothing -- the field of that extrusion is the mesh of its points, with no number for `a` or `b` in it (see KNOWN_ISSUES.md).
+shape's side) or `b` (the far face) follows the mouse; `handles(extrude_1, [a, b])` is written once you let go. That holds for a circle, a rectangle, a rounded rectangle, a triangle, a polygon, a ring and a profile of points.
 The **walls** are the sides of the 2D shape, and are pulled as the 2D shape's sides are: the wall of a circle or a rectangle changes its radius or its side, the wall of a profile moves the two points of the outline it is
 between, together, in the plane of the profile (the points' own gizmo numbers change, the profile and the extrusion follow). A press on the 2D shape itself -- drawn over its extrusion -- always pulls the 2D shape, not the extrusion.
 **`Ctrl+E`** extrudes the selected 2D shape; with a 2D shape **and a curve** selected it makes `path_extrude(shape, curve)` instead.

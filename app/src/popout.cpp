@@ -13,6 +13,7 @@ of the License, or (at your option) any later version.
 #include <QApplication>
 #include <QEvent>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QLabel>
 #include <QLayout>
@@ -20,6 +21,7 @@ of the License, or (at your option) any later version.
 #include <QPixmap>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QScreen>
 #include <QSettings>
 #include <QSplitter>
 #include <QTimer>
@@ -42,6 +44,22 @@ QList<QPointer<PopOut>>& registry()
 
 // (a scripted test never changes the user's settings)
 bool automated() { return qEnvironmentVariableIsSet("FIELDES_AUTOMATION"); }
+
+// ... except a test window that has settings of its own (FIELDES_SETTINGS_DIR: an .ini file of the test, nothing of the user's is read or written): the place a window was kept at is part of what
+// the pop-out does, and the test of a place that is out of sight (H196) needs it kept and read back
+bool settingsAreOwn() { return !automated() || qEnvironmentVariableIsSet("FIELDES_SETTINGS_DIR"); }
+
+// The window has some of its title bar and body on a screen: at least a 120 x 40 piece of it (its frame, where it will be) is on one of them
+bool onScreen(const QWidget* w)
+{
+    const QRect frame = w->frameGeometry();
+    for (QScreen* s : QGuiApplication::screens())
+    {
+        const QRect seen = s->availableGeometry().intersected(frame);
+        if (seen.width() >= 120 && seen.height() >= 40) return true;
+    }
+    return false;
+}
 
 // The glyph of the button: a window with an arrow that leaves it (pull out) or goes back into it (put back), drawn in `ink`
 QIcon glyph(bool floating, const QColor& ink)
@@ -199,7 +217,7 @@ QWidget* PopOut::makePlaceholder()
 
 void PopOut::saveWindowGeometry() const
 {
-    if (!m_window || automated()) return;
+    if (!m_window || !settingsAreOwn()) return;
     QSettings().setValue("popout/" + m_key + "/geometry", m_window->saveGeometry());
 }
 
@@ -271,17 +289,30 @@ void PopOut::floatOut()
     refreshButton();
     m_window->resize(std::max(size.width(), 260), std::max(size.height(), 160));
     bool restored = false;
-    if (!automated())
+    if (settingsAreOwn())
     {
         const QByteArray saved = QSettings().value("popout/" + m_key + "/geometry").toByteArray();
         if (!saved.isEmpty()) restored = m_window->restoreGeometry(saved);
     }
+    // H196 (the user, 2026-11-13: "Putting the Legend into its own window can sometimes make it disappear for good (closing and reopening does not fix"): the place the window was kept at may
+    // be on no screen any more -- it was dragged out of sight, or a screen was taken away --, and every window pulled out was put there again, out of sight, from the settings.  A window that is not
+    // on a screen by a hand's breadth is put where the element was, and the place that was kept is forgotten
+    if (restored && !onScreen(m_window))
+    {
+        restored = false;
+        if (settingsAreOwn()) QSettings().remove("popout/" + m_key + "/geometry");
+    }
     if (!restored) m_window->move(where);
+    if (!onScreen(m_window)) m_window->move(QGuiApplication::primaryScreen()->availableGeometry().topLeft() + QPoint(40, 60));
     if (m_wantVisible)
     {
         m_target->show();
         m_window->show();
     }
+    // (...and once the window has its frame: where the system put it may be out of sight too)
+    QTimer::singleShot(0, m_window, [w = QPointer<QWidget>(m_window)] {
+        if (w && w->isVisible() && !onScreen(w)) w->move(QGuiApplication::primaryScreen()->availableGeometry().topLeft() + QPoint(40, 60));
+    });
     placeButton();
 }
 

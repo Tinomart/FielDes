@@ -110,7 +110,9 @@ add_library(libfive SHARED
     fea/fea.cpp
     fea/thermal.cpp
     fea/tetmesh.cpp
+    fea/tetmender.cpp
     fea/tet_common.cpp
+    fea/tet_amg.cpp
     fea/topopt.cpp
     fea/density_design.cpp
     fea/tet_quad.cpp

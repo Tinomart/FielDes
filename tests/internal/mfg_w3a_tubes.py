@@ -18,8 +18,8 @@ from mfgkit import *
 t = Table('w3a_tubes: thin curved walls of 0.5 mm, tubes of radius 3 and 10, a wall of 0.8 mm asked: a wall that curves about one axis, tight and slack')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-defs = [('tube r 3', cylinder(3.0, 12), cylinder(2.5, 14, position=(0, 0, -1)), (3.0, 0.0, 6.0), 6),
-        ('tube r 10', cylinder(10.0, 12), cylinder(9.5, 14, position=(0, 0, -1)), (10.0, 0.0, 6.0), 12)]
+defs = [('tube r 3', cylinder(3.0, 12, position=(0, 0, 6)), cylinder(2.5, 14, position=(0, 0, 6)), (3.0, 0.0, 6.0), 6),
+        ('tube r 10', cylinder(10.0, 12, position=(0, 0, 6)), cylinder(9.5, 14, position=(0, 0, 6)), (10.0, 0.0, 6.0), 12)]
 
 result, original = curved_shells(t, defs, [(0, 0), (26, 0)], ([-14, -14, -3], [40, 14, 16]))
 

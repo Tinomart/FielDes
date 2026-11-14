@@ -87,11 +87,8 @@ public:
     explicit SymmetryPanel(QWidget* parent = nullptr);
 
 public slots:
-    /*  The symmetry that is selected: `exists` (the card is there while one is), whether it is in use, and its name  */
+    /*  The symmetry that is selected: `exists`, whether it is in use (the card is there while it is, and goes when it is stopped), and its name  */
     void setSymmetry(const Symmetry& s, int images, bool exists, bool inUse, const QString& name);
-    /*  Where the card sits: top-right, under the other cards  */
-    void reposition() { place(); }
-
 signals:
     void kindChanged(int kind);
     void countChanged(int count);

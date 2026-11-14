@@ -79,6 +79,7 @@ The C API is `kernel/include/libfive.h`; the Python library calls it through `ct
 | `stdlib/points.py` | `Point` and `Surface` (models of their own), `point()`, `plane()`, `sphere_surface()` ..., and `displayed()`: how a profile, a surface, a point and a field are drawn |
 | `kinds.py` | What a model *is* (`kind_of`: solid, profile, field, surface, point, simulation, conditions, cell, selection, import) and the colour of each; the kernel's `libfive_tree_axes` tells a 2D shape from a 3D one |
 | `blocks.py` | The custom blocks: the files of the blocks folder, hot reload by modification time, what the editor and the menus are told about them |
+| `pyenv.py` | The Python environment from the console: `pip install / uninstall / list / show / freeze` into the user's folder of packages (through the pip wheel that ensurepip carries) or into the environment in use, `env use / new / list`; puts those folders on `sys.path` when a script runs (`runner._prepare_imports`) and when the console takes a line (`app_support.terminal_exec`) |
 | `stdlib/lattices.py` | Lattices |
 | `stdlib/fea.py`, `thermal.py` | Analysis front ends |
 | `stdlib/handles.py` | `handles()`, `lock()` (and `_place`, what the placement arguments of a call apply) |

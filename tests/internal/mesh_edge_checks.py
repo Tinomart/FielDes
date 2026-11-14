@@ -1,7 +1,7 @@
 '''
 Checks of the edges and corners of a volume mesh (the user, 2026-11-03: "I have no idea how you made those weird slops near the edges that has nothing to do with the geometry it came
 from").  The lattice of the mesher does not lie on the edges of a body unless the element size fits it, and the nodes stood on the two faces beside an edge with a slope between them: a
-box meshed at 4 mm lost 1.8 % of its volume and 7 % of its surface was slope.  mesh_volume puts the nodes on the edges and corners now (meshing._snap_features).  Library checks, no
+box meshed at 4 mm lost 1.8 % of its volume and 7 % of its surface was slope.  the kernel mesher puts the nodes on the edges and corners now (snapFeatures in kernel/src/fea/tetmesh.cpp, for an analysis and for mesh_tet4 alike).  Library checks, no
 window.  Run with FIELDES_DIR set to the folder of the program and PYTHONPATH to python/.
 '''
 import math
@@ -66,6 +66,51 @@ def snapped(mesh):
     return any('edges and corners' in note for note in mesh.notes)
 
 
+def rim_chords(mesh, radius, z):
+    ''' The distances between neighbouring nodes along the circle of `radius` about the z axis in the plane z, the nodes of the boundary within 2 % of the radius of it and 0.01 mm of the plane, in the order of their angle '''
+    P = mesh.nodes
+    ids = set()
+    for tri in boundary(mesh):
+        ids.update(tri)
+    ring = []
+    for i in ids:
+        x, y, zz = P[3 * i], P[3 * i + 1], P[3 * i + 2]
+        if abs(zz - z) < 0.01 and abs(math.hypot(x, y) - radius) < 0.02 * radius:
+            ring.append((math.atan2(y, x), (x, y)))
+    ring.sort()
+    return [math.dist(ring[k][1], ring[(k + 1) % len(ring)][1]) for k in range(len(ring))] if len(ring) >= 3 else []
+
+
+def turned_axes(rz, rx):
+    ''' The three face normals of a box that is turned by rz degrees about z and then by rx degrees about x '''
+    cz, sz, cx, sx = math.cos(math.radians(rz)), math.sin(math.radians(rz)), math.cos(math.radians(rx)), math.sin(math.radians(rx))
+
+    def turn(v):
+        x, y, z = v
+        x, y = cz * x - sz * y, sz * x + cz * y
+        y, z = cx * y - sx * z, sx * y + cx * z
+        return (x, y, z)
+    return [turn((1.0, 0.0, 0.0)), turn((0.0, 1.0, 0.0)), turn((0.0, 0.0, 1.0))]
+
+
+def leaning_share(mesh, axes, limit=12.0):
+    ''' The share of the boundary triangles of a mesh of a box whose normal is more than `limit` degrees from every one of the box's three face directions '''
+    P = mesh.nodes
+    cs = math.cos(math.radians(limit))
+    lean = total = 0
+    for a, b, c in boundary(mesh):
+        u = [P[3 * b + i] - P[3 * a + i] for i in range(3)]
+        w = [P[3 * c + i] - P[3 * a + i] for i in range(3)]
+        n = (u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0])
+        length = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+        if length <= 0:
+            continue
+        total += 1
+        if max(abs(n[0] * ax[0] + n[1] * ax[1] + n[2] * ax[2]) for ax in axes) / length < cs:
+            lean += 1
+    return lean / total if total else 1.0
+
+
 def main():
     size = (30, 20, 10)
     exact = 30.0 * 20.0 * 10.0
@@ -74,33 +119,61 @@ def main():
 
     # --- an element size the lattice does not fit: the edges and corners were cut
     for h, volume_limit, slope_limit in ((4.0, 0.002, 1.0), (3.0, 0.01, 0.03 * surface)):
-        mesh = mesh_volume(box_body, h)
+        mesh = mesh_tet4(box_body, h)
         error = abs(mesh.volume() - exact) / exact
         check('a box meshed at %.1f mm has its volume (%.3f %% off)' % (h, 100 * error), error < volume_limit, error)
         slope = sloped_area(mesh)
         check('... and its surface has no slope the box does not have (%.1f of %.0f mm2)' % (slope, surface), slope < slope_limit, slope)
-        check('... the edges were found by the mesher, and said so', snapped(mesh), mesh.notes)
+        # (the element size is fitted to the body now -- H202 -- so that the lattice lies on the faces and edges of the box at every size and there is nothing cut across to put back: the mesher
+        # says so when it had to find edges, and when it did not the surface has no slope at all.  The slope check above is the requirement; this is the way the mesher tells)
+        check('... the edges were found by the mesher and said so, or the lattice lay on them already and the surface has no slope', snapped(mesh) or slope < 1e-6, mesh.notes)
         check('... no tetrahedron is a sliver (worst %.2f)' % worst_tetrahedron(mesh), worst_tetrahedron(mesh) >= 0.15)
-    mesh = mesh_volume(box_body, 4.0)
+    mesh = mesh_tet4(box_body, 4.0)
     gap = nearest_corner_gap(mesh, (15.0, 10.0, 5.0))
     check('a box meshed at 4 mm has a node on each of its corners (the worst is %.4f mm away)' % gap, gap < 0.01, gap)
     lo, hi = mesh.bounds
     check('... and no node outside it', max(abs(lo[0] + 15), abs(lo[1] + 10), abs(lo[2] + 5), abs(hi[0] - 15), abs(hi[1] - 10), abs(hi[2] - 5)) < 1e-3, (lo, hi))
 
     # --- an element size it fits: nothing to put back
-    fit = mesh_volume(box_body, 2.5)
+    fit = mesh_tet4(box_body, 2.5)
     check('a box meshed at 2.5 mm, where the lattice lies on its edges, is left as it is', not snapped(fit) and sloped_area(fit) < 1e-6, fit.notes)
 
     # --- a plate with a hole: the rim of the hole and the edges of the plate
-    plate = difference(box((80, 40, 4), position=(0, 0, 0)), cylinder(5, 12, position=(0, 0, -6)))
+    plate = difference(box((80, 40, 4), position=(0, 0, 0)), cylinder(5, 12, position=(0, 0, 0)))
     plate_exact = 80 * 40 * 4 - math.pi * 25 * 4
-    meshed = mesh_volume(plate, 3.0)
+    meshed = mesh_tet4(plate, 3.0)
     error = abs(meshed.volume() - plate_exact) / plate_exact
     check('a plate with a hole meshed at 3 mm has its volume (%.2f %% off; it was 2.1 %% before)' % (100 * error), error < 0.005, error)
     check('... no tetrahedron is a sliver (worst %.2f)' % worst_tetrahedron(meshed), worst_tetrahedron(meshed) >= 0.15)
 
+    # --- H223: the nodes of the rim of the hole are spaced evenly along it (the worst triangles of the skin all touch a crease node and 15 % of the crease nodes had two chain edges differing by more than 1.5)
+    # (the bottom rim had a gap of 4.5 mm at 3 mm where the corner was cut off by two triangles, a node standing 1.3 mm up the wall and another on the face outside the hole: the edge was not sharp there)
+    for h in (3.0, 2.0):
+        meshed = mesh_tet4(plate, h)
+        for z, name in ((2.0, 'top'), (-2.0, 'bottom')):
+            gaps = rim_chords(meshed, 5.0, z)
+            if len(gaps) >= 6:
+                # (measured 2026-11-15 on the final build: 1.22 and 1.22 at 3 mm, 1.52 and 1.86 at 2 mm -- the chain pass spaces the nodes along the rim as far as the lattice lets it, and 17 to 19 nodes on a circle of 31 mm
+                # cannot all be spaced evenly; the bound is the measured worst with room, and a rim that is worse than 2 against an even spacing would be a regression)
+                check('the %s rim of the hole at %.1f mm: %d nodes, the chords between neighbours differ by %.2f at most (the longest over the shortest)' % (name, h, len(gaps), max(gaps) / min(gaps)), max(gaps) / min(gaps) < (1.6 if h >= 3.0 else 2.0), max(gaps) / min(gaps))
+            else:
+                check('the %s rim of the hole at %.1f mm has nodes on it (%d found)' % (name, h, len(gaps)), False, len(gaps))
+
+    # --- H223 (his words 2026-11-15, of the edges of the real bracket: "ONE SIDE WAS NOT GOOD ENOUGH", and a picture of a long straight edge with notches, single nodes of it standing off the line): a box turned to a
+    # position the lattice does not fit, so that its edges run slanted across the lattice at every angle.  The edge pass used to refuse a row of nodes along such an edge all together (a tetrahedron under one of them
+    # turned inside out and took back every node of it): the faces of the skin that lean more than 12 degrees from the faces of the box are counted
+    turned = rotate(rotate(box(size, position=(0, 0, 0)), axis=(0, 0, 1), angle=17.0), axis=(1, 0, 0), angle=9.0)
+    axes = turned_axes(17.0, 9.0)
+    for h in (3.0, 2.0):
+        meshed = mesh_tet4(turned, h)
+        share = leaning_share(meshed, axes)
+        error = abs(meshed.volume() - exact) / exact
+        # (measured on the build before the one-at-a-time moves: 0.72 % at 3 mm and 0.71 % at 2 mm; the limit is set below that, the check fails there and has to pass after the change)
+        check('a box turned by 17 and 9 degrees meshed at %.1f mm: %.2f %% of its surface faces lean more than 12 degrees from its faces (limit 0.5 %%)' % (h, 100 * share), share < 0.005, share)
+        check('... its volume (%.2f %% off) and no sliver (worst %.2f)' % (100 * error, worst_tetrahedron(meshed)), error < 0.01 and worst_tetrahedron(meshed) >= 0.15, error)
+
     # --- a smooth body has no edge: nothing is moved
-    ball = mesh_volume(sphere(8), 3.0)
+    ball = mesh_tet4(sphere(8), 3.0)
     check('a sphere has no edge: no node is moved', not snapped(ball), ball.notes)
     check('... its worst tetrahedron stays good (%.2f)' % worst_tetrahedron(ball), worst_tetrahedron(ball) > 0.5)
 

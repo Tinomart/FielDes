@@ -20,7 +20,7 @@ from mfgkit import *
 t = Table('o4_arch_and_sphere_cavity: a tunnel with a round roof (walls 8 mm high, a half-circle of radius 6 on top) and a closed spherical cavity of radius 6, an overhang of 45 degrees asked with overhang_fix=cut: the roof of each becomes a teardrop, a pointed arch and a cone, with its apex 6 sqrt 2 = 8.49 mm above the centre and its faces leaning 45 degrees')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-arch_block = difference(box((30, 20, 30), position=(15, 10, 15)), union(box((12, 22, 8), position=(15, 10, 8)), rotate_x(cylinder(6, 22, position=(15, 12, -21)), math.pi / 2)))
+arch_block = difference(box((30, 20, 30), position=(15, 10, 15)), union(box((12, 22, 8), position=(15, 10, 8)), rotate_x(cylinder(6, 22, position=(15, 12, -10)), math.pi / 2)))
 cavity_block = difference(box((30, 20, 30), position=(55, 10, 15)), sphere(6.0, position=(55, 10, 15)))
 part = union(arch_block, cavity_block)
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them

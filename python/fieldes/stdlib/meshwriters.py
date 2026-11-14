@@ -29,7 +29,7 @@ import struct
 from array import array
 
 from fieldes import units as _units
-from fieldes.stdlib.meshing import (CORNERS, EDGES, FACES, NODES, SOLIDS, SURFACES, MeshError, _centroid, _cell_volume, _polygon_area_vector)
+from fieldes.stdlib.meshing import (CORNERS, EDGES, FACES, NODES, POLY, SOLIDS, SURFACES, MeshError, _centroid, _cell_volume, _polygon_area_vector)
 
 __all__ = []
 
@@ -52,9 +52,12 @@ def write_mesh(mesh, path, format=None, **options):
     if not mesh.node_count:
         raise MeshError('the mesh has no nodes')
     scale = float(options['scale']) if options.get('scale') is not None else _units.export_scale()
-    volume = any(mesh.cell_count(k) for k in SOLIDS)
+    volume = any(mesh.cell_count(k) for k in SOLIDS) or bool(mesh.cell_count(POLY))
     if fmt in ('fluent', 'openfoam') and not volume:
         raise MeshError('{} is a mesh of cells: this one is a surface'.format(fmt))
+    if mesh.cell_count(POLY) and fmt not in ('vtk', 'fluent', 'openfoam', 'stl', 'obj'):
+        raise MeshError('{}: the mesh has {:,} polyhedra (the cells a surface cuts out of the cubes of element=\'cartesian\'), which this format has no element for: write it as vtk, fluent or openfoam, '
+                        'or mesh the body again with a threshold that makes no polyhedra (element=\'tet\', or element=\'hex\')'.format(fmt, mesh.cell_count(POLY)))
     writer = {'gmsh': _write_gmsh, 'vtk': _write_vtk, 'abaqus': _write_abaqus, 'nastran': _write_nastran, 'unv': _write_unv, 'fluent': _write_fluent,
               'openfoam': _write_openfoam, 'stl': _write_stl, 'obj': _write_obj}[fmt]
     folder = path if fmt == 'openfoam' else os.path.dirname(os.path.abspath(path))
@@ -80,7 +83,7 @@ def _chunks(values, per_line, sep=' '):
 
 
 def _all_cells(mesh):
-    ''' Every cell in the order the writers number them: (kind, corners and the other nodes, zone) '''
+    ''' Every cell in the order the writers number them: (kind, corners and the other nodes, zone); a polyhedron ('poly') comes last, with its faces for its nodes: a tuple of tuples '''
     for kind in SOLIDS:
         conn = mesh.cells.get(kind)
         if not conn:
@@ -89,6 +92,9 @@ def _all_cells(mesh):
         zones = mesh.cell_zone.get(kind)
         for i in range(len(conn) // n):
             yield kind, tuple(conn[n * i:n * i + n]), (zones[i] if zones is not None else 0)
+    zones = mesh.cell_zone.get(POLY)
+    for i, faces in enumerate(mesh.polyhedra()):
+        yield POLY, tuple(faces), (zones[i] if zones is not None else 0)
 
 
 def _all_faces(mesh):
@@ -100,6 +106,9 @@ def _all_faces(mesh):
         zones = mesh.face_zone.get(kind)
         for i in range(len(conn) // n):
             yield kind, tuple(conn[n * i:n * i + n]), (zones[i] if zones is not None else 0)
+    zones = mesh.face_zone.get(POLY)
+    for i, nodes in enumerate(mesh.polygons()):
+        yield POLY, tuple(nodes), (zones[i] if zones is not None else 0)
 
 
 def _tet10_for_gmsh(nodes):
@@ -110,7 +119,12 @@ def _tet10_for_gmsh(nodes):
 ################################################################################
 # Gmsh
 
-_GMSH_TYPE = {'tri3': 2, 'quad4': 3, 'tet4': 4, 'hex8': 5, 'prism6': 6, 'tet10': 11}
+_GMSH_TYPE = {'tri3': 2, 'quad4': 3, 'tet4': 4, 'hex8': 5, 'prism6': 6, 'pyra5': 7, 'tet10': 11, 'hex20': 17}
+
+
+def _hex20_for_gmsh(nodes):
+    # (the corners, then the middle of the edges 0-1, 0-3, 0-4, 1-2, 1-5, 2-3, 2-6, 3-7, 4-5, 4-7, 5-6, 6-7: ours are in the order 0-1, 1-2, 2-3, 3-0, 4-5, 5-6, 6-7, 7-4, 0-4, 1-5, 2-6, 3-7)
+    return tuple(nodes[:8]) + tuple(nodes[8 + i] for i in (0, 3, 8, 1, 9, 2, 10, 11, 4, 7, 5, 6))
 
 
 def _write_gmsh(mesh, path, scale, options):
@@ -141,6 +155,8 @@ def _write_gmsh(mesh, path, scale, options):
     for kind, nodes, zone in _all_cells(mesh):
         if kind == 'tet10':
             nodes = _tet10_for_gmsh(nodes)
+        elif kind == 'hex20':
+            nodes = _hex20_for_gmsh(nodes)
         elements.append('{} {} 2 {} {} {}'.format(eid, _GMSH_TYPE[kind], zone + 1, zone + 1, ' '.join(str(v + 1) for v in nodes)))
         eid += 1
     out.append('$Elements')
@@ -154,7 +170,7 @@ def _write_gmsh(mesh, path, scale, options):
 ################################################################################
 # VTK
 
-_VTK_TYPE = {'tri3': 5, 'quad4': 9, 'tet4': 10, 'tet10': 24, 'hex8': 12, 'prism6': 13}
+_VTK_TYPE = {'tri3': 5, 'quad4': 9, 'tet4': 10, 'tet10': 24, 'hex8': 12, 'prism6': 13, 'pyra5': 14, 'hex20': 25, POLY: 42}
 
 
 def _write_vtk(mesh, path, scale, options):
@@ -167,19 +183,46 @@ def _write_vtk(mesh, path, scale, options):
         else:
             cells = cells + faces
     zone_of = [z for _, _, z in cells]
-    cell_dim = [3 if k in SOLIDS else 2 for k, _, _ in cells]
+    cell_dim = [3 if (k in SOLIDS or (k == POLY and not isinstance(n[0], int))) else 2 for k, n, _ in cells]
     points = ' '.join('{!r} {!r} {!r}'.format(*p) for p in _coords(mesh, scale))
     conn = []
     offsets = []
     types = []
+    face_stream = []                    # (VTK_POLYHEDRON: for each cell the faces as [number of faces, nodes of the first, its nodes ..., nodes of the second ...]; -1 offsets for the others)
+    face_offsets = []
     total = 0
+    streamed = 0
+    has_poly = False
     for kind, nodes, _ in cells:
-        if kind == 'prism6':
-            nodes = (nodes[0], nodes[2], nodes[1], nodes[3], nodes[5], nodes[4])       # (VTK's wedge has the normal of its first triangle away from the other)
+        if kind == POLY and nodes and not isinstance(nodes[0], int):
+            has_poly = True
+            seen = []
+            for fc in nodes:
+                for v in fc:
+                    if v not in seen:
+                        seen.append(v)
+            conn.extend(seen)
+            total += len(seen)
+            stream = [len(nodes)]
+            for fc in nodes:
+                stream.append(len(fc))
+                stream.extend(fc)
+            face_stream.extend(stream)
+            streamed += len(stream)
+            face_offsets.append(streamed)
+            offsets.append(total)
+            types.append(42)
+            continue
+        if kind == POLY:
+            types.append(7)                       # (a boundary polygon of more than four nodes: VTK_POLYGON)
+        else:
+            if kind == 'prism6':
+                nodes = (nodes[0], nodes[2], nodes[1], nodes[3], nodes[5], nodes[4])       # (VTK's wedge has the normal of its first triangle away from the other)
+            types.append(_VTK_TYPE[kind])
         conn.extend(nodes)
         total += len(nodes)
         offsets.append(total)
-        types.append(_VTK_TYPE[kind])
+        face_offsets.append(-1)
     out = ['<?xml version="1.0"?>',
            '<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">',
            '<UnstructuredGrid><Piece NumberOfPoints="{}" NumberOfCells="{}">'.format(mesh.node_count, len(cells)),
@@ -187,8 +230,11 @@ def _write_vtk(mesh, path, scale, options):
            '<Cells>',
            '<DataArray type="Int32" Name="connectivity" format="ascii">', ' '.join(map(str, conn)), '</DataArray>',
            '<DataArray type="Int32" Name="offsets" format="ascii">', ' '.join(map(str, offsets)), '</DataArray>',
-           '<DataArray type="UInt8" Name="types" format="ascii">', ' '.join(map(str, types)), '</DataArray>',
-           '</Cells>']
+           '<DataArray type="UInt8" Name="types" format="ascii">', ' '.join(map(str, types)), '</DataArray>']
+    if has_poly:
+        out.extend(['<DataArray type="Int32" Name="faces" format="ascii">', ' '.join(map(str, face_stream)), '</DataArray>',
+                    '<DataArray type="Int32" Name="faceoffsets" format="ascii">', ' '.join(map(str, face_offsets)), '</DataArray>'])
+    out.append('</Cells>')
     if options.get('zones', True):
         out.append('<CellData>')
         out.append('<DataArray type="Int32" Name="zone" format="ascii">')
@@ -214,7 +260,7 @@ def _write_vtk(mesh, path, scale, options):
 ################################################################################
 # Abaqus
 
-_ABAQUS_TYPE = {'tet4': 'C3D4', 'tet10': 'C3D10', 'hex8': 'C3D8', 'prism6': 'C3D6', 'tri3': 'S3', 'quad4': 'S4'}
+_ABAQUS_TYPE = {'tet4': 'C3D4', 'tet10': 'C3D10', 'hex8': 'C3D8', 'hex20': 'C3D20', 'prism6': 'C3D6', 'pyra5': 'C3D5', 'tri3': 'S3', 'quad4': 'S4'}
 
 
 def _write_abaqus(mesh, path, scale, options):
@@ -237,9 +283,11 @@ def _write_abaqus(mesh, path, scale, options):
         elset = _name(zone_names[zone] if zone < len(zone_names) else 'zone_{}'.format(zone))
         out.append('*ELEMENT, TYPE={}, ELSET={}'.format(_ABAQUS_TYPE[kind], elset))
         for e, nodes in groups[(kind, zone)]:
-            if kind == 'tet10':
-                out.append(', '.join([str(e)] + [str(v + 1) for v in nodes[:8]]))
-                out.append(', '.join(str(v + 1) for v in nodes[8:]))
+            if kind == 'hex20':
+                # (C3D20: the corners, then the middle of 1-2, 2-3, 3-4, 4-1, 5-6, 6-7, 7-8, 8-5, 1-5, 2-6, 3-7, 4-8 -- the order the nodes are in. A data line holds at most 16 numbers and a line that goes on
+                # on the next one ENDS WITH A COMMA: without it Abaqus reads the first line as a whole element and the second as another)
+                out.append(', '.join([str(e)] + [str(v + 1) for v in nodes[:15]]) + ',')
+                out.append(', '.join(str(v + 1) for v in nodes[15:]))
             else:
                 out.append(', '.join([str(e)] + [str(v + 1) for v in nodes]))
     if options.get('zones', True) and any(mesh.cell_count(k) for k in SOLIDS):
@@ -248,7 +296,9 @@ def _write_abaqus(mesh, path, scale, options):
             sets.setdefault(zone, set()).update(nodes[:CORNERS[kind]])
         for zone in sorted(sets):
             out.append('*NSET, NSET={}'.format(_name(mesh.zone_names[zone])))
-            out.extend(', '.join(str(v + 1) for v in chunk) for chunk in _slices(sorted(sets[zone]), 16))
+            chunks = list(_slices(sorted(sets[zone]), 16))
+            # (a line that goes on on the next one ends with a comma)
+            out.extend(', '.join(str(v + 1) for v in chunk) + (',' if i + 1 < len(chunks) else '') for i, chunk in enumerate(chunks))
     with open(path, 'w', encoding='ascii') as f:
         f.write('\n'.join(out) + '\n')
 
@@ -268,12 +318,19 @@ def _write_nastran(mesh, path, scale, options):
     for i, (x, y, z) in enumerate(_coords(mesh, scale)):
         out.append('GRID,{},,{!r},{!r},{!r}'.format(i + 1, x, y, z))
     eid = 1
-    names = {'tet4': 'CTETRA', 'tet10': 'CTETRA', 'prism6': 'CPENTA', 'hex8': 'CHEXA'}
+    names = {'tet4': 'CTETRA', 'tet10': 'CTETRA', 'prism6': 'CPENTA', 'pyra5': 'CPYRAM', 'hex8': 'CHEXA', 'hex20': 'CHEXA'}
     for kind, nodes, zone in _all_cells(mesh):
         ids = [str(v + 1) for v in nodes]
         if kind == 'tet10':
             out.append('{},{},{},{}'.format(names[kind], eid, zone + 1, ','.join(ids[:6])))
             out.append('+,{}'.format(','.join(ids[6:])))
+        elif kind == 'hex20':
+            # (CHEXA with 20 grids: the corners, then the middle of 1-2, 2-3, 3-4, 4-1, 1-5, 2-6, 3-7, 4-8, 5-6, 6-7, 7-8, 8-5 -- ours are in the order 1-2, 2-3, 3-4, 4-1, 5-6, 6-7, 7-8, 8-5, 1-5, 2-6, 3-7, 4-8)
+            mids = ids[8:]
+            ordered = ids[:8] + mids[0:4] + mids[8:12] + mids[4:8]
+            out.append('{},{},{},{}'.format(names[kind], eid, zone + 1, ','.join(ordered[:6])))
+            out.append('+,{}'.format(','.join(ordered[6:14])))
+            out.append('+,{}'.format(','.join(ordered[14:])))
         else:
             out.append('{},{},{},{}'.format(names[kind], eid, zone + 1, ','.join(ids)))
         eid += 1
@@ -339,17 +396,23 @@ def _topology(mesh):
     cells = []
     faces = {}
     zone_of = {}
-    for kind, conn in mesh.faces.items():
-        n = NODES[kind]
-        zones = mesh.face_zone.get(kind)
-        for i in range(len(conn) // n):
-            zone_of[tuple(sorted(conn[n * i:n * i + n]))] = zones[i] if zones is not None else 0
+    for kind, nodes, zone in _all_faces(mesh):
+        zone_of[tuple(sorted(nodes))] = zone
     for kind, nodes, _ in _all_cells(mesh):
-        corners = nodes[:CORNERS[kind]]
         c = len(cells)
-        cells.append((kind, corners))
-        for face in FACES[kind]:
-            fn = tuple(corners[j] for j in face)
+        if kind == POLY:
+            corners = []
+            for fc in nodes:
+                for v in fc:
+                    if v not in corners:
+                        corners.append(v)
+            cells.append((kind, tuple(corners)))
+            face_list = nodes
+        else:
+            corners = nodes[:CORNERS[kind]]
+            cells.append((kind, corners))
+            face_list = [tuple(corners[j] for j in face) for face in FACES[kind]]
+        for fn in face_list:
             key = tuple(sorted(fn))
             entry = faces.get(key)
             if entry is None:
@@ -370,7 +433,7 @@ def _topology(mesh):
 
 _FLUENT_BC = {'wall': 3, 'pressure-inlet': 4, 'pressure-outlet': 5, 'symmetry': 7, 'velocity-inlet': 10, 'mass-flow-inlet': 20, 'interface': 24, 'outflow': 36,
               'axis': 37, 'periodic': 12}
-_FLUENT_ELEMENT = {'tri3': 1, 'tet4': 2, 'tet10': 2, 'quad4': 3, 'hex8': 4, 'prism6': 6}
+_FLUENT_ELEMENT = {'tri3': 1, 'tet4': 2, 'tet10': 2, 'quad4': 3, 'hex8': 4, 'hex20': 4, 'pyra5': 5, 'prism6': 6, POLY: 7}
 
 
 def _fluent_boundary(name, given):
@@ -541,8 +604,8 @@ def _triangles(mesh):
         if kind == 'tri3':
             yield nodes, zone
         else:
-            yield (nodes[0], nodes[1], nodes[2]), zone
-            yield (nodes[0], nodes[2], nodes[3]), zone
+            for m in range(1, len(nodes) - 1):
+                yield (nodes[0], nodes[m], nodes[m + 1]), zone
 
 
 def _write_stl(mesh, path, scale, options):

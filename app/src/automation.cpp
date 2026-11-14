@@ -87,6 +87,18 @@ Automation::Automation(QWidget* window, QObject* parent)
             QApplication::processEvents();
         }
     });
+    // enter: the Return key is pressed in the widget that has the keyboard (the `key` of the window is for the shortcuts of its actions; a box that is typed in takes its number with Return)
+    add("enter", [this](const QString&){
+        QWidget* w = QApplication::activePopupWidget();
+        if (!w) w = QApplication::focusWidget();
+        if (!w) w = m_window->focusWidget();
+        if (!w) return;
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, "\r");
+        QApplication::sendEvent(w, &press);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier, "\r");
+        QApplication::sendEvent(w, &release);
+        QApplication::processEvents();
+    });
     add("grab", [this](const QString& path){
         m_window->grab().save(path);
     });

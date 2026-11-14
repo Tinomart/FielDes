@@ -22,7 +22,7 @@ t = Table('w7_perforated: a plate with 9 holes and webs of 0.3 mm between them (
 part = box((9, 9, 2), position=(4.5, 4.5, 1))
 for i in range(3):
     for j in range(3):
-        part = difference(part, cylinder(1.0, 4, position=(2.2 + 2.3 * i, 2.2 + 2.3 * j, -1)))
+        part = difference(part, cylinder(1.0, 4, position=(2.2 + 2.3 * i, 2.2 + 2.3 * j, 1)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is

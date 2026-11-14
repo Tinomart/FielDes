@@ -79,6 +79,9 @@ public:
      *  nothing is closed  */
     void setWritingSource(std::function<bool(int)> f) { m_writingIn = f; }
 
+    /*  The viewport's answer to a click on an eye (H208): puts the shape of the statement on the (0-based) line away (false) or back (true) and says whether it could; when it could the script is not run  */
+    void setFastVisibility(std::function<bool(int, bool)> f) { m_fastVisible = f; }
+
     /*  Whether the script has a model a menu operation can work on, and another one besides the model displayed
      *  by the (0-based) line `line0` (for the operations that combine two)  */
     bool hasModel() const;
@@ -127,6 +130,9 @@ public:
     /*  The render region a drag has grown to (the viewport grew it as the model was dragged out of it: View::regionGrown): written into the script, to be run with the
      *  numbers of the drag -- the region is never behind what is on the screen  */
     void growRegionTo(const QVector3D& lo, const QVector3D& hi);
+    /*  A model was imported (H180: Open with on a STEP file left the camera framed on the 20 mm region the new script starts with, a close-up of one face): when the region is grown
+     *  to hold the model, the camera is framed again on the settings that arrive with the grown region (frameRegionNext); when the region holds it already, nothing is needed  */
+    void frameWhenFitted() { m_frameAfterFit = true; }
     /*  For the guided tour: close or open the first row whose text starts with `prefix` (as the arrow in front of it does), and whether it
      *  is open; whether a section is closed; every section closed or opened; where the arrow in front of the first section is, and the
      *  property arrow at the end of a row (in the coordinates of `in`); whether the name of a section is being typed  */
@@ -370,6 +376,12 @@ signals:
      *  undoable step  */
     void editScriptLive(QList<TextEdit> edits, QString description);
 
+    /*  The same, for an edit that the viewport has made itself already (a shape put away or back for the eye of its row, H208): the text is written and the script is NOT run for it  */
+    void editScriptSilent(QList<TextEdit> edits, QString description);
+
+    /*  The region was written into the script after an import (frameWhenFitted): the camera is to be framed on the settings that arrive with it  */
+    void frameRegionNext();
+
     /*  Run the script again (nothing in its text changed)  */
     void rerunRequested();
 
@@ -448,6 +460,8 @@ protected:
     void onDrop(QTreeWidgetItem* over, int at, const QPoint& global, bool copy);
     void finishDrop(const QString& overKey, int at, const QPoint& global, bool copy);
     void dropOnModel(const QList<QJsonObject>& models, const QJsonObject& target, bool copy, const OnPlan* given = nullptr);
+    bool claimIntoCall(const QList<QJsonObject>& models, const QJsonObject& target);
+    bool claimable(const QList<QJsonObject>& models, const QJsonObject& target) const;
 
     /*  The tree is the structure of the calls: a model that stands under an operation is one of the models it is given.  Every
      *  nesting, renesting and denesting is therefore an edit of the arguments of a call -- worked out here, before anything
@@ -599,7 +613,9 @@ protected:
      *  edit), and the scene that the run brings replaces it.  False when the edit could not be followed: it is written all the same,
      *  and the tree waits for the run, as it always did  */
     bool editFollowed(const QList<TextEdit>& edits, const QString& what,
-                      const std::function<void(QJsonObject&, const QVector<int>&)>& patch);
+                      const std::function<void(QJsonObject&, const QVector<int>&)>& patch, bool silent = false);
+    /*  (H208) `bool(line0, show)`: the viewport puts the shape of the statement on that line away or back at once; false when it cannot -- the eye is a run of the script then  */
+    std::function<bool(int, bool)> m_fastVisible;
     /*  The tree of the last run of a text is kept (by the text's md5 and by the program and library that made it): the next time the
      *  text is opened, the tree is there at once, before the script has run  */
     QString sceneCachePath(const QString& md5) const;
@@ -714,6 +730,7 @@ protected:
     void writeRegion(const QStringList& text, const double nlo[3], const double nhi[3]);
     QString m_lastRegionEdit;
     bool m_regionFitted = false;       // (the first scene of a file has been seen: from then on the region may also shrink)
+    bool m_frameAfterFit = false;      // (a model was imported and the camera is framed again once the region has been fitted to it: frameWhenFitted)
     QElapsedTimer m_regionEditClock;
     /*  The Auto scale row of the render settings: writes (or takes out) `auto_scale=False` in the view.set_bounds line  */
     void toggleAutoScale();
@@ -965,6 +982,7 @@ protected:
     void showPropertyTab(QTreeWidgetItem* row);
     void placePropertyTab();
     void hidePropertyTab();
+    void applyPropertyGutter();         // (a window of its own: a gutter at the right of the panel for the tab of the properties, so that it covers no button, H194)
     bool m_showOnly = false;                    // (a step of the tour: only the rows it is about are open)
     QStringList m_showOnlyOpen;
     void applyShowOnly();

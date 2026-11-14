@@ -22,7 +22,7 @@ pull = force(box((2, 61, 61), position=(100, 29.5, 29.5)), (0, 0, -200))
 
 
 def beam_of(w, h, r):
-    return difference(box((100, w, h), position=(50, w / 2, h / 2)), cylinder(r, 40, position=(50, 15, -10)))
+    return difference(box((100, w, h), position=(50, w / 2, h / 2)), cylinder(r, 40, position=(50, 15, 10)))
 
 
 grid_best, solved = None, 0
@@ -44,7 +44,7 @@ print('STARTING design : width 40, height 20, hole radius 2')
 width = var(40)
 height = var(20)
 radius = var(2)
-beam = difference(box((100, width, height), position=(50, width / 2, height / 2)), cylinder(radius, 40, position=(50, 15, -10)))
+beam = difference(box((100, width, height), position=(50, width / 2, height / 2)), cylinder(radius, 40, position=(50, 15, 10)))
 stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=3)
 
 mass_1 = stress.mass

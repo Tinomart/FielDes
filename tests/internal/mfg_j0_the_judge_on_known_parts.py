@@ -47,7 +47,7 @@ t.between('ledge: the share that is an overhang of more than 45 degrees (the und
 at_foot = [f for p, f in zip(pts, flags) if p[2] < 0.6]
 t.check('ledge: the foot of the wall on the plate is not an overhang (%d points near the plate, %d flagged)' % (len(at_foot), sum(at_foot)), sum(at_foot) == 0, sum(at_foot), 0)
 # 4. draft: a vertical cylinder wall is all under the draft, a cone leans 25.6 degrees and is not
-post = cylinder(5.0, 20.0, position=(10, 10, 0))
+post = cylinder(5.0, 20.0, position=(10, 10, 10.0))
 pts, nrm = judge_surface_points(post, (4, 4, -1), (16, 16, 21), 1200, seed=6)
 walls, bad = judge_draft(nrm, (0, 0, 1), 1.0)
 # (a point of the sample that lies ON the rim edge has a normal averaged across the edge: one in a thousand may lean more than the wall does)

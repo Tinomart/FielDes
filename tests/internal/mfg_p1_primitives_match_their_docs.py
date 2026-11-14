@@ -22,7 +22,7 @@ t = Table('p1_primitives_match_their_docs: the primitives the manufacturing test
 shapes = [
     ('box 8 x 6 x 4', box((8, 6, 4), position=(4, 3, 2)), (0, 0, 0), (8, 6, 4), 8 * 6 * 4),
     ('sphere radius 5', sphere(5.0, position=(20, 5, 5)), (15, 0, 0), (25, 10, 10), 4.0 / 3.0 * math.pi * 125.0),
-    ('cylinder radius 4, height 12', cylinder(4.0, 12.0, position=(35, 5, 0)), (31, 1, 0), (39, 9, 12), math.pi * 16.0 * 12.0),
+    ('cylinder radius 4, height 12', cylinder(4.0, 12.0, position=(35, 5, 6.0)), (31, 1, 0), (39, 9, 12), math.pi * 16.0 * 12.0),
     ('cone base radius 6, height 12', cone(6.0, 12.0, position=(50, 5, 0)), (43, -2, 0), (57, 12, 30), math.pi * 36.0 * 12.0 / 3.0),
     ('torus 8 and 2 (the ring of radius 8, the tube of radius 2)', torus(8.0, 2.0, position=(72, 5, 5)), (62, -5, 2), (82, 15, 8), 2.0 * math.pi ** 2 * 8.0 * 4.0),
 ]

@@ -313,6 +313,13 @@ class Shape:
         from fieldes.stdlib import points
         return points.displayed(self)
 
+    def distance(self, resolution=None):
+        ''' The signed distance from every point to the surface of this body (negative inside): its exact distance, whatever made the body -- a union, a smoothing, a blend and the rest have fields
+            that are bounds or sums, and this is the value (H190: "ALL BODIES ARE ALWAYS TRUE DISTANCE FIELDS ... as a part of the type itself").  See fieldes.stdlib.fields.exact_of.  What
+            is drawn is the body's own field, whose surface is the same '''
+        from fieldes.stdlib.fields import exact_of
+        return exact_of(self, resolution)
+
     def __call__(self, x, y, z):
         ''' The value of this field at a point.
 
@@ -423,6 +430,86 @@ def shape(f):
     '''
     return f(Shape.X(), Shape.Y(), Shape.Z())
 
+
+################################################################################
+# A BODY
+
+def _pure(other):
+    ''' Whether `other` is a number or a body: what arithmetic on a body is still a body with (a body with a field is a field: a value at every point, which is not a body) '''
+    if isinstance(other, numbers.Number):
+        return True
+    return isinstance(other, Shape) and (other._kind == 'const' or type(other) is Body)
+
+
+def become_body(out):
+    ''' `out`, a shape that something has just made, is a BODY when it is one -- of the kind 'solid' or 'lattice' (a 2D shape is drawn flat and a field, a point, a curve, a surface are what they are):
+        it is made one in place, the same object. See Body '''
+    if type(out) is Shape and out._kind in (None, 'solid', 'lattice'):
+        from fieldes.kinds import kind_of
+        if kind_of(out) in ('solid', 'lattice'):
+            out.__class__ = Body
+    return out
+
+
+class Body(Shape):
+    ''' A BODY: a 3D shape.  What makes it a different type from a field is its FIELD -- a field is any value at every point of space (a ramp, a stress, noise); the field of a body is always
+        the TRUE SIGNED DISTANCE to its surface (negative inside, 0 on the surface, the distance to the surface outside), whatever made the body: a box, a union, a difference with a blend, a smoothing,
+        an offset, a scale that is not the same in every direction, an optimized part, an import (the user, 2026-11-12 and 2026-11-13: "A Field can be anything arbitrary, a body is always TRUE
+        SIGNED DISTANCE").  The type keeps it, and no operation can give a body that is not a distance: everything the library returns that is a body is a Body, made so by one funnel at the
+        library's door (fieldes.stdlib.body_law), not by each operation.
+
+        `body.field` is that distance, and it is what every reading of a body is: `body(x, y, z)`, `evaluate`, `sample_grid`, `field_range`, the field viewers, and a function that makes a field from
+        a body (`distance_to_surface`, `normal_field`, `wall_thickness` ...).  The distance has no formula for the inside of a union, a difference, a smoothing (the nearest point of the surface may
+        lie on a crease: a search), and the numbers of its var()s change without a run of the script, so `field` is made from the surface of the body, finely meshed, and the kernel's exact
+        distance to those triangles -- made the first time something reads it, for the numbers the body has then, and kept (see fields.exact_of).  `ptr`, the tree of the body as it is made,
+        is what is MESHED (the viewport, the exports, the analyses) and what the library builds the next body from: its zero set is the surface, which is all a drawing and a boolean need, and
+        it is the same surface as the zero set of `field`. '''
+
+    @property
+    def field(self):
+        ''' The field of this body: its signed distance (see the class).  Made the first time it is read, for the numbers the script's var()s have then, and kept with the body '''
+        from fieldes.stdlib.fields import exact_of, _vars_key
+        key = _vars_key()
+        memo = self.__dict__.get('_field_memo')
+        if memo is not None and memo[0] == self.ptr and memo[1] == key:          # (the tree too: a copy of the attributes of another body, with a tree of its own, is not read from the other's memo)
+            return memo[2]
+        field = exact_of(self)
+        self._field_memo = (self.ptr, key, field)
+        return field
+
+    def __call__(self, x, y, z):
+        if all(isinstance(c, numbers.Number) for c in (x, y, z)):
+            return lib.libfive_tree_eval_f(self.field.ptr, libfive_vec3_t(x, y, z))
+        return become_body(Shape.__call__(self, x, y, z))
+
+    def __neg__(self):
+        # (the complement of a body: its distance is the negative of the body's -- exact, and it needs no extent, which the complement of a body has none of)
+        out = become_body(self._unary('neg'))
+        if type(out) is Body:
+            from fieldes.stdlib.transforms import _lazy_once
+            out._distance_of = _lazy_once(lambda: Shape._unary(self.field, 'neg'))
+        return out
+
+    def remap(self, x_, y_, z_):
+        return become_body(Shape.remap(self, x_, y_, z_))
+
+
+def _arithmetic_of_a_body(name):
+    base = getattr(Shape, name)
+
+    def method(self, other):
+        out = base(self, other)
+        if _pure(other):
+            become_body(out)
+        return out
+    method.__name__ = name
+    return method
+
+
+# (a body and a number or a body, by arithmetic -- an offset, a scaled field, a union, an intersection -- is a body: its field is its own distance)
+for _name in ('__add__', '__radd__', '__sub__', '__rsub__', '__mul__', '__rmul__', '__truediv__', '__rtruediv__', 'min', 'max'):
+    setattr(Body, _name, _arithmetic_of_a_body(_name))
+
 # Hotpatch every transform (which take a shape as their first arguments)
 # into the Shape as methods, to make things easier to chain
 import fieldes.stdlib.transforms as _transforms
@@ -438,3 +525,7 @@ for _name in ['union', 'intersection', 'difference', 'offset']:
 # What those functions do with a shape that has an excluded region (see fieldes.stdlib.excluded)
 from fieldes.stdlib import excluded as _excluded
 _excluded.install_methods()
+
+# ... and for a Body, the methods that are the library's functions are under the body law (see fieldes.stdlib.body_law)
+from fieldes.stdlib import body_law as _body_law
+_body_law.install_methods()

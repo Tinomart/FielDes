@@ -81,8 +81,24 @@ def compare(part, result, lo, hi, n=200000, seed=3):
                 removed.append((p, x))
         elif y <= 0 and x > 1e-3:           # (the result is grown by a hair of a few microns everywhere: a point that close to the part's surface is not material that was added)
             added.append((p, x))
-    return {'added': added, 'removed': removed, 'pts': pts, 'a': a, 'b': b, 'n': n, 'box': box,
+    return {'added': added, 'removed': removed, 'pts': pts, 'a': a, 'b': b, 'n': n, 'box': box, 'part': part,
             'vol_added': box * len(added) / n, 'vol_removed': box * len(removed) / n, 'vol_part': box * inside / n}
+
+
+def surface_distances(part, points, step=0.02):
+    ''' How far each point is from the surface of the part: the part's own field over its slope there (the field is read at the point and a step either side of it on the three axes).  A box's
+        field is a distance, and the field of a part made of boxes need not be: a fin 0.5 mm thick was -5 inside and +4.7 at 0.04 mm outside it (H200, 2026-11-14), and a point of the skin that
+        the tool put on the fin read as "4.7 mm from the part", a piece floating beside it '''
+    probe = []
+    for p in points:
+        probe.extend([p, (p[0] + step, p[1], p[2]), (p[0] - step, p[1], p[2]), (p[0], p[1] + step, p[2]), (p[0], p[1] - step, p[2]), (p[0], p[1], p[2] + step), (p[0], p[1], p[2] - step)])
+    v = evaluate(part, probe)
+    out = []
+    for i in range(len(points)):
+        w = v[7 * i:7 * i + 7]
+        slope = math.sqrt(((w[1] - w[2]) / (2 * step)) ** 2 + ((w[3] - w[4]) / (2 * step)) ** 2 + ((w[5] - w[6]) / (2 * step)) ** 2)
+        out.append(abs(w[0]) / max(slope, 1e-6))
+    return out
 
 
 def changed_volumes(part, result, lo, hi, n_coarse=150000, n_dense=150000, cell=1.5, seed=5):
@@ -148,6 +164,9 @@ def floating_clusters(cmp, cell=1.5, touch=0.6):
                             seen.add(n)
                             stack.append(n)
         if min(a for _, a in members) > touch:
+            # (the part's field is not always a distance: a cluster that its field puts far from the part is measured again, as the field over its slope)
+            if cmp.get('part') is not None and min(surface_distances(cmp['part'], [p for p, _ in members][:60])) <= touch:
+                continue
             out.append([p for p, _ in members])
     return out
 
@@ -177,7 +196,7 @@ def floating_dense(part, result, lo, hi, n=30000, cell=1.5, touch=0.6, per_cell=
     a = evaluate(part, pts)
     b = evaluate(result, pts)
     added = [(p, x) for p, x, y in zip(pts, a, b) if y <= 0 and x > 1e-3]
-    return floating_clusters({'added': added}, cell=cell, touch=touch)
+    return floating_clusters({'added': added, 'part': part}, cell=cell, touch=touch)
 
 
 def changed_far(cmp, far):

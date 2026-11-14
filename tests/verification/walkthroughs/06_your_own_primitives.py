@@ -25,7 +25,7 @@ size = 10
 
 
 def post(r, h):
-    return cylinder(r, h, position=(size * 2, 10, 2))
+    return cylinder(r, h, position=(size * 2, 10, 2 + h / 2))
 
 
 plate = box((size * 4, 20, 2), position=((size * 4) / 2, 10, 1))

@@ -216,10 +216,47 @@ def _placed_box(box, centre, move, rotate, scale):
     hi = [c[i] + (float(box[1][i]) - c[i]) * s[i] for i in range(3)]
     lo, hi = [min(lo[i], hi[i]) for i in range(3)], [max(lo[i], hi[i]) for i in range(3)]
     if any(abs(a) > 1e-12 for a in r):
-        reach = max(math.sqrt(sum((corner[i] - c[i]) ** 2 for i in range(3)))
-                    for corner in ((x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])))
-        lo, hi = [c[i] - reach for i in range(3)], [c[i] + reach for i in range(3)]
+        # (the box stays centred on the pivot, as the box of the circumscribing sphere was -- the middle of a placed part's box is where its gizmo and its next pivot are --, with the half size it needs along EACH axis: the
+        # corners of the box the part had, turned about the pivot.  Whatever the order and the sense the turn is made in -- x, y, z or z, y, x, forwards or backwards: all of them are taken, and the largest -- the part
+        # lies within.  A plate turned about z keeps its height: the circumscribing cube of a plate 20 x 10 x 6 was 23 high, over -8.6 .. 14.6, and the grid of the hexahedra laid its planes mid-cube on the plate's faces)
+        corners = [(x - c[0], y - c[1], z - c[2]) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
+        half = [0.0, 0.0, 0.0]
+        for M in _turns(r):
+            for v in corners:
+                for i in range(3):
+                    half[i] = max(half[i], abs(M[i][0] * v[0] + M[i][1] * v[1] + M[i][2] * v[2]))
+        reach = max(math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2) for v in corners)
+        half = [min(h, reach) for h in half]
+        lo, hi = [c[i] - half[i] for i in range(3)], [c[i] + half[i] for i in range(3)]
     return tuple(tuple(v[i] + m[i] for i in range(3)) for v in (lo, hi))
+
+
+def _turns(r):
+    ''' The turns of `r` (degrees about x, y, z) as matrices, in every order and sense that a turn about the three axes may be made in: the six orders of the three axes, each forwards and backwards.  A box that holds the
+        part under all of them holds it under the one the placement makes, so the box does not depend on which that is.  About one axis alone they are the same turn (and a box symmetric about the pivot has the same half sizes under the turn forwards and backwards) '''
+    ax, ay, az = (math.radians(float(a)) for a in r)
+
+    def rx(a):
+        c, s = math.cos(a), math.sin(a)
+        return ((1.0, 0.0, 0.0), (0.0, c, -s), (0.0, s, c))
+
+    def ry(a):
+        c, s = math.cos(a), math.sin(a)
+        return ((c, 0.0, s), (0.0, 1.0, 0.0), (-s, 0.0, c))
+
+    def rz(a):
+        c, s = math.cos(a), math.sin(a)
+        return ((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0))
+
+    def mul(A, B):
+        return tuple(tuple(sum(A[i][k] * B[k][j] for k in range(3)) for j in range(3)) for i in range(3))
+    import itertools
+    out = []
+    for sign in (1.0, -1.0):
+        turns = (rx(sign * ax), ry(sign * ay), rz(sign * az))
+        for order in itertools.permutations(turns):
+            out.append(mul(order[0], mul(order[1], order[2])))
+    return out
 
 
 def _placed_ring_guard(rotate, move):
@@ -309,13 +346,7 @@ def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None,
     if getattr(shape, '_outline_gizmo', False) and about is None and all(_is_number(v) for v in tuple(move) + tuple(rotate) + tuple(scale)) \
             and all(v == 0 for v in tuple(move) + tuple(rotate)) and all(v == 1 for v in scale):
         return _outlined(shape, mode)
-    if getattr(shape, '_linked', False):
-        # A linked copy is only moved and rotated: its shape is its original's.  A scale of numbers other than 1 would make it another shape -- refused; scale numbers
-        # that are var()s (an older gizmo line, or one written before the copy was known to be linked) mean 1, and are not offered to be dragged
-        if any(_is_number(s) and s != 1 for s in scale):
-            raise ValueError('a linked copy (instance) can only be moved and rotated: its shape is its original\'s, so it is not scaled.  '
-                             'Leave scale= out; a copy that has a shape of its own is a copy of the statements (Shift+D in FielDes)')
-        scale = (1, 1, 1)
+    # (a linked copy has a scale of its own like any other model: H174, the user, 2026-11-12, "I also want scale to follow that exclusion rule.  So all of the gizmo operations are completely independent for clones")
     if all(_is_number(s) and s == 1 for s in scale) and callable(getattr(shape, '_remake', None)) and getattr(shape, 'points', None):
         # What is made of points -- a profile, a polyline, a spline: it can make itself again through other points -- is placed through them, whatever the numbers are
         return _placed_outline(shape, move, rotate, mode, about)

@@ -11,7 +11,7 @@ Your own solvers: write the equations of a problem in Python, and FielDes meshes
     result                                                  # displayed: the temperature of the plate, with the elements behind it (the Elements button)
     print(result.max_temperature)
 
-`solve(name, part, element_size=None, **parameters)` meshes `part` with tetrahedra (`mesh_volume`, `element_size` as there; or give it a mesh you made), makes a `Problem` of the
+`solve(name, part, element_size=None, **parameters)` meshes `part` with tetrahedra (`mesh_tet4`, `element_size` as there; or give it a mesh you made), makes a `Problem` of the
 mesh and calls the solver `name` with the problem and the parameters.  The solver gives back the fields it found -- one number at every node of the mesh -- and, if it likes,
 some numbers.  The result is displayed like the result of any analysis: coloured by the field, with the mesh behind it.
 
@@ -300,7 +300,7 @@ def solver_names():
 
 
 def solve(name, part, element_size=None, **parameters):
-    ''' Runs the solver `name` on `part` (see the module): the part is meshed with tetrahedra -- `element_size` as in mesh_volume, or give `part` as a mesh you made -- and the
+    ''' Runs the solver `name` on `part` (see the module): the part is meshed with tetrahedra -- `element_size` as in mesh_tet4, or give `part` as a mesh you made -- and the
         solver is called with the problem and `parameters`.  Returns a SolverResult '''
     errors = _load_user()
     entry = _REGISTRY.get(name)
@@ -312,7 +312,7 @@ def solve(name, part, element_size=None, **parameters):
     if isinstance(part, meshing.Mesh):
         mesh = part
     else:
-        mesh = meshing.mesh_volume(part, element_size=element_size)
+        mesh = meshing.mesh_tet4(part, element_size=element_size)
     if not mesh.cells.get('tet4'):
         raise ValueError('solve: the mesh has no tetrahedra: solvers are given the tetrahedra of a volume mesh')
     problem = Problem(mesh, part if not isinstance(part, meshing.Mesh) else part.body, parameters)

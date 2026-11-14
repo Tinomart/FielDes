@@ -63,6 +63,7 @@ from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape, field_shape
 from fieldes.stdlib.element_size import default_element_size
+from fieldes.stdlib.meshing import locking_note
 from fieldes.stdlib import sim_mesh as _sim_mesh
 from fieldes.stdlib.excluded import keep_regions, carry_locks
 from fieldes.stdlib.content_cache import Uncacheable, cache_for, problem_key, shape_key, value_key
@@ -86,7 +87,7 @@ inf = math.inf          # (`displacement=(0, 0, inf)`: see fixed)
 
 __all__ = ['Material', 'steel', 'stainless_steel', 'aluminium', 'titanium',
            'pla', 'petg', 'abs_plastic', 'nylon',
-           'fixed', 'inf', 'force', 'gravity', 'thermal_expansion', 'static_analysis', 'colored',
+           'fixed', 'inf', 'force', 'pressure', 'gravity', 'thermal_expansion', 'static_analysis', 'colored',
            'modal_analysis', 'ModalResult', 'Mode',
            'FeaError', 'topology_optimization', 'TopologyResult']
 
@@ -191,12 +192,33 @@ class _Condition:
 
 class _Support(_Condition):
     _call = 'fixed(...)'
+    rotation = None             # (H192: a support that restrains no turning has no entry of its own for it -- the key of a result that was saved before there was a rotation restraint is the same)
 
-    def __init__(self, region, displacement):
+    def __init__(self, region, displacement, rotation=None):
         self.region = region
         # (dx, dy, dz) in mm: where the part is held in each direction -- 0 does not let it move, `inf` leaves the direction free, another number moves the part there by that much)
         self.displacement = displacement
         self.axes = tuple(not math.isinf(d) for d in displacement)          # (the directions that are held)
+        # (rx, ry, rz) in degrees: how the region may TURN about each axis through its centre -- 0 does not let it turn, `inf` leaves it free (the default), another number turns it by that much)
+        if rotation is not None and any(not math.isinf(r) for r in rotation):
+            self.rotation = rotation
+
+    @property
+    def turns(self):
+        ''' The axes the turning of the region is restrained about '''
+        return tuple(not math.isinf(r) for r in self.rotation) if self.rotation is not None else (False, False, False)
+
+
+def _support_turn_args(s):
+    ''' What the kernel is given for the turning a support restrains: (x, y, z), 1 for an axis whose turn is held, then the angles (radians) it is held at '''
+    return tuple(int(t) for t in s.turns) + tuple(math.radians(float(r)) if t else 0.0 for t, r in zip(s.turns, s.rotation))
+
+
+def _only_static_tet_turns(supports, what):
+    ''' A rotation restraint is for a static analysis on linear tetrahedra: the solver holds the turn of a region with a stiff spring on its nodes.  Any other analysis refuses it, with the way out '''
+    if any(isinstance(s, _Support) and s.rotation is not None for s in supports):
+        raise FeaError("{}: fixed(..., rotation=...) restrains the turning of a support in a static analysis on linear tetrahedra (element='tet'); this analysis holds the part node by node "
+                       "(displacement=...)".format(what))
 
 
 def _support_args(s):
@@ -206,6 +228,7 @@ def _support_args(s):
 
 def _support_flags(s, what):
     ''' The held directions of a support, for a solver that cannot impose a displacement (the voxel one): a support that holds at another number than 0 is refused '''
+    _only_static_tet_turns([s], what)
     if any(held and d != 0 for held, d in zip(s.axes, s.displacement)):
         raise FeaError("{}: fixed(..., displacement=...) imposes a displacement only on tetrahedra (element='tet' or 'tet10'): this analysis holds a part still or leaves it free".format(what))
     return tuple(int(a) for a in s.axes)
@@ -216,6 +239,13 @@ class _Force(_Condition):
 
     def __init__(self, region, vector, profile=None):
         self.region, self.vector, self.profile = region, vector, profile
+
+
+class _Pressure(_Condition):
+    _call = 'pressure(...)'
+
+    def __init__(self, region, value, profile=None):
+        self.region, self.value, self.profile = region, value, profile
 
 
 class _Gravity(_Condition):
@@ -260,6 +290,37 @@ class FieldResult:
 
     def _as_field(self):
         raise TypeError('{} has no field of its own'.format(type(self).__name__))
+
+    @property
+    def _bounds(self):
+        ''' The box of the result's field (H189): what is made of a result -- a union with it, a smoothing of it -- has the box of what it is made of, and the render region and the resolution of
+            a body come from that box.  `__getattr__` below refuses every private name, so a result had no box of its own and every body made of an optimisation (union_1, smooth_2, difference_3,
+            union_2 of his bowl) had none: it was meshed over the scene's region and drawn again whenever the region changed '''
+        own = self.__dict__.get('_own_bounds')
+        if own is not None:
+            return own
+        try:
+            box = getattr(self._as_field(), '_bounds', None)
+        except Exception:
+            box = None
+        if box is None:
+            # (H195: the stress field of an analysis has no box, but the result is drawn on its PART: the box of the part is the box of the result, and the render region is fitted to it like to a body.  Without it
+            # an analysis shown alone was cut off by the region of the script, and the region never grew to hold it)
+            for name in ('shape', 'part', 'body'):
+                owner = self.__dict__.get(name)
+                if owner is None:
+                    continue
+                box = getattr(owner, '_bounds', None)
+                if box is not None:
+                    break
+        if box is None:
+            raise AttributeError('_bounds')
+        return box
+
+    @_bounds.setter
+    def _bounds(self, value):
+        # (the results of a flow and of the manufacturing tools say their own box: `result._bounds = (lo, hi)`)
+        self.__dict__['_own_bounds'] = value
 
     @property
     def fields(self):
@@ -309,7 +370,7 @@ def _register_slots(slots):
 
 
 _register_slots({'supports': ((_Support,), 'fixed(...) items'),
-                 'loads': ((_Force, _Gravity, _Thermal), 'force(...), gravity(...) and thermal_expansion(...) items')})
+                 'loads': ((_Force, _Pressure, _Gravity, _Thermal), 'force(...), pressure(...), gravity(...) and thermal_expansion(...) items')})
 
 
 _optimization_slot = [False]
@@ -455,7 +516,7 @@ def _regions(args, region, what, body=None):
     return _united(found), tuple(args[i:])
 
 
-def fixed(*regions, region=None, body=None, displacement=(0.0, 0.0, 0.0), **removed):
+def fixed(*regions, region=None, body=None, displacement=(0.0, 0.0, 0.0), rotation=(math.inf, math.inf, math.inf), **removed):
     ''' A support: the part is held wherever it lies inside `region` (a Shape: a body, a field, a selected surface).  Any number
         of regions can be given, one argument after the other -- fixed(a, b) holds the part where either is.
 
@@ -466,7 +527,13 @@ def fixed(*regions, region=None, body=None, displacement=(0.0, 0.0, 0.0), **remo
                       0 (the default, (0, 0, 0)) lets the part not move there: it is fixed.  `inf` (`math.inf`, `float('inf')`: `from fieldes import *` has it as
                       `inf`) leaves that direction free, so `displacement=(0, 0, inf)` is a support the part slides along z on.  Any other number is a
                       displacement the support imposes: `(0, 0, -0.5)` pushes the part 0.5 mm down where it is held (a static analysis on tetrahedra
-                      solves for the rest of it; a modal analysis holds it still, a topology optimization refuses it). '''
+                      solves for the rest of it; a modal analysis holds it still, a topology optimization refuses it).
+        rotation      (rx, ry, rz) in degrees, how the region of the support may TURN about the x, y and z axes through its centre -- the same input as the displacement: 0 does not
+                      let the region turn about that axis, `inf` (the default, `(inf, inf, inf)`) leaves it free, and another number turns it by that many degrees.  A tetrahedron
+                      has no rotation of its own, so the turn of a region is the mean turn of the nodes in it, held by a spring a thousand times stiffer than the nodes are
+                      against turning.  A region that holds the part direction by direction already holds the turn (`displacement=(0, 0, 0)` leaves nothing to turn with), so the
+                      rotation is for the supports that leave directions free: `fixed(face, displacement=(inf, inf, inf), rotation=(0, 0, 0))` lets a face slide and keeps it
+                      from turning.  For a static analysis on linear tetrahedra (element='tet'); the others refuse it. '''
     if removed:
         raise TypeError("fixed(): {} {} gone -- a direction is left free by an infinite displacement: fixed(region, displacement=(0, 0, inf)) lets the part slide along z".format(
             ', '.join(k + '=' for k in sorted(removed)), 'is' if len(removed) == 1 else 'are'))
@@ -481,7 +548,13 @@ def fixed(*regions, region=None, body=None, displacement=(0.0, 0.0, 0.0), **remo
         raise TypeError('fixed(): displacement is three numbers (dx, dy, dz), mm: 0 holds the part, inf leaves the direction free') from None
     if len(d) != 3 or any(isinstance(v, (bool, Shape)) or not isinstance(v, (int, float)) or math.isnan(v) for v in d):
         raise TypeError('fixed(): displacement is three numbers (dx, dy, dz), mm: 0 holds the part, inf leaves the direction free (True / False flags for the directions are gone)')
-    return _Support(found, tuple(float(v) for v in d))
+    try:
+        r = tuple(rotation)
+    except TypeError:
+        raise TypeError('fixed(): rotation is three numbers (rx, ry, rz), degrees: 0 does not let the region turn about that axis, inf leaves it free') from None
+    if len(r) != 3 or any(isinstance(v, (bool, Shape)) or not isinstance(v, (int, float)) or math.isnan(v) for v in r):
+        raise TypeError('fixed(): rotation is three numbers (rx, ry, rz), degrees: 0 does not let the region turn about that axis, inf leaves it free')
+    return _Support(found, tuple(float(v) for v in d), tuple(float(v) for v in r))
 
 fixed._required = ('region',)
 
@@ -519,6 +592,34 @@ def force(*args, region=None, body=None, vector=None, profile=None):
 force._required = ('region', 'vector')
 
 
+def pressure(*args, region=None, body=None, value=None, profile=None):
+    ''' A load: a pressure (MPa) at right angles on every point of the part's surface inside `region`.  It takes a SURFACE always: the surface of the part
+        that the region selects -- a selected surface, or a body or a field that the surface of the part lies in.  pressure(region, 2.0) and pressure(region=region, value=2.0) are the same.
+        Any number of regions can be given, one argument after the other, before the value.
+
+        Unlike `force()`, whose total is one vector spread evenly over the region, a pressure follows the surface: on a curved surface every point is pushed along its own normal.
+
+        region   where the part is loaded: a selected surface, a body or a field (the same as the first argument)
+        body     the body the load is on, when the regions are bodies that choose WHERE on it: `pressure(pad, 2.0, body=bracket)` loads the bracket's surface where it meets the pad
+        value    the pressure in MPa (N/mm^2): positive PRESSES INTO the part (the way a fluid presses on the wall that holds it), negative PULLS on it (a traction, a tension on the surface)
+        profile  a field: the pressure is the value times the field there (not negative), a pressure that is not the same everywhere.  (Tetrahedral elements.) '''
+    found, rest = _regions(args, region, 'pressure()', body)
+    if value is not None:
+        if rest:
+            raise TypeError('pressure(): the pressure is given once -- as the argument after the regions, or as value=')
+        rest = (value,)
+    if len(rest) != 1:
+        raise TypeError('pressure(region, ..., value): the pressure is one number (MPa), after the regions it acts on')
+    p = rest[0]
+    if isinstance(p, (Shape, bool)) or not isinstance(p, (int, float)) or p != p:
+        raise TypeError('pressure(): the pressure is a number (MPa); to make it differ over the surface give profile=<a field>')
+    if profile is not None and not isinstance(profile, Shape):
+        raise TypeError('pressure(): profile is a field (a Shape)')
+    return _Pressure(found, float(p), profile)
+
+pressure._required = ('region', 'value')
+
+
 def gravity(g=(0.0, 0.0, -9810.0)):
     ''' The part's own weight: acceleration in mm/s^2 (default: 1 g down
         along -Z), with the material's density '''
@@ -543,7 +644,7 @@ def _density_given(material):
 def _fields_in_use(material, loads=()):
     ''' The names of the fields a material and loads are made with (the voxel elements take numbers only) '''
     used = [a for a in ('E', 'density', 'conductivity', 'expansion') if isinstance(getattr(material, a, None), Shape)]
-    if any(getattr(l, 'profile', None) is not None for l in loads if isinstance(l, _Force)):
+    if any(getattr(l, 'profile', None) is not None for l in loads if isinstance(l, (_Force, _Pressure))):
         used.append('a load profile')
     return used
 
@@ -581,8 +682,18 @@ def _add_force(ptr, l, case=None):
         lib.libfive_tetfea_add_force_case(ptr, l.region.ptr, *l.vector, case)
 
 
+def _add_pressure(ptr, l, case=None):
+    ''' A pressure on a tetrahedral problem, with its profile if it has one '''
+    if getattr(lib, 'libfive_tetfea_add_pressure', None) is None:
+        raise FeaError('this FielDes library is too old for pressure(...)')
+    if l.profile is not None:
+        lib.libfive_tetfea_add_pressure_profile(ptr, l.region.ptr, l.value, 0 if case is None else case, l.profile.ptr)
+    else:
+        lib.libfive_tetfea_add_pressure(ptr, l.region.ptr, l.value, 0 if case is None else case)
+
+
 # FielDes draws at most this many elements' values a field (more are not drawn)
-from fieldes.stdlib.element_mesh import MAX_DRAWN as _MAX_DRAWN_VALUES, element_mesh as _element_mesh, elements_note as _elements_note
+from fieldes.stdlib.element_mesh import element_mesh as _element_mesh, elements_note as _elements_note
 
 from fieldes.stdlib.analysis_results import result_field as _result_field      # (every field an analysis calculates is stored as an analysis result: a field that knows which result of which analysis it is)
 
@@ -757,7 +868,7 @@ class Result(FieldResult):
         if fn is not None:
             p = self._handle.ptr
             n = int(fn(p, 0, None, 0))
-            if 0 < n <= _MAX_DRAWN_VALUES:
+            if n > 0:
                 values = []
                 for i in range(len(_FIELDS)):
                     buf = (ctypes.c_float * n)()
@@ -812,8 +923,8 @@ def _bounds(shape):
         hit, found = memory.get(key)
         if hit:
             return found
-    from fieldes.stdlib.fields import find_extent       # (searched with the script's var() numbers)
-    found = find_extent(shape)
+    from fieldes.stdlib.fields import tight_extent      # (searched with the script's var() numbers; the flat faces of the box put on the faces of the part, so that the mesh can be fitted to them: H202)
+    found = tight_extent(shape)
     if found is None:
         raise FeaError('could not find the extent of the part: pass bounds=(xyz_min, xyz_max)')
     if key is not None:
@@ -821,10 +932,37 @@ def _bounds(shape):
     return found
 
 
+def _fitted_voxel_size(lo, hi, h):
+    ''' The size of the voxels adjusted to fit the part (H202, the user, 2026-11-13: "If the mesh cannot fit the exact element size, then the element size are adjusted TO FIT AS BEST AS POSSIBLE").
+        The voxels are cubes of one size along the three axes, so one size is chosen for all three: of the sizes that fit one of the extents of the part with a whole number of voxels (and the
+        ones next to them), within a quarter of `h`, the one with the least of the part left in a row of voxels that the part's far face cuts, over the three axes together, and the least change
+        of the size (a part 100 x 20 x 10 at 4 mm: 3.33 mm, which is 30, 6 and 3 voxels and none cut, where 4 mm leaves a row of the 3 that is half empty).  `h` itself when nothing fits better '''
+    ext = [float(hi[i]) - float(lo[i]) for i in range(3)]
+    if not all(e > 0.0 for e in ext):
+        return h
+    candidates = [h]
+    for e in ext:
+        n = max(1, int(math.floor(e / h + 0.5)))
+        candidates.extend(e / m for m in (n - 1, n, n + 1) if m >= 1)
+    best, best_score = h, None
+    for c in candidates:
+        if not 0.75 * h <= c <= 1.25 * h:
+            continue
+        misfit = 0.0
+        for e in ext:
+            cells = e / c
+            frac = cells - math.floor(cells + 1e-9)
+            misfit += min(frac, 1.0 - frac) * c
+        score = round(misfit + 0.5 * abs(c - h), 9)         # (what is left over, and half of what the size was moved: a size that fits and is far off is not better than one a little off that leaves a little)
+        if best_score is None or score < best_score:
+            best, best_score = c, score
+    return best
+
+
 @_with_conditions
 def static_analysis(shape, supports, loads, material=steel, element_size=None,
-                    bounds=None, tolerance=1e-6, cache=True, element='tet'):
-    ''' Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_volume) can take the place of `shape`: the analysis then solves on its tetrahedra as they
+                    bounds=None, tolerance=1e-6, cache=True, element='tet', surface_fit='balanced'):
+    ''' Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_tet4) can take the place of `shape`: the analysis then solves on its tetrahedra as they
         are, and `element_size` is not given (see docs/analysis.md, A mesh of your own).
 
         supports   what holds the part: fixed(...) items (at least one), one or a list
@@ -835,7 +973,7 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
                    side over 60; over 30 with element='tet10' -- or larger, for a
                    solid part that would have more than a million tetrahedra
                    (250 000 with 'tet10'): the size at which it has that many.
-                   A size that is given is used as it is)
+                   A size that is given is a target: it is adjusted, as little as it can be, to fit the part, so that the elements are as even as they can be)
         element    'tet' (default: tetrahedra that follow the part's surface),
                    'tet10' (the same with 10 nodes: quadratic elements, about
                    three times the element size for the same accuracy),
@@ -843,12 +981,18 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
                    documentation
         bounds     region to analyse, ((x0, y0, z0), (x1, y1, z1)); found
                    automatically if not given
+        surface_fit    what the mesh gives up where the exact surface and good elements pull against each other (a sharp edge the lattice cuts
+                   across): 'balanced' (the default), 'surface' (more surface conformity: nodes go onto edges even where the elements get poorer, the skin
+                   stays nearer the exact surface), 'elements' (fewer odd elements: a move that would leave a poor element is refused, the skin may stand
+                   further off the surface to remove a sliver).  See docs/analysis.md, Surface or elements
 
         Returns a Result (see its fields).  Raises FeaError if the problem
         can't be solved as given (no support touching the part, supports
         that don't hold it in place, ...). '''
     max_iterations = 20000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     shape, mesh = _sim_mesh.part(shape, 'static_analysis', element_size, element)
+    surface_fit = _sim_mesh.surface_fit_value(surface_fit, 'static_analysis')
+    _sim_mesh.check_fit_with_mesh(mesh, surface_fit, 'static_analysis')
     if not isinstance(shape, Shape):
         raise TypeError('static_analysis: the part must be a Shape')
     if _is_cases(loads):
@@ -862,13 +1006,14 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
     ekey = problem_key('static', shape=shape, part_bounds=getattr(shape, '_bounds', None),
                        supports=supports, loads=loads, material=material, element_size=element_size,
                        bounds=bounds, max_iterations=max_iterations, tolerance=tolerance,
-                       element=element, **_sim_mesh.key(mesh)) if cache else None
+                       element=element, **_sim_mesh.fit_key(surface_fit), **_sim_mesh.key(mesh)) if cache else None
     if ekey is not None and ekey in _early:
         _early.move_to_end(ekey)
         found = _early[ekey]
         return found if found.shape is shape else _copy_for(found, shape)
-    result = _static_analysis_solve(shape, supports, loads, material, element_size, bounds,
-                                    max_iterations, tolerance, cache, element, ekey, mesh)
+    with _sim_mesh.surface_fit_scope(surface_fit):
+        result = _static_analysis_solve(shape, supports, loads, material, element_size, bounds,
+                                        max_iterations, tolerance, cache, element, ekey, mesh)
     if ekey is not None:
         _early[ekey] = result
         while len(_early) > 8:
@@ -884,18 +1029,28 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
         element_size = mesh.size            # (the elements are the mesh's own)
     if element_size is None:
         if element in ('tet', 'tet10'):
-            element_size = default_element_size(shape, lo, hi, 30.0 if element == 'tet10' else 60.0, 250000 if element == 'tet10' else 1000000)
+            thin_notes, walls = [], {}
+            element_size = default_element_size(shape, lo, hi, 30.0 if element == 'tet10' else 60.0, 250000 if element == 'tet10' else 1000000, notes=thin_notes, quadratic=element == 'tet10', walls=walls)
+            if element == 'tet':
+                # (H193: a thin wall with a few linear tetrahedra across it is too stiff in bending, a cantilever plate by about 20 %, and nothing in the result says so: the advice is printed)
+                advice = thin_notes[0] if thin_notes else locking_note(walls.get('wall'), element_size)
+                if advice:
+                    print('static_analysis: ' + advice)
         else:
             element_size = max(size) / 60.0
     element_size = float(element_size)
     if not element_size > 0:
         raise FeaError('element_size must be positive')
+    if mesh is None and element not in ('tet', 'tet10'):
+        element_size = _fitted_voxel_size(lo, hi, element_size)
     # The grid starts exactly at the part's bounds: faces lying there (and
     # supports / loads placed on them) then coincide with element faces and
     # nodes instead of cutting elements in half, whose stiffness, smeared
     # over the whole cube, over-stiffened bending (a cantilever read ~15 %
     # too stiff from that alone)
     pad = 1e-6 * max(max(size), 1e-9)
+    if element in ('tet', 'tet10'):
+        pad = 0.0                   # (the lattice of the tetrahedra is fitted to the region: its faces on the part's faces exactly, not a hair off them -- H202)
     region = libfive_region_t()
     for i, axis in enumerate((region.X, region.Y, region.Z)):
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
@@ -918,6 +1073,8 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
     for l in loads:
         if isinstance(l, _Force):
             lib.libfive_fea_add_force(ptr, l.region.ptr, *l.vector)
+        elif isinstance(l, _Pressure):
+            raise FeaError("static_analysis: pressure(...) loads a part meshed with tetrahedra (element='tet' or 'tet10'): this analysis takes forces")
         elif isinstance(l, _Gravity):
             if not material.density > 0:
                 raise FeaError('gravity needs a material with a density')
@@ -1036,7 +1193,7 @@ class TetResult(Result):
         lib.libfive_tetfea_counts(p, counts)
         nv, nt, nf = counts[0], counts[1], counts[2]
         full = None
-        if 0 < nt <= _MAX_DRAWN_VALUES:
+        if nt > 0:
             verts = (ctypes.c_float * (3 * nv))()
             tets = (ctypes.c_int32 * (4 * nt))()
             faces = (ctypes.c_int32 * (3 * nf))()
@@ -1090,9 +1247,17 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
         if not isinstance(s, _Support):
             raise TypeError('supports must be fixed(...) items')
         lib.libfive_tetfea_add_support(ptr, s.region.ptr, *_support_args(s))
+        if s.rotation is not None:
+            if element != 'tet':
+                _only_static_tet_turns([s], 'static_analysis')
+            if getattr(lib, 'libfive_tetfea_add_turn', None) is None:
+                raise FeaError("this FielDes library is too old for a rotation restraint")
+            lib.libfive_tetfea_add_turn(ptr, s.region.ptr, *_support_turn_args(s))
     for l in loads:
         if isinstance(l, _Force):
             _add_force(ptr, l)
+        elif isinstance(l, _Pressure):
+            _add_pressure(ptr, l)
         elif isinstance(l, _Gravity):
             if not _density_given(material):
                 raise FeaError('gravity needs a material with a density')
@@ -1105,7 +1270,7 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
             raise TypeError('loads must be force(...), gravity(...) or thermal_expansion(...) items')
     if not lib.libfive_tetfea_prepare(ptr):
         raise FeaError(lib.libfive_tetfea_message(ptr).decode('utf-8', 'replace'))
-    key = (element, lib.libfive_tetfea_hash(ptr))
+    key = (element, lib.libfive_tetfea_hash(ptr), _sim_mesh.current_surface_fit())
     if cache and key in _cache:
         result = _cache[key]
         _cache.move_to_end(key)
@@ -1300,7 +1465,7 @@ _modal_cache = OrderedDict()
 
 @_with_conditions
 def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, bounds=None,
-                   tolerance=1e-6, cache=True, element='tet'):
+                   tolerance=1e-6, cache=True, element='tet', surface_fit='balanced'):
     ''' The natural frequencies and mode shapes of `shape` (a Shape, in
         mm), held by `supports` (fixed(...) items, one or a list) -- how it
         vibrates.  No loads are needed; the
@@ -1313,13 +1478,23 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
         element      'tet' (default), 'tet10' (10-node elements: the frequencies of a
                      part that bends are far better on the same mesh), 'hex' or
                      'hex_basic': see the module documentation
+        surface_fit  what the mesh gives up where the exact surface and good elements pull
+                     against each other: 'balanced' (the default), 'surface' (more surface
+                     conformity) or 'elements' (fewer odd elements); see static_analysis
 
         Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
         fields -- displacement, ux, uy, uz).  The shapes are fields like any
         other: e.g. stiffen the part where the first mode moves most.  An
         unchanged problem is cached. '''
+    surface_fit = _sim_mesh.surface_fit_value(surface_fit, 'modal_analysis')
+    with _sim_mesh.surface_fit_scope(surface_fit):
+        return _modal_analysis_solve(shape, supports, material, modes, element_size, bounds, tolerance, cache, element, surface_fit)
+
+
+def _modal_analysis_solve(shape, supports, material, modes, element_size, bounds, tolerance, cache, element, surface_fit):
     max_iterations = 100        # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     shape, mesh = _sim_mesh.part(shape, 'modal_analysis', element_size, element)
+    _sim_mesh.check_fit_with_mesh(mesh, surface_fit, 'modal_analysis')
     if not isinstance(shape, Shape):
         raise TypeError('modal_analysis: the part must be a Shape')
     if not _density_given(material):
@@ -1333,7 +1508,7 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
     key = problem_key('modal', shape=shape, part_bounds=getattr(shape, '_bounds', None), supports=supports,
                       material=material, modes=int(modes), element_size=element_size, bounds=bounds,
                       max_iterations=max_iterations, tolerance=tolerance,
-                      element=element, **_sim_mesh.key(mesh)) if cache else None
+                      element=element, **_sim_mesh.fit_key(surface_fit), **_sim_mesh.key(mesh)) if cache else None
     if key is not None and key in _modal_cache:
         _modal_cache.move_to_end(key)
         return _modal_cache[key]
@@ -1343,11 +1518,20 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
         element_size = mesh.size            # (the elements are the mesh's own)
     if element_size is None:
         if element in ('tet', 'tet10'):
-            element_size = default_element_size(shape, lo, hi, 20.0 if element == 'tet10' else 40.0, 125000 if element == 'tet10' else 500000)
+            thin_notes, walls = [], {}
+            element_size = default_element_size(shape, lo, hi, 20.0 if element == 'tet10' else 40.0, 125000 if element == 'tet10' else 500000, notes=thin_notes, quadratic=element == 'tet10', walls=walls)
+            if element == 'tet':
+                advice = thin_notes[0] if thin_notes else locking_note(walls.get('wall'), element_size)
+                if advice:
+                    print('modal_analysis: ' + advice)
         else:
             element_size = max(size) / 40.0
     element_size = float(element_size)
+    if mesh is None and element not in ('tet', 'tet10'):
+        element_size = _fitted_voxel_size(lo, hi, element_size)
     pad = 1e-6 * max(max(size), 1e-9)
+    if element in ('tet', 'tet10'):
+        pad = 0.0                   # (the lattice of the tetrahedra is fitted to the region: its faces on the part's faces exactly, not a hair off them -- H202)
     region = libfive_region_t()
     for i, axis in enumerate((region.X, region.Y, region.Z)):
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
@@ -1378,6 +1562,7 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
         ptr = lib.libfive_fea_new(shape.ptr, region, element_size, material.E, material.nu)
         handle = _Handle(ptr)
         _set_element(ptr, element)
+    _only_static_tet_turns(supports, 'modal_analysis')
     for s in supports:
         if not isinstance(s, _Support):
             raise TypeError('supports must be fixed(...) items')
@@ -1479,6 +1664,7 @@ class TopologyResult(FieldResult):
         self.settings = settings
         self.element_size = element_size
         self.bounds = bounds
+        self._bounds = bounds                   # (the box the design lives in: the optimized part is within it -- see FieldResult._bounds)
         self._supports, self._loads, self.material = supports, loads, material
         self.volume_fraction = stats['volume_fraction']
         self.iterations = stats['iterations']
@@ -1536,7 +1722,98 @@ class TopologyResult(FieldResult):
             threshold = self.keep_threshold()
         out = self._cut_field(self.density, threshold)
         out._bounds = self.bounds
+        # The field of the cut is a density scaled to about a millimetre at the surface -- measured on his bowl: the length of its gradient is 1 within 5 % at 23 % of the points near the surface, between 0
+        # and 11, and beyond a few millimetres of the surface it says nothing of how far the surface is (the density is 0 or 1 there) -- and not a distance, and no walk along its gradient makes one (the
+        # walk of exact_distance: 10 % within 5 % of 1, mean 4.4).  A blend with a radius, a smoothing, an offset ask for the DISTANCE (fields._dist): the exact one here is the distance to the
+        # surface of the cut itself -- the triangles that the kernel makes of it, planes in every tetrahedron, exact -- (H178 and H179, the user, 2026-11-12: "Fields that make a body should ALWAYS
+        # be true distance fields"), made when it is asked for, never for drawing
+        from fieldes.stdlib.transforms import _lazy_once
+        out._distance_of = _lazy_once(lambda: self._surface_distance(out, threshold))
+        # (smooth(), H178: the SURFACE of the design smoothed and its exact distance taken, kept for each radius and number of steps)
+        smoothed = {}
+
+        def smooth_distance(radius, steps=1):
+            key = (round(float(radius), 6), int(steps))
+            if key not in smoothed:
+                smoothed[key] = self._surface_distance(out, threshold, key)
+            return smoothed[key]
+        out._smooth_distance = smooth_distance
         return carry_locks(out, self.part)
+
+    def _surface_distance(self, field, threshold, smooth=None):
+        ''' The exact signed distance (mm, negative inside) of the optimized part cut at `threshold`: the distance to the triangles of the surface of the design (libfive_tetfea_surface), with the sign
+            of the part's own field where that surface does not close, and held by what the design may fill (the part, `domain`).  `field` itself when the surface cannot be made '''
+        from fieldes.ffi import libfive_mesh_import_info_t
+        from fieldes.stdlib.fields import _dist
+        ptr = getattr(getattr(self, '_handle', None), 'ptr', None)
+        if not ptr:
+            return field
+        counts = (ctypes.c_int64 * 2)()
+        if not lib.libfive_tetfea_surface(ptr, float(threshold), counts) or counts[0] < 4 or counts[1] < 4:
+            return field
+        n_v, n_t = int(counts[0]), int(counts[1])
+        verts = (ctypes.c_float * (3 * n_v))()
+        tris = (ctypes.c_uint32 * (3 * n_t))()
+        lib.libfive_tetfea_surface_copy(ptr, verts, tris)
+        give_back = 0.0
+        if smooth is not None and getattr(lib, 'libfive_mesh_smooth', None) is not None:
+            # smooth(radius, steps) of the optimized part (H178, the user, 2026-11-14: "The smoothing still separated different parts at even small radii like 3 mm and DID NOT ACTUALLY SMOOTH IT IN GENERAL"):
+            # the surface itself is smoothed -- a filter on the triangles that does not eat what is thin, as far as the radius says (the passes: see below) -- and the volume it takes is given back.  The distance
+            # field of the smoothed surface is the result (a field average of the distance was a diffusion in space: it took half of the material of his part and left it in four pieces)
+            radius, steps = smooth
+            reach = float(radius) * math.sqrt(max(1, int(steps)))
+            lengths = []
+            stride = max(1, n_t // 4000)
+            for t in range(0, n_t, stride):
+                a, b, c = tris[3 * t], tris[3 * t + 1], tris[3 * t + 2]
+                for u, v in ((a, b), (b, c), (c, a)):
+                    lengths.append(math.sqrt(sum((verts[3 * u + k] - verts[3 * v + k]) ** 2 for k in range(3))))
+            edge = (sum(lengths) / len(lengths)) if lengths else 0.0
+
+            def volume_and_area():
+                ''' The volume the surface holds (the sum of the tetrahedra from the origin to its triangles: a difference between two surfaces with the same border is the volume between them) and its area '''
+                v, t3 = verts[:], tris[:]
+                vol = area = 0.0
+                for i in range(n_t):
+                    a, b, c = 3 * t3[3 * i], 3 * t3[3 * i + 1], 3 * t3[3 * i + 2]
+                    ax, ay, az, bx, by, bz, cx, cy, cz = v[a], v[a + 1], v[a + 2], v[b], v[b + 1], v[b + 2], v[c], v[c + 1], v[c + 2]
+                    px, py, pz = by * cz - bz * cy, bz * cx - bx * cz, bx * cy - by * cx
+                    vol += (ax * px + ay * py + az * pz) / 6.0
+                    ux, uy, uz, wx, wy, wz = bx - ax, by - ay, bz - az, cx - ax, cy - ay, cz - az
+                    qx, qy, qz = uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx
+                    area += 0.5 * math.sqrt(qx * qx + qy * qy + qz * qz)
+                return vol, area
+            # (H178, his picture of 2026-11-14: radius 10 looked like radius 1.  Taubin's pair of steps with the weights (0.5, -0.53) took (reach / edge)^2 pairs, at most 60: a pair of steps is not a diffusion --
+            # the shrink step and the swell step cancel for everything but the shortest waves, so what it takes away goes as the FOURTH power of the wave number, and a bump of the size of the radius needs
+            # (radius / edge)^4 pairs, not the square: on his bowl (edge 1.55 mm) radius 10 got 42 pairs, and 1 got one.  With the swell step a little larger than the shrink step the low waves GROW with the
+            # pairs (+40 % of the volume after 1000), so the steps are exactly balanced (0.7, -0.7): no growth, and the passes can go as far as the radius says.  They take a little volume (-4 % at 200 pairs,
+            # -14 % at 4000 on his bowl), which is given back as an offset of the distance field below: measured on his bowl, the roughness (angle between neighbouring triangles) falls from 11.75 deg raw
+            # to 4.9 at 42 pairs, 3.75 at 1000, 3.46 at 4000, and the part stays one piece to 30000 pairs.  1.34 (radius / edge)^4 pairs damp a wave four radii long to a third)
+            pairs = int(min(6000, max(1, round(1.34 * (reach / edge) ** 4)))) if edge > 0 else 1
+            volume0, _ = volume_and_area()
+            lib.libfive_mesh_smooth(verts, n_v, tris, n_t, pairs, 0.7, -0.7)
+            volume1, area1 = volume_and_area()
+            # (the volume the filter took, given back by moving the surface out by volume / area: a first-order offset, exact for the distance field it becomes)
+            give_back = (volume0 - volume1) / area1 if area1 > 0 else 0.0
+        info = libfive_mesh_import_info_t()
+        tree = lib.libfive_mesh_from_arrays(verts, n_v, tris, n_t, 1.0, ctypes.byref(info))
+        if not tree:
+            return field
+        distance = Shape(tree)
+        if not info.watertight:
+            # (the sign of a surface that does not close is not known: the sign of the part's own field)
+            distance = abs(distance) * (field / (abs(field) + 1e-9))
+        if give_back:
+            distance = distance - give_back          # (the volume the smoothing took, given back: the surface moved out by it -- an offset of a distance field is a distance field)
+        if self.domain is not None:
+            # (the part's own field: the combination of the exact distances of its bodies -- `_dist(self.domain)` -- made every evaluation of this distance several times dearer in the window, where the
+            # numbers of the part are variables (measured on his bowl, H188); the part only holds the design in, and the field of it that the cut was made with did that too)
+            distance = distance.max(self.domain)
+        distance._bounds = self.bounds
+        distance._distance_of = lambda: distance
+        if smooth is None:
+            distance._display_field = field            # (what is drawn is the cut itself: the viewport meshes the cheap field, as for exact_distance)
+        return distance
 
     def verify(self, threshold=None, element_size=None):
         ''' The analyses of the optimized part again, each made as the one the optimisation was given was (a different element size if asked) --
@@ -1724,7 +2001,7 @@ def _is_cases(loads):
 def _condition_places(supports, loads):
     ''' The places where the supports and loads act, as one field (negative inside them); None when no support or load has a place '''
     regions = [s.region for s in supports] + [l.region for case in (loads if _is_cases(loads) else [loads]) for l in case
-                                              if isinstance(l, _Force)]
+                                              if isinstance(l, (_Force, _Pressure))]
     inside = None
     for r in regions:
         r = _united(r) if isinstance(r, (list, tuple)) else r
@@ -2041,7 +2318,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
                       of it: left out, nothing limits how far the design grows
         extrude:      'x', 'y' or 'z' -- the design is the same all along that axis (outside the keep / avoid regions): a profile to
                       extrude, or to cut right through from one side
-        iterations:   at most this many design updates (default 100; a body in a flow 80: it is sharpened a little at every iteration): it stops sooner when the design has settled (from the 15th on,
+        iterations:   at most this many design updates (default 20; more for a finer design): it stops sooner when the design has settled (from the 15th on,
                       once the sharpness has been reached, when the design hardly changes or the objective stays flat for 5 iterations
                       -- and every constraint is kept).  It also sets the pace of the sharpening and the size of the steps
         filter_radius: the smallest member size scale, mm (default 1.5 elements)
@@ -2071,7 +2348,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
         return _thermal.topology_optimization_thermal(analysis, conditions, iterations=iterations, filter_radius=filter_radius, keep=keep, avoid=avoid,
                                                       grow=grow, grow_limit=grow_limit, extrude=extrude, penalty=penalty, sharpness=sharpness,
                                                       symmetry=symmetry, tolerance=tolerance, cache=cache)
-    iterations = 100 if iterations is None else iterations
+    iterations = 20 if iterations is None else iterations         # (H185, the user, 2026-11-12: "The default iteration count of any optimization (topology and parametric) should be 20, not 100")
     from fieldes.stdlib import optimization_measures as measures
     max_iterations = 20000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     if getattr(lib, 'libfive_tetfea_optimize', None) is None or getattr(lib, 'libfive_tetfea_opt_measure', None) is None:
@@ -2102,8 +2379,8 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
         for l in a.loads:
             if isinstance(l, _Thermal):
                 raise FeaError("thermal_expansion isn't supported in topology optimization (its load changes with the design)")
-            if not isinstance(l, (_Force, _Gravity)):
-                raise TypeError('loads must be force(...) or gravity(...) items')
+            if not isinstance(l, (_Force, _Pressure, _Gravity)):
+                raise TypeError('loads must be force(...), pressure(...) or gravity(...) items')
     gravity = [any(isinstance(l, _Gravity) for l in a.loads) for a in static]
     if any(gravity) and not all(gravity):
         raise FeaError('topology_optimization: gravity acts in every static analysis of a design: give it to all of them or to none')
@@ -2393,6 +2670,7 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
         several = len(analyses) > 1
         gravity_set = False
         for a in analyses:
+            _only_static_tet_turns(a.supports, 'topology_optimization')
             for s in a.supports:
                 if not isinstance(s, _Support):
                     raise TypeError('supports must be fixed(...) items')
@@ -2408,6 +2686,8 @@ def topology_optimization(analysis, conditions=(), iterations=None, filter_radiu
             for l in a.loads:
                 if isinstance(l, _Force):
                     _add_force(ptr, l, a.index if several else None)
+                elif isinstance(l, _Pressure):
+                    _add_pressure(ptr, l, a.index if several else None)
                 elif isinstance(l, _Gravity) and not gravity_set:
                     lib.libfive_tetfea_set_gravity(ptr, *l.g, _number(material.density))
                     gravity_set = True

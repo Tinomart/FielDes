@@ -80,6 +80,13 @@ private:
     void buildClasses() const;
     mutable std::once_flag m_classOnce;
     mutable std::vector<uint8_t> m_cellClass;           // per cell: 0 wholly outside the mesh, 1 wholly inside it, 2 holds a piece of its boundary (built on the first use, see buildClasses)
+    /*  H193 (a thin plate's result took the viewer 44 s to draw: a point outside the mesh cost 60 to 430 us to locate, 2 us inside): the nearest point of a mesh to a point outside it lies on a
+     *  BOUNDARY face (one that belongs to a single tetrahedron), so only those are projected on.  Built on the first point that no tetrahedron holds.  */
+    void buildBoundary() const;
+    mutable std::once_flag m_boundaryOnce;
+    mutable std::vector<uint8_t> m_boundaryFaces;       // per tetrahedron: bit q set when its face opposite corner q is a boundary face
+    mutable std::vector<uint32_t> m_bStart, m_bList;    // per cell: the tetrahedra that have a boundary face (CSR): the search of the nearest point of the mesh looks at these only
+    mutable bool m_boundaryAll = false;                 // (a mesh too big for the face keys: every tetrahedron counts, the cells' own lists are used)
 
     const TetMesh* m_mesh;
     Eigen::Vector3d m_lo = Eigen::Vector3d::Zero(), m_hi = Eigen::Vector3d::Zero();
@@ -136,12 +143,19 @@ public:
      *  rest of the part, a modal analysis holds the part still (the displacement means nothing to a vibration), and a topology optimization
      *  refuses it  */
     void addSupport(const Tree& region, bool x, bool y, bool z, int loadCase = -1, Eigen::Vector3d displacement = Eigen::Vector3d::Zero());
+    /*  A restraint of the turning of the part where `region` is (H192): the mean turn of the nodes there about an axis through their centre -- about x, y and z where the flag is
+     *  set -- is held at `angle` (radians; 0 does not let the region turn), see TurnConstraint.  For a static analysis on linear tetrahedra; the others refuse it  */
+    void addTurn(const Tree& region, bool x, bool y, bool z, Eigen::Vector3d angle);
     /*  A load in a load case (0, 1, ...): topology optimization makes the part stiff for each
      *  case on its own; a static analysis applies every load together  */
     void addForce(const Tree& region, Eigen::Vector3d total, int loadCase = 0);
     /*  The same, with the total spread over the region's surface in proportion to a field (taken at the centres of the boundary
      *  triangles; not negative) instead of evenly by area: a pressure that is not the same everywhere  */
     void addForceProfile(const Tree& region, Eigen::Vector3d total, int loadCase, const Tree& profile);
+    /*  A PRESSURE (the user, 2026-11-14: "Implement pressure then as a boundary condition ... It takes a surface always"): `value` (MPa) acts at right angles on every boundary face of the part inside the
+     *  region -- positive pushes into the part, negative pulls on it (a traction) --, each face taking value x its area (x the profile there, when one is given) along its own normal, shared by its corners.
+     *  Unlike a force, whose total is spread evenly in one direction, it follows a curved surface  */
+    void addPressure(const Tree& region, double value, int loadCase, const Tree& profile);
 
     /*  The supports and loads act on the body only: a node farther outside it than `slack` is never held, and a boundary face with a corner farther
      *  outside it is never loaded.  For a design space that is bigger than the part (the part grown outwards, with holes where the supports and loads
@@ -282,7 +296,10 @@ private:
     std::shared_ptr<const TetMesh> m_given;     // (a mesh made elsewhere: see setMesh)
 
     struct Support { Tree region; bool fix[3]; int loadCase = -1; Eigen::Vector3d displacement = Eigen::Vector3d::Zero(); };
-    struct Force { Tree region; Eigen::Vector3d total; int loadCase; Tree profile = Tree::invalid(); };
+    struct Turn { Tree region; bool hold[3]; Eigen::Vector3d angle = Eigen::Vector3d::Zero(); };
+    std::vector<Turn> m_turns;                  // (see addTurn)
+    std::vector<TurnConstraint> m_turnData;     // prepared: the constraints on the nodes of the mesh
+    struct Force { Tree region; Eigen::Vector3d total; int loadCase; Tree profile = Tree::invalid(); bool pressure = false; double value = 0; };
     std::vector<Support> m_supports;
     std::vector<Force> m_forces;
     Tree m_conditionBody = Tree::invalid();     // (see setConditionBody)

@@ -2923,7 +2923,9 @@ void Interpreter::recordShape(
                     // (vertices, tetrahedra, boundary triangles, the tetrahedron of each, text,
                     // [each field's value in every tetrahedron], the displacement at every vertex)
                     PyObject* mesh = PyObject_GetAttrString(obj, "_fea_mesh");
-                    if (mesh && PyTuple_Check(mesh) && PyTuple_Size(mesh) == 7)
+                    // (the two items after these -- the diagonals of the elements' tetrahedra, which are not drawn, and the element of each tetrahedron -- are for a mesh whose elements are not
+                    // tetrahedra, H203: a tuple of 7 is a mesh of tetrahedra, of which every edge is drawn)
+                    if (mesh && PyTuple_Check(mesh) && (PyTuple_Size(mesh) == 7 || PyTuple_Size(mesh) == 9))
                     {
                         auto bytesAt = [&](Py_ssize_t i) -> PyObject* {
                             PyObject* b = PyTuple_GetItem(mesh, i);
@@ -2945,11 +2947,27 @@ void Interpreter::recordShape(
                             };
                             grid = Shape::ElementGrid();
                             grid.isMesh = true;
+                            {
+                                // (H219: a displayed mesh -- a meshing result, "_cells_only" -- is coloured between the values of the cells that are drawn, see Shape::setResult)
+                                PyObject* onlyCells = PyObject_GetAttrString(obj, "_cells_only");
+                                grid.visibleRange = onlyCells && PyObject_IsTrue(onlyCells) == 1;
+                                Py_XDECREF(onlyCells);
+                                PyErr_Clear();
+                            }
                             floats(bv, grid.mverts);
                             ints(bt, grid.mtets);
                             ints(bf, grid.mfaces);
                             ints(bft, grid.mfaceTet);
                             floats(bd, grid.mdisp);
+                            if (PyTuple_Size(mesh) == 9)
+                            {
+                                PyObject *bh = bytesAt(7), *bo = bytesAt(8);
+                                if (bh && bo)
+                                {
+                                    ints(bh, grid.mhidden);
+                                    ints(bo, grid.mowner);
+                                }
+                            }
                             grid.text = QString::fromUtf8(PyUnicode_AsUTF8(text));
                             for (size_t c = 0; c < channels.size(); c++)
                             {
@@ -2971,10 +2989,10 @@ void Interpreter::recordShape(
                         shape->setColorDetail(float(num("_color_detail", 0)));
                         // (why a result has no elements to show, when it has none: said on the card where their number stands)
                         shape->setElementNote(str("_fea_elements_note"));
-                        // (a result whose values are in its elements and nowhere else -- a solver written in Python: the smooth surface has no value of its own to show -- starts with the
-                        // elements drawn; the Elements button of the card, and the choice it made before, still decide)
+                        // (H198, the user, 2026-11-13: "Make element shown by default for every analysis": every result that has elements starts with them drawn; the Elements button of the card,
+                        // and the choice it made before, still decide)
                         PyObject* first = PyObject_GetAttrString(obj, "_elements_first");
-                        if (first && PyObject_IsTrue(first) == 1 && shape->hasElements()) shape->setShowElements(true);
+                        if (shape->hasElements()) shape->setShowElements(true);
                         // (a mesh -- the result of a meshing operation -- is its cells and nothing else: no body from its field, no button to show the cells)
                         PyObject* cellsOnly = PyObject_GetAttrString(obj, "_cells_only");
                         if (cellsOnly && PyObject_IsTrue(cellsOnly) == 1 && shape->hasElements()) shape->setCellsOnly(true);

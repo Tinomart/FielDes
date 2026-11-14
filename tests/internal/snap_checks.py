@@ -61,7 +61,7 @@ def attempt(label, fn):
 
 # ---------------------------------------------------------------- 1. the centre of a circular edge
 stage('1. circle_center_at')
-cyl = cylinder(10, 20)
+cyl = cylinder(10, 20, position=(0, 0, 10))          # (a model stands by its position, its middle: the cylinder is from z = 0 to z = 20)
 for label, near, exact in (('top rim of a cylinder', (10, 0, 20), (0, 0, 20)), ('bottom rim of a cylinder', (0, 10, 0), (0, 0, 0)), ('rim from another side', (-7.07, 7.07, 20), (0, 0, 20))):
     c = attempt(label, lambda: circle_center_at(cyl, near))
     if c is not None:
@@ -70,7 +70,7 @@ cn = cone(15, 30, position=(40, 0, 0))
 c = attempt('base of a cone', lambda: circle_center_at(cn, (55, 0, 0)))
 if c is not None:
     check('centre of the base of a cone', far(xyz(c), (40, 0, 0)) < 0.05, str(tuple(round(v, 3) for v in xyz(c))))
-plate = difference(box((60, 60, 10), position=(30, 30, 5)), cylinder(8, 20, position=(30, 30, -5)))
+plate = difference(box((60, 60, 10), position=(30, 30, 5)), cylinder(8, 20, position=(30, 30, 5)))          # (the hole goes through the plate, from z = -5 to z = 15)
 c = attempt('edge of a hole', lambda: circle_center_at(plate, (38, 30, 10)))
 if c is not None:
     check('centre of the edge of a hole in a plate', far(xyz(c), (30, 30, 10)) < 0.05, str(tuple(round(v, 3) for v in xyz(c))))
@@ -171,7 +171,7 @@ PLAIN = 'cn = cone(15, 30, position=(40, 0, 0))\n'
 PLACED = 'cn = cone(15, 30, position=%s, rotation=%s)\n'
 SOURCE = ('from fieldes import *\n'
           + PLAIN +
-          'cyl = cylinder(10, 20)\n'
+          'cyl = cylinder(10, 20, position=(0, 0, 10))\n'
           'slab = box((60, 60, 10), position=(0, 0, 45))\n'
           'near_place = (55, 0, 0)\n'
           'cone_face = select_surface(cn, seed=(42, 1, 0))\n'

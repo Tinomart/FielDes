@@ -72,7 +72,7 @@ def _folder():
 
 # What the solvers' results are, as a number: it changes when a change to a solver changes what it gives for the same problem (a different
 # optimiser, another mesh), and only then -- so that a program that is rebuilt or updated reads back what an earlier one solved
-RESULT_VERSION = 6      # (6: the voxel structural result's file has no design; 5: a thermal result's file has the temperature of the heat inputs and the design; the flow optimiser solves its flows from the last flow)
+RESULT_VERSION = 10     # (10: the default element size of an analysis holds the thin walls of a body (default_element_size, thin_size) -- H193: a result of a thin part that was kept before was solved on a mesh that had lost part of it, and is solved again; 9: the mesh an analysis makes of a body is mended by the kernel (tetmender.cpp, Netgen's volume optimization) -- H193: a result kept before was solved on the raw lattice, whose worst tetrahedra are far poorer, and is solved again; 8: the plane is fitted through two rings of elements, not one -- H199, the second version: a result of the first one is solved again; 7: the values at the nodes of a static or thermal result are the plane of the elements round the node, not their average -- H199: a result kept before is solved again; 6: the voxel structural result's file has no design; 5: a thermal result's file has the temperature of the heat inputs and the design; the flow optimiser solves its flows from the last flow)
 
 
 def _key(kind, ekey):

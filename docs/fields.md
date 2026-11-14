@@ -202,6 +202,27 @@ Raw field arithmetic (`a + b`, `a.min(b)`, `a.max(b)`) is not an operation of th
 and gives a plain shape. The table lives in `fieldes/stdlib/excluded.py`, and every
 function of the library is in it.
 
+## A body is a distance, a field is anything
+
+What makes a **body** a different type from a **field** is its field. A field is any value at every point of space (a ramp, a stress, noise); the field of a body is always the **true signed distance** to its surface
+(mm: negative inside, 0 on the surface, the distance to the surface outside), whatever made the body -- a box, a union, a difference with a blend, a smoothing, an offset, a scale that is not the same in every direction, an
+optimized part, an import. Everything the library returns that is a body is a `Body`; nothing can return a body that is not a distance, and a function written tomorrow is covered without a line about it, because
+the type is kept at one place, the door of the library (`fieldes/stdlib/body_law.py`), not by each operation.
+
+`body.field` is that distance, and it is what every reading of a body is: `body(x, y, z)`, `evaluate`, `sample_grid`, `field_range`, the field viewers, and every function that makes a field from a body
+(`distance_to_surface`, `depth_below`, `normal_field`, `wall_thickness` ...). A function that reads fields says so with `fn._reads_field = True`, as it says what it takes with `fn._takes`. A field read as it
+is: a ramp's values are its own, and arithmetic of a body with a field is a field. The arithmetic of a body with a number or another body (`body - 1`, `-body`, `a.min(b)`) is a body.
+
+The distance has no formula for the inside of a union, a difference or a smoothing (the nearest point of the surface may lie on a crease: a search), and the numbers of the body's `var()`s change without a run
+of the script. So the field is made from the surface of the body, finely meshed (200 samples across it: a cell of a half percent of its size, edges and corners kept), and the kernel's exact distance to those
+triangles -- a closest-point search, nothing sampled onto a grid --, made the first time something reads it, for the numbers the body has then, and kept with the body. A body that carries its distance already (an
+optimization result, an imported part, the complement of a body, a placed copy of one of those) gives it as it is. **The tree** a body is made as (`body.ptr`) is what is meshed -- the viewport, the exports, the
+analyses -- and what the library builds the next body from: its zero set is the surface, which is all a drawing and a boolean need, and it is the same surface as the zero set of `body.field`, so nothing is slower to
+draw. A body with no extent (open on a side) is meshed in the region of the scene.
+
+`tests/internal/body_field_checks.py` checks it: every kind of body is a `Body`, every function of the library is under the law (and one that nothing names is too), and for every kind of body the field has the
+sign of the tree, the gradient 1, the formula where there is one, the same surface meshed at half the samples, and is what `body(x, y, z)`, `evaluate` and `sample_grid` read.
+
 ## Exact distances
 
 Offsets, shells and fillets of a shape with only a *rough* field (booleans, blends, deformations) come
@@ -226,7 +247,7 @@ box, walls that are not there, and a ball "too wide for the slot" between them i
 | `fillet(edge_1, edge_2, ..., radius=2)` | rounds (a convex edge) or fills (a concave one) ONE edge, the one you selected -- `edge_at(body, (x, y, z))`: a line along a straight edge, a closed curve for a circular one or any other edge, followed along the surface -- exactly that edge, with the rolling ball of the radius (a number, a `var()` or a field); the edge knows its body (`fillet(body, edge, radius)` names it too, in any order); follows the body when a handle of the body is dragged |
 | `fillet(shape, radius)` | fills every concave edge and corner (no edge given) |
 | `chamfer(edge_1, edge_2, ..., size=2)` | a flat cut `size` along each of the two faces from ONE selected edge (a convex edge is cut off, a concave one filled): a plane along a straight edge, a cone round a circular one; made from the edge as the script last ran, so a handle of the body moves it when the script runs again at the end of the drag |
-| `smooth(shape, radius, steps=1)` | smooths the surface without thickening the body: features smaller than about `radius` go, flat faces stay; more `steps` smooth further. A field like any other (a weighted sum of the body's field moved by whole radii: 6 copies for one step, 19 for two, 44 for three, 85 for four), so nothing is measured or meshed in it |
+| `smooth(shape, radius, steps=1)` | smooths the surface without taking material off the body: features smaller than about `radius` go, flat and gently curved faces stay where they are (the average of the body's distance over the six points a radius away: of the distance of the body, which is what it is taken of, it keeps the material -- the optimized part lost 4.5 % of its volume when the average was taken of its density); more `steps` smooth further. A field like any other (the average of six copies of the body's exact distance moved by the radius; more steps are one smoothing at a larger radius, so six copies whatever the steps), so nothing is measured or meshed in it; the optimized part of a topology optimization is smoothed as the surface it is (Taubin's filter, which does not shrink it, and the exact distance of the result), which keeps its volume and its pieces |
 
 `round_edges` and `fillet` roll a ball of the radius in the material and in the air: the centres of the ball are where the field is
 `-radius` (or `radius`), and the surface of the result is a radius from them -- also read from the field, by the same walk. `reach` (mm)

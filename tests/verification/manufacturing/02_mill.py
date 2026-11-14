@@ -16,14 +16,14 @@ from mfgkit import *
 t = Table('02 a mill\'s job: a plate with a fin, two blocks, an L, a boss and a hole, for a CNC cutter of 6 mm (inside corners of radius 3, gaps of 6, nothing out of reach from above)')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-plate = difference(box((70, 40, 5), position=(35, 20, 2.5)), cylinder(2.5, 7, position=(62, 8, -1)))
+plate = difference(box((70, 40, 5), position=(35, 20, 2.5)), cylinder(2.5, 7, position=(62, 8, 2.5)))
 fin = box((0.9, 15, 12), position=(5.45, 12.5, 11))
 block_a = box((8, 15, 8), position=(14, 12.5, 9))
 block_b = box((8, 15, 8), position=(22.3, 12.5, 9))
 ell = union(box((12.3, 3, 10), position=(37.85, 6.5, 10)), box((3.3, 20, 10), position=(33.35, 15, 10)))       # (the L stands 0.3 mm nearer to block_b: its gap to block_b is 5.4, clearly narrower than the cutter -- at 5.7 it would be exactly 5 % short, the tool's own grace)
-boss = cylinder(5, 10, position=(55, 28, 5))
+boss = cylinder(5, 10, position=(55, 28, 10))
 body = union(union(union(union(union(plate, fin), block_a), block_b), ell), boss)
-part = exclude(body, cylinder(3.5, 7, position=(62, 8, -1)))          # (the hole and a ring of the plate round it stay exactly as they are, whatever the tool does to the rest)
+part = exclude(body, cylinder(3.5, 7, position=(62, 8, 2.5)))          # (the hole and a ring of the plate round it stay exactly as they are, whatever the tool does to the rest)
 # WHAT IS ASKED: the preset of a CNC cutter of 6 mm: inside corners of radius 3, gaps of 6 (its diameter), nothing out of reach from above, walls of 0.8
 # (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = cnc_constraint(tool_diameter=6.0)

@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QTabBar>
 #include <QVBoxLayout>
 #include <QTimer>
+#include <functional>
 #include <QProgressBar>
 #include <QLabel>
 #include <QPushButton>
@@ -174,6 +175,8 @@ public slots:
      *  the model tree, whose every action is a script edit)
      */
     void applyEdits(QList<TextEdit> edits, QString description);
+    /*  The same, for an edit that the viewport has done already (the eye of a drawn shape, H208): the text is written, and the script is not run for it  */
+    void applyEditsSilent(QList<TextEdit> edits, QString description);
 
     /*  The same, for an edit that goes on as something is typed (a name, a number): the edits of one go on after another are
      *  one undoable step -- an edit joins the one before it as long as nothing else changed the script since  */
@@ -399,8 +402,8 @@ protected:
     QPointer<QTextDocument> m_redoDoc;
     int m_redoRevision = -1;
     int m_redoSteps = 1;                       // (how many of those follow one another: a model can be made ready in two edits, its handles and its gizmo)
-    void applyEditsAs(QList<TextEdit> edits, bool live);
-    void applyEditsNoted(QList<TextEdit> edits, const QString& description, bool live);     // (applyEditsAs, and what the undo needs to know about the program's own edits)
+    void applyEditsAs(QList<TextEdit> edits, bool live, bool silent = false);
+    void applyEditsNoted(QList<TextEdit> edits, const QString& description, bool live, bool silent = false);     // (applyEditsAs, and what the undo needs to know about the program's own edits)
 
     // The model tree is read from the text after every edit (a moment after the last key), and again when a run has found something
     // out about the statements (see outline.py)
@@ -452,6 +455,12 @@ protected:
     QStringList m_consoleHistory;
     int m_consoleAt = 0;
     bool m_consoleBusy = false;
+    // While a command runs what it has printed is asked for every fraction of a second and shown as it comes (H205, the user, 2026-11-14: "I want the fieldes console to display things in real time like other
+    // consoles"): the complete lines only (terminal_poll of the library); the rest comes with the answer.  An answer that arrives while a request is on its way waits for it, so that the lines stay in order
+    QTimer* m_consoleTimer = nullptr;
+    bool m_consolePolling = false;
+    std::function<void()> m_afterPoll;
+    void pollConsole();
     // What the console shows is kept as text and the KIND of each piece (0 what was typed, 1 what it printed, 2 a value, 3 an error), so that it is drawn again in the colours of the
     // theme when the theme is changed
     QList<QPair<QString, int>> m_consoleEntries;

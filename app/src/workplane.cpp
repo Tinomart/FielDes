@@ -365,16 +365,8 @@ void WorkPlanePanel::showEvent(QShowEvent* e)
 void WorkPlanePanel::place()
 {
     if (!CardController::sized(this)) resize(300, std::max(minimumSizeHint().height(), sizeHint().height()));
-    if (parentWidget() && !CardController::moved(this))
-    {
-        // Top-right, below the orientation triad -- and below the section card when that is there too
-        int top = 124;
-        if (auto section = parentWidget()->findChild<QWidget*>("SectionPanel"))
-        {
-            if (section->isVisible()) top = section->geometry().bottom() + 8;
-        }
-        move(parentWidget()->width() - width() - 8, top);
-    }
+    // Top-right, below the orientation triad.  Where another card is, the card is put at the nearest free place (CardController::settle, H184): no card goes over another, and none follows another
+    if (parentWidget() && !CardController::moved(this)) move(parentWidget()->width() - width() - 8, 124);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -630,16 +622,8 @@ void GridPanel::showEvent(QShowEvent* e)
 void GridPanel::place()
 {
     if (!CardController::sized(this)) resize(340, std::max(minimumSizeHint().height(), sizeHint().height()));
-    if (parentWidget() && !CardController::moved(this))
-    {
-        // Top-right, below the orientation triad -- and below the section card when that is there too
-        int top = 124;
-        if (auto section = parentWidget()->findChild<QWidget*>("SectionPanel"))
-        {
-            if (section->isVisible()) top = section->geometry().bottom() + 8;
-        }
-        move(parentWidget()->width() - width() - 8, top);
-    }
+    // (as the work plane's card: see CardController::settle)
+    if (parentWidget() && !CardController::moved(this)) move(parentWidget()->width() - width() - 8, 124);
 }
 
 }   // namespace FielDes

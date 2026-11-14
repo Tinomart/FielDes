@@ -1106,8 +1106,12 @@ Window::Window(Arguments args)
         auto fieldPanel = new FieldPanel(view);
         PopOut::attach(fieldPanel, T("Field viewer"), "field-viewer", closeButtonOf(fieldPanel));
         fieldPanel->hide();
-        fieldPanel->stackBelow(panel);
         connect(fieldPanel, &FieldPanel::settingsChanged, view, &View::setFieldView);
+        // H191: the ends typed in the legends of the two cards (and Auto) are the viewport's to keep
+        connect(fieldPanel, &FieldPanel::rangeSet, view, [this](QString key, float lo, float hi) { view->setFieldRange(key, lo, hi, false); });
+        connect(fieldPanel, &FieldPanel::rangeAuto, view, [this](QString key) { view->setFieldRange(key, 0, 0, true); });
+        connect(panel, &SectionPanel::colourRangeSet, view, [this](float lo, float hi) { view->setSliceColourRange(lo, hi, false); });
+        connect(panel, &SectionPanel::colourRangeAuto, view, [this]() { view->setSliceColourRange(0, 0, true); });
         connect(view, &View::fieldMoved, fieldPanel, &FieldPanel::setCentre);
         connect(view, &View::sliceReady, panel, &SectionPanel::setSlice);
         connect(view, &View::fieldSliceReady, fieldPanel, &FieldPanel::setSlice);
@@ -1328,8 +1332,6 @@ Window::Window(Arguments args)
         connect(view, &View::symmetryCreateRequested, scene, &ScenePanel::createSymmetry);
         connect(view, &View::symmetryArguments, scene, &ScenePanel::setSymmetryArguments);
         connect(view, &View::symmetryNotice, scene, &ScenePanel::showNotice);
-        // (the work plane's card is above it: when that one comes or goes, this one is put under it again)
-        connect(view, &View::workPlaneStateChanged, panel, [=] { panel->reposition(); });
         connect(panel, &SymmetryPanel::useChanged, view, &View::setSymmetryInUse);
         connect(panel, &SymmetryPanel::kindChanged, view, &View::setSymmetryKind);
         connect(panel, &SymmetryPanel::countChanged, view, &View::setSymmetryCount);
@@ -1679,6 +1681,8 @@ Window::Window(Arguments args)
         auto scene = view->scenePanel();
         // (a model dragged out of the render region grows it as it is dragged: the region is written into the script when the drag ends, with the numbers of the drag)
         connect(view, &View::regionGrown, scene, &ScenePanel::growRegionTo);
+        // (a model was imported and its region grown into the script: the camera is framed on the grown region, not on the one the run of the import had)
+        connect(scene, &ScenePanel::frameRegionNext, view, &View::zoomOnNextSettings);
         scene->setScriptSource([this]{ return editor->getScript(); });
         // (the statement that makes a shape's surfaces draggable is written by the interpreter, which has the shape)
         scene->setHandlesSource([this](const QString& var, QString* error) {
@@ -1758,6 +1762,9 @@ Window::Window(Arguments args)
         connect(scene, &ScenePanel::exportRequested, this, &Window::exportModel);
         connect(scene, &ScenePanel::editScript, editor, &Editor::applyEdits);
         connect(scene, &ScenePanel::editScriptLive, editor, &Editor::applyEditsLive);
+        connect(scene, &ScenePanel::editScriptSilent, editor, &Editor::applyEditsSilent);
+        // (the eye of a drawn shape is a switch of the shape in the viewport, not a run of the script: H208)
+        scene->setFastVisibility([this](int line0, bool show) { return show ? view->unparkShape(line0) : view->parkShape(line0); });
         connect(scene, &ScenePanel::rerunRequested, editor, &Editor::onTextChangedDebounce);
         connect(scene, &ScenePanel::highlightLines, view, &View::highlightLines);
         connect(scene, &ScenePanel::sourceLinesMoved, view, &View::moveSourceLines);
@@ -1934,7 +1941,7 @@ Window::Window(Arguments args)
     const bool offerTour = !automated && args.filename.isEmpty() && !settings.value("tour/done", false).toBool();
 
     onNew();
-    if (!args.filename.isEmpty() && loadFile(args.filename))
+    if (!args.filename.isEmpty() && !openImported(args.filename) && loadFile(args.filename))
     {
         setFilename(args.filename);
     }
@@ -1984,6 +1991,13 @@ Window::Window(Arguments args)
         a->add("reportbug", [=](const QString&){ QTimer::singleShot(200, this, [this]{ onReportBug(); }); });
         // about: Help > About (the dialog opens once this command is over, so that the commands after it -- a picture of it with grabpopups -- run while it is open)
         a->add("about", [=](const QString&){ QTimer::singleShot(200, this, [this]{ onAbout(); }); });
+        // validation: Help > Validation and accuracy (it opens once this command is over, so that the commands after it run while it is open); validationlink <href>: a click on the link of the page
+        // that has this address, as a hand does it (H217: the click on the name of a script opens the script)
+        a->add("validation", [=](const QString&){ QTimer::singleShot(200, this, [this]{ openValidation(); }); });
+        a->add("validationlink", [=](const QString& href){
+            if (auto page = findChild<QTextBrowser*>("ValidationText")) emit page->anchorClicked(QUrl(href.trimmed()));
+            else std::cerr << "automation: the Validation page is not open" << std::endl;
+        });
         // dialog <text|grab <file>|accept|cancel>: the question that is open (a message box of the program, asked while the drop of a drag or any other action waits for the answer: run with
         // FIELDES_SHOW_DIALOGS=1 so that it is asked), read, photographed, or answered as a hand does -- `accept` presses its default button (a question that has none: its Yes, else its Ok), `cancel` its Cancel
         a->add("dialog", [=](const QString& args){
@@ -2079,6 +2093,13 @@ Window::Window(Arguments args)
             QString rest = args.section(' ', 1);
             if (verb == "open") { editor->focusConsole(); return; }
             if (verb == "close") { editor->scriptWidget()->setFocus(); return; }
+            // console start <python>: the same line sent, and the file goes on at once -- a picture of the output while the command is still running (H205: the lines of a `pip install` arrive as it prints them)
+            if (verb == "start")
+            {
+                rest.replace("\\n", "\n");
+                editor->runConsole(rest);
+                return;
+            }
             if (verb == "run")
             {
                 rest.replace("\\n", "\n");
@@ -2162,6 +2183,27 @@ Window::Window(Arguments args)
             PopOut* p = PopOut::find(key);
             if (!p || !p->floating() || !p->window()) { std::cerr << "automation: popgrab: " << key.toStdString() << " is not out\n"; return; }
             p->window()->grab().save(path);
+        });
+        // popmove <key> <x> <y>: the window a pane was pulled out into is moved to that place of the screen (a window that is out of sight, for the test of H196); popwhere <key>: where it is, and whether
+        // any of the screens shows a piece of it that a hand could take hold of
+        a->add("popmove", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            PopOut* po = p.size() >= 3 ? PopOut::find(p[0]) : nullptr;
+            if (!po || !po->floating() || !po->window()) { std::cerr << "automation: popmove <key> <x> <y>: that pane is not out\n"; return; }
+            po->window()->move(p[1].toInt(), p[2].toInt());
+            QApplication::processEvents();
+        });
+        a->add("popwhere", [=](const QString& args){
+            PopOut* po = PopOut::find(args.trimmed());
+            if (!po || !po->floating() || !po->window()) { std::cerr << "automation: popwhere: " << args.trimmed().toStdString() << " is not out\n"; return; }
+            const QRect f = po->window()->frameGeometry();
+            bool seen = false;
+            for (QScreen* s : QGuiApplication::screens())
+            {
+                const QRect part = s->availableGeometry().intersected(f);
+                if (part.width() >= 120 && part.height() >= 40) seen = true;
+            }
+            std::cerr << "automation: popwhere " << args.trimmed().toStdString() << " " << f.x() << " " << f.y() << " " << f.width() << " " << f.height() << " on a screen " << (seen ? "yes" : "NO") << "\n";
         });
         // focusstate: the pane that has the keyboard (the one the frame is round), and the word and the tooltip the status bar gives it
         a->add("focusstate", [=](const QString&){
@@ -2972,6 +3014,46 @@ Window::Window(Arguments args)
         });
         // viewframe <x0> <y0> <z0> <x1> <y1> <z1>: the camera goes in on that box of the model, looking the way it looks now, as it does for a model that is double-clicked: a place of the part is looked at by its
         // place and not by a pixel, so that a picture of the thin fin, the slot or the foot of a gusset is the same picture at any size of the window
+        // legendends: the lowest and highest number of the legend bars the viewport draws (and their Auto), as "label|high|x|y|w|h" in the viewport's coordinates, to the log: what a test clicks to type the
+        // ends of a scale (H191)
+        a->add("legendends", [=](const QString&){
+            for (const QString& line : view->legendEndsDump())
+                std::cerr << "automation: legend end " << line.toStdString() << std::endl;
+        });
+        // resultend <high|low>: the lowest or the highest number of the result card's colour scale as a place of the WINDOW (the middle of the number), for winmouse (H191)
+        a->add("resultend", [=](const QString& args){
+            const bool high = args.trimmed() != "low";
+            const QRect r = view->resultEndLabelGlobal(high);
+            const QPoint c = mapFromGlobal(r.center());
+            std::cerr << "automation: result end " << (high ? "high" : "low") << " " << c.x() << " " << c.y() << " (" << r.width() << " x " << r.height() << ")" << std::endl;
+        });
+        // cardlegend <section|field> <low|high|auto> [number]: a click on the lowest or the highest number, or on the Auto pill, of the legend of the section card or of the field viewer card (H191); with a
+        // number, it is typed into the box that the click opened and Return is pressed
+        a->add("cardlegend", [=](const QString& args){
+            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 2) return;
+            QWidget* card = p[0] == "field" ? static_cast<QWidget*>(view->findChild<FieldPanel*>()) : static_cast<QWidget*>(view->findChild<SectionPanel*>());
+            FieldLegend* legend = card ? card->findChild<FieldLegend*>() : nullptr;
+            if (!legend || !legend->isVisible()) { std::cerr << "automation: cardlegend: no visible legend of " << p[0].toStdString() << std::endl; return; }
+            const int part = p[1] == "low" ? 0 : p[1] == "high" ? 1 : 2;
+            const QPoint at = legend->partCentre(part);
+            std::cerr << "automation: card legend " << p[0].toStdString() << " " << p[1].toStdString() << " at window " << mapFromGlobal(legend->mapToGlobal(at)).x() << " "
+                      << mapFromGlobal(legend->mapToGlobal(at)).y() << std::endl;
+            QMouseEvent press(QEvent::MouseButtonPress, at, legend->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(legend, &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, at, legend->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(legend, &release);
+            QApplication::processEvents();
+            if (p.size() > 2)
+            {
+                QLineEdit* edit = legend->findChild<QLineEdit*>();
+                if (!edit || !edit->isVisible()) { std::cerr << "automation: cardlegend: no box opened" << std::endl; return; }
+                edit->setText(p[2]);
+                QKeyEvent key(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+                QApplication::sendEvent(edit, &key);
+                QApplication::processEvents();
+            }
+        });
         a->add("viewframe", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
             if (p.size() < 6) { std::cerr << "automation: viewframe <x0> <y0> <z0> <x1> <y1> <z1>" << std::endl; return; }
@@ -3196,6 +3278,20 @@ Window::Window(Arguments args)
             send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
             send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
         });
+        // dotdblclick <n>: a double click on the n-th dot -- what changes a point from a corner to a spline point to a round corner (H212: on the point of an image it changes the point it is the image of)
+        a->add("dotdblclick", [=](const QString& args){
+            QPoint at;
+            if (!dotPoint(args.section(' ', 0, 0).toInt(), at)) { std::cerr << "automation: no dot " << args.toStdString() << std::endl; return; }
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, at, view->mapToGlobal(at), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(view, &e);
+            };
+            send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+            send(QEvent::MouseButtonDblClick, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+        });
         a->add("dotdrag", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
             QPoint from;
@@ -3268,6 +3364,18 @@ Window::Window(Arguments args)
                 for (const QVector3D& q : view->imagesOf(vec(1)))
                     std::cerr << "automation: image " << q.x() << " " << q.y() << " " << q.z() << std::endl;
             }
+        });
+        // save2d <file>: the 2D plot that is shown (the section card's or the field viewer's) as an image file, what its menu "Save as image..." writes after the dialog; says whether it was saved
+        a->add("save2d", [=](const QString& path){
+            bool done = false, found = false;
+            for (FieldView* v : view->findChildren<FieldView*>())
+            {
+                if (!v->isVisibleTo(view)) continue;
+                found = true;
+                done = v->saveImage(path.trimmed());
+                break;
+            }
+            std::cerr << "automation: save2d " << (found ? (done ? "saved " : "FAILED ") : "no plot shown ") << path.trimmed().toStdString() << std::endl;
         });
         // createat <name> <x> <y>: a new model made at that place of the viewport, as the menu of empty space makes it (on the work plane while its view is open)
         a->add("createat", [=](const QString& args){
@@ -3697,6 +3805,7 @@ bool Window::openFile(const QString& name)
     }
     CHECK_UNSAVED();
 
+    if (openImported(name)) return true;
     if (loadFile(name))
     {
         setFilename(name);
@@ -3704,6 +3813,33 @@ bool Window::openFile(const QString& name)
     }
     emit(setAutoload(false));
     return false;
+}
+
+// H180 (the user, 2026-11-12: "I want there to be a way to \"open\" all file types that fieldes can import. So when I select \"open with\" on windows ... and select FielDes for a file that is
+// importable, it should create a FielDes file with the correct import statement"): the file is a model, not a script.  The script is new, with the import statement File > Import writes (importModel),
+// saved next to the model and named after it -- `bracket.step` gives `bracket.py` --, never over a file that is there (`bracket_2.py`); where the folder cannot be written it stays a new script
+bool Window::openImported(const QString& path)
+{
+    static const QStringList kinds{"step", "stp", "stl", "obj", "ply", "3mf", "glb", "gltf"};
+    const QFileInfo model(path);
+    if (!kinds.contains(model.suffix().toLower())) return false;
+    if (!model.exists())
+    {
+        QMessageBox m(this);
+        m.setText(T("Failed to open file"));
+        m.setInformativeText(T("<code>%1</code><br>does not exist").arg(path));
+        m.addButton(QMessageBox::Ok);
+        m.setIcon(QMessageBox::Critical);
+        m.exec();
+        return true;                                    // (it was a model: there is nothing else to try)
+    }
+    onNew();
+    importModel(model.absoluteFilePath());
+    const QString stem = model.absolutePath() + "/" + model.completeBaseName();
+    QString target = stem + ".py";
+    for (int n = 2; QFileInfo::exists(target); ++n) target = QString("%1_%2.py").arg(stem).arg(n);
+    if (QFileInfo(model.absolutePath()).isWritable() && saveFile(target)) setFilename(target);
+    return true;
 }
 
 bool Window::onOpen(bool)
@@ -4831,6 +4967,16 @@ void Window::openValidation()
             return;
         }
         if (url.scheme() == "http" || url.scheme() == "https") QDesktopServices::openUrl(url);
+        // The scripts of the checks are in the folder `validation` beside the program (in a build tree, in the repository): a click on one opens it, as File > Open does, and it runs (H217, the user, 2026-11-14: "direct
+        // access from the verification documentation ... in the help section")
+        else if (url.scheme().isEmpty() && url.path().endsWith(".py", Qt::CaseInsensitive))
+        {
+            const QString file = QFileInfo(url.path()).fileName();
+            const QDir where(QCoreApplication::applicationDirPath());
+            for (const QString& candidate : {where.filePath("validation/" + file), where.filePath("../validation/" + file), where.filePath("../../validation/" + file)})
+                if (QFileInfo::exists(candidate)) { openFile(QFileInfo(candidate).absoluteFilePath()); return; }
+            statusBar()->showMessage(T("The script %1 is not in the validation folder next to the program.").arg(file), 8000);
+        }
     });
     dialog->show();
 }
@@ -5123,7 +5269,20 @@ void Window::importModel(const QString& path)
                 editor->callSupport("import_editable", QString::fromUtf8(QJsonDocument(ask).toJson(QJsonDocument::Compact)), &error).toUtf8()).object();
         if (made.contains("text"))
         {
-            code << made["text"].toString().split('\n');
+            // (H200: the text of a body of points starts with the settings of the view it was made for -- resolution, quality, region --, and the script has its own: a script that had them got them twice, and
+            // one that had none got the quality twice, with the one below.  The ones of the text are kept for the settings the script does not have, once)
+            for (const QString& line : made["text"].toString().split('\n'))
+            {
+                static const QRegularExpression setting(R"(^\s*view\.(set_resolution|set_quality|set_bounds)\()");
+                const auto m = setting.match(line);
+                if (m.hasMatch())
+                {
+                    const QRegularExpression has("^\\s*view\\." + m.captured(1) + "\\(", QRegularExpression::MultilineOption);
+                    if (has.match(script).hasMatch()) continue;         // (the script's own stays as it is)
+                    if (m.captured(1) == "set_quality" && QRegularExpression(R"(\bview\.quality\b)").match(script).hasMatch()) continue;
+                }
+                code << line;
+            }
             body = true;
             status = T("Imported %1 as a body of points (%2 points)").arg(fi.fileName()).arg(made["points"].toInt());
         }
@@ -5151,7 +5310,8 @@ void Window::importModel(const QString& path)
     // none: without one the default-quality warning would show
     QVector<bool> drop(lines.size(), false);
     if (!QRegularExpression(R"(^\s*view\.set_quality\()", QRegularExpression::MultilineOption).match(script).hasMatch() &&
-        !QRegularExpression(R"(\bview\.quality\b)").match(script).hasMatch())
+        !QRegularExpression(R"(\bview\.quality\b)").match(script).hasMatch() &&
+        !QRegularExpression(R"(^\s*view\.set_quality\()", QRegularExpression::MultilineOption).match(code.join('\n')).hasMatch())
     {
         code << "view.set_quality(8)";
     }
@@ -5187,6 +5347,7 @@ void Window::importModel(const QString& path)
     edits << TextEdit{0, 0, last, int(lines[last].size()), out.join('\n')};
     editor->applyEdits(edits, "Import " + fi.fileName());
     view->zoomOnNextSettings();
+    if (auto* panel = view->scenePanel()) panel->frameWhenFitted();
     statusBar()->showMessage(status.isEmpty() ? T("Imported %1").arg(fi.fileName()) : status, 12000);
 }
 

@@ -271,7 +271,11 @@ def _walls_lattice(ctx, t, threshold=None):
     ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, ratio, float(band), float(t), 3, 1.0e30, -1.0e30, stats, None)
     if not ptr:
         return None
-    out = ctx.base.min(Shape(ptr))
+    # (H200, x5, 2026-11-14: the lattice holds the growth only within `band` of the surface and its cap beyond it -- 0.69 mm for a wall of 0.8 --, and united by `min` with the part's field it capped the whole result there:
+    # the result was a distance only as far as the band, and the check of the rule of the ball read a ball of 1.0 mm as 0.69 clear everywhere, 100 % of the surface.  Where the lattice is at its cap it has nothing to say:
+    # the part's own field stands there, as far out as it goes)
+    lattice = Shape(ptr)
+    out = ctx.base.min(lattice + _BIG * ((lattice - (band - 2.0e-3)).max(0) * 1.0e6).min(1))
     out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
     _note_lattice(out._lattice)
     return out

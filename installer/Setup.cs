@@ -318,8 +318,49 @@ namespace FielDesSetup
                 k.SetValue("language", language == Texts.SystemCode() ? "system" : language);
 
             RegisterApps(exe);
+            RegisterOpenWith(exe);
 
             progress(100);
+        }
+
+        // "Open with" (H180, the user, 2026-11-12: "when I select \"open with\" on windows ... and select FielDes for a file that is importable, it should create a FielDes file with the correct
+        // import statement"): FielDes is offered for the Python scripts and for every model file it imports -- the program makes the script with the import statement for a model, and opens a script as
+        // it is.  Nothing is taken over: no file type has FielDes as its default after this, it is in the list of programs that a file can be opened with
+        static readonly string[] OpenWithTypes = { ".py", ".step", ".stp", ".stl", ".obj", ".ply", ".3mf", ".glb", ".gltf" };
+
+        static void RegisterOpenWith(string exe)
+        {
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Applications\FielDes.exe")) k.SetValue("FriendlyAppName", "FielDes");
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Applications\FielDes.exe\DefaultIcon")) k.SetValue("", "\"" + exe + "\",0");
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Applications\FielDes.exe\shell\open\command")) k.SetValue("", "\"" + exe + "\" \"%1\"");
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Applications\FielDes.exe\SupportedTypes"))
+                    foreach (string type in OpenWithTypes) k.SetValue(type, "");
+                foreach (string type in OpenWithTypes)
+                    using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + type + @"\OpenWithList\FielDes.exe")) { }
+                SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { }
+        }
+
+        // Taken away with the program, but only if it is this program's
+        static void UnregisterOpenWith(string dir)
+        {
+            try
+            {
+                string exe = Path.Combine(dir, "FielDes.exe");
+                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(@"Software\Classes\Applications\FielDes.exe\shell\open\command"))
+                {
+                    string command = k == null ? null : k.GetValue("") as string;
+                    if (command == null || command.IndexOf(exe, StringComparison.OrdinalIgnoreCase) < 0) return;
+                }
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Applications\FielDes.exe", false);
+                foreach (string type in OpenWithTypes)
+                    Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\" + type + @"\OpenWithList\FielDes.exe", false);
+                SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { }
         }
 
         // The file type of FielDes apps: a double click on a .fieldesapp opens it in FielDes (the program does the same for a copy that is not installed)
@@ -404,6 +445,7 @@ namespace FielDesSetup
             try { File.Delete(DesktopLink()); } catch { }
             try { Registry.CurrentUser.DeleteSubKeyTree(Key); } catch { }
             UnregisterApps(dir);
+            UnregisterOpenWith(dir);
             progress(100);
         }
     }

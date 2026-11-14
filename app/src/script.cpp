@@ -1764,7 +1764,29 @@ void Script::triggerCompletion()
     const QString prefix = textUnderCursorForCompletion(&owner);
 
     QStringList words;
-    if (!owner.isEmpty())
+    // The rest of Python (H206, the user, 2026-11-14: "it should obviously do auto completes for everything python realted in real time, not just parts internal to FielDes"): after `import` and `from`, the modules
+    // that can be imported NOW (what `pip install` has just put on the path too), the names in a module, and after a dot what a module or an object offers -- asked of the library at the moment of typing.  What
+    // the script imports says what `np` is.  Nothing found (a variable of the script, a shape): the words that were offered before
+    const QString lineBefore = textCursor().block().text().left(textCursor().positionInBlock());
+    static const QRegularExpression importing(R"(^\s*(import|from)\s)");
+    bool fromPython = false;
+    if (m_support && (importing.match(lineBefore).hasMatch() || (!owner.isEmpty() && owner != "*" && !m_memberWords.contains(owner))))
+    {
+        QStringList imports;
+        for (QTextBlock b = document()->begin(); b.isValid() && imports.size() < 400; b = b.next())
+            if (importing.match(b.text()).hasMatch()) imports << b.text();
+        QJsonObject request;
+        request["before"] = lineBefore;
+        request["source"] = imports.join('\n');
+        const QString answer = m_support("complete_python", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)));
+        for (const auto v : QJsonDocument::fromJson(answer.toUtf8()).array()) words << v.toString();
+        fromPython = !words.isEmpty() || importing.match(lineBefore).hasMatch();
+    }
+    if (fromPython)
+    {
+        // (the words are Python's)
+    }
+    else if (!owner.isEmpty())
     {
         words = m_memberWords.value(owner, m_memberWords.value("*"));
     }
@@ -1910,13 +1932,29 @@ void Script::revealName(int line0, const QString& name)
     setTextCursor(c);
 }
 
-QString Script::ownerBefore(const QString& line, int wordStart)
+QString Script::ownerBefore(const QString& line, int wordStart, int blockNumber)
 {
     // "shape.max": the identifier in front of the dot ("*" for "(a + b).max")
-    if (wordStart <= 0 || line[wordStart - 1] != '.') return QString();
-    int end = wordStart - 1, start = end;
-    while (start > 0 && isIdentChar(line[start - 1])) --start;
-    return start < end ? line.mid(start, end - start) : QString("*");
+    if (wordStart > 0 && line[wordStart - 1] == '.')
+    {
+        int end = wordStart - 1, start = end;
+        while (start > 0 && isIdentChar(line[start - 1])) --start;
+        return start < end ? line.mid(start, end - start) : QString("*");
+    }
+    // "element=": the keyword of a call is defined as a parameter of the function the call is of (H216, the user, 2026-11-14: "stepping into the argument with ctrl click in the editor ... did not work")
+    if (blockNumber >= 0 && wordStart >= 0 && wordStart < line.size() && isIdentChar(line[wordStart]) && !line[wordStart].isDigit())
+    {
+        int end = wordStart;
+        while (end < line.size() && isIdentChar(line[end])) ++end;
+        int after = end;
+        while (after < line.size() && line[after].isSpace()) ++after;
+        const bool assigns = after < line.size() && line[after] == '=' && (after + 1 >= line.size() || line[after + 1] != '=');
+        int before = wordStart - 1;
+        while (before >= 0 && line[before].isSpace()) --before;
+        const bool afterOpen = before < 0 || line[before] == '(' || line[before] == ',';
+        if (assigns && afterOpen) return QString("@%1:%2").arg(blockNumber).arg(wordStart);
+    }
+    return QString();
 }
 
 bool Script::resolvable(const QString& name, const QString& owner)
@@ -1937,8 +1975,8 @@ bool Script::goToDefinition(const QString& name, int fromLine, const QString& ow
     {
         return false;
     }
-    // In this file first: "x.name" can only be a method here, anything else may be a variable too
-    const int line = findDefinitionLine(name, fromLine, !owner.isEmpty());
+    // In this file first: "x.name" can only be a method here, anything else may be a variable too (an owner that is "@line:column" is a name that may be the keyword of a call: it may be a variable as well)
+    const int line = findDefinitionLine(name, fromLine, !owner.isEmpty() && !owner.startsWith('@'));
     static const QRegularExpression importLine(R"(^\s*(?:from\s+\S+\s+)?import\s)");
     const bool onImport = line >= 0 &&
         importLine.match(document()->findBlockByNumber(line).text()).hasMatch();
@@ -1982,7 +2020,7 @@ void Script::goToDefinitionAtCursor()
     int start = c.positionInBlock(), end = start;
     while (start > 0 && isIdentChar(line[start - 1])) --start;
     while (end < line.size() && isIdentChar(line[end])) ++end;
-    goToDefinition(line.mid(start, end - start), c.blockNumber(), ownerBefore(line, start));
+    goToDefinition(line.mid(start, end - start), c.blockNumber(), ownerBefore(line, start, c.blockNumber()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2338,7 +2376,7 @@ void Script::mousePressEvent(QMouseEvent* e)
         const QString w = wordAt(e->pos(), &range);
         if (!w.isEmpty() &&
             goToDefinition(w, range.blockNumber(),
-                           ownerBefore(range.block().text(), range.selectionStart() - range.block().position())))
+                           ownerBefore(range.block().text(), range.selectionStart() - range.block().position(), range.blockNumber())))
         {
             setSelections(SEL_LINK, {});
             e->accept();
@@ -2391,7 +2429,7 @@ void Script::mouseMoveEvent(QMouseEvent* e)
         const bool linkable = !w.isEmpty() &&
             (findDefinitionLine(w, range.blockNumber()) >= 0 ||
              resolvable(w, ownerBefore(range.block().text(),
-                                       range.selectionStart() - range.block().position())) ||
+                                       range.selectionStart() - range.block().position(), range.blockNumber())) ||
              m_libraryDefs.contains(w));
         if (linkable)
         {

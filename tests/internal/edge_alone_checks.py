@@ -1,4 +1,4 @@
-import json, math, sys, traceback
+import json, math, re, sys, traceback
 from fieldes import *
 from fieldes import menu_catalog as mc, completion
 
@@ -7,6 +7,10 @@ def check(label, ok, extra=''):
     print(('ok   ' if ok else 'FAIL ') + label + ((' [' + extra + ']') if extra and not ok else ''))
     if not ok:
         bad.append(label)
+
+def core(text):
+    ' The text of a call without the arguments that are written with their defaults (H201: every function is written with every argument; these checks are about the edges and the placeholder) '
+    return re.sub(r' \w+=None,', '', text)
 
 def inside(s, p):
     return evaluate(s, [p])[0] < 0
@@ -19,15 +23,16 @@ def menu(name, **kw):
 # ---- what the menu writes
 for name in ('fillet', 'chamfer'):
     one = ' '.join(menu(name, body='edge_1', body_info={'type': 'curve'}, others=[]).split())
-    check(name + ': the edge alone -> ' + one, one == '%s( edge_1, %s=..., )' % (name, 'radius' if name == 'fillet' else 'size'), one)
+    # (H201: written with every argument of the function, the placeholder for the number first: `fillet( edge_1, radius=..., bounds=None, origin=None, )`)
+    check(name + ': the edge alone -> ' + one, one.startswith('%s( edge_1, %s=..., ' % (name, 'radius' if name == 'fillet' else 'size')) and 'bounds=None' in one, one)
     two = ' '.join(menu(name, body='box_1', body_info={'type': 'solid'}, others=[{'name': 'edge_1', 'type': 'curve'}]).split())
     check(name + ': body then edge -> the edge alone', two == one, two)
     three = ' '.join(menu(name, body='edge_1', body_info={'type': 'curve'}, others=[{'name': 'box_1', 'type': 'solid'}]).split())
     check(name + ': edge then body -> the edge alone', three == one, three)
 body = ' '.join(menu('fillet', body='box_1', body_info={'type': 'solid'}, others=[]).split())
-check('fillet: a body alone -> fillet(box_1, radius=...) -> ' + body, body == 'fillet( box_1, radius=..., )', body)
+check('fillet: a body alone -> fillet(box_1, radius=...) -> ' + body, core(body) == 'fillet( box_1, radius=..., )', body)
 fld = ' '.join(menu('fillet', body='edge_1', body_info={'type': 'curve'}, others=[{'name': 'f_1', 'type': 'field'}]).split())
-check('fillet: an edge and a field -> the field is the radius -> ' + fld, fld == 'fillet( edge_1, radius=f_1, )', fld)
+check('fillet: an edge and a field -> the field is the radius -> ' + fld, core(fld) == 'fillet( edge_1, radius=f_1, )', fld)
 try:
     menu('chamfer', body='box_1', body_info={'type': 'solid'}, others=[])
     check('chamfer: a body alone is not offered', False)
@@ -39,11 +44,11 @@ many = [{'name': 'edge_2', 'type': 'curve'}, {'name': 'edge_3', 'type': 'curve'}
 for name in ('fillet', 'chamfer'):
     slot = 'radius' if name == 'fillet' else 'size'
     text = ' '.join(menu(name, body='edge_1', body_info={'type': 'curve'}, others=many).split())
-    check(name + ': three edges -> ' + text, text == '%s( edge_1, edge_2, edge_3, %s=..., )' % (name, slot), text)
+    check(name + ': three edges -> ' + text, core(text) == '%s( edge_1, edge_2, edge_3, %s=..., )' % (name, slot), text)
     text = ' '.join(menu(name, body='box_1', body_info={'type': 'solid'}, others=[{'name': 'edge_1', 'type': 'curve'}] + many[:1]).split())
-    check(name + ': a body and two edges -> the edges alone -> ' + text, text == '%s( edge_1, edge_2, %s=..., )' % (name, slot), text)
+    check(name + ': a body and two edges -> the edges alone -> ' + text, core(text) == '%s( edge_1, edge_2, %s=..., )' % (name, slot), text)
 text = ' '.join(menu('fillet', body='edge_1', body_info={'type': 'curve'}, others=many + [{'name': 'f_1', 'type': 'field'}]).split())
-check('fillet: three edges and a field -> the field is the radius -> ' + text, text == 'fillet( edge_1, edge_2, edge_3, radius=f_1, )', text)
+check('fillet: three edges and a field -> the field is the radius -> ' + text, core(text) == 'fillet( edge_1, edge_2, edge_3, radius=f_1, )', text)
 
 # ---- what is written runs
 b = box(10, position=(5, 5, 5))
@@ -86,13 +91,13 @@ for call, label in ((lambda: fillet(e), 'fillet(edge) without a radius'), (lambd
 
 # ---- the completion
 text = completion.complete_call('fillet(edge_1)', 0, 0)
-check('completion of fillet(edge_1): ' + repr(text), ' '.join(text.split()) == 'fillet( edge_1, radius=..., )', text)
+check('completion of fillet(edge_1): ' + repr(text), core(' '.join(text.split())) == 'fillet( edge_1, radius=..., )', text)
 text = completion.complete_call('chamfer(edge_1, size=0.5)', 0, 0)
 check('completion of chamfer(edge_1, size=0.5): ' + repr(text), 'edge_1' in text and '0.5' in text and '...' not in text, text)
 text = completion.complete_call('fillet(edge_3, edge_2, edge_1)', 0, 0)
-check('completion of fillet(edge_3, edge_2, edge_1): ' + repr(text), ' '.join(text.split()) == 'fillet( edge_3, edge_2, edge_1, radius=..., )', text)
+check('completion of fillet(edge_3, edge_2, edge_1): ' + repr(text), core(' '.join(text.split())) == 'fillet( edge_3, edge_2, edge_1, radius=..., )', text)
 text = completion.complete_call('chamfer(edge_3, edge_2, edge_1)', 0, 0)
-check('completion of chamfer(edge_3, edge_2, edge_1): ' + repr(text), ' '.join(text.split()) == 'chamfer( edge_3, edge_2, edge_1, size=..., )', text)
+check('completion of chamfer(edge_3, edge_2, edge_1): ' + repr(text), core(' '.join(text.split())) == 'chamfer( edge_3, edge_2, edge_1, size=..., )', text)
 text = completion.complete_call('fillet()', 0, 0)
-check('completion of fillet(): ' + repr(text), ' '.join(text.split()) == 'fillet( edge=..., radius=..., )', text)
+check('completion of fillet(): ' + repr(text), core(' '.join(text.split())) == 'fillet( edge=..., radius=..., )', text)
 print('FAILED:' if bad else 'ALL PASSED', bad)

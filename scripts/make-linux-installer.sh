@@ -137,7 +137,7 @@ Exec="$PREFIX/FielDes" %f
 Terminal=false
 Categories=Graphics;Engineering;Science;
 StartupWMClass=FielDes
-MimeType=application/x-fieldesapp;
+MimeType=application/x-fieldesapp;text/x-python;model/stl;application/sla;model/obj;model/step;application/step;model/3mf;model/gltf-binary;model/gltf+json;
 EOF
     [ -z "$ICON" ] || echo "Icon=$ICON" >> "$APPS/fieldes.desktop"
     # (the file type of FielDes apps: a double click on a .fieldesapp opens it in its form)

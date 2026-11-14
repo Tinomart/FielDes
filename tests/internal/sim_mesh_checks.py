@@ -1,7 +1,7 @@
 '''
 Checks of a mesh as the part of an analysis (the user, 2026-11-03: "The user should be able to provide a mesh (result of the meshing operations) as an input for simulations. Right
 now the meshing that FielDes uses for Simulations is very one dimensional and since there are already these meshing tools, why not give the user more freedom?").  The static, the
-modal and the thermal analysis are given the result of mesh_volume in place of the body; the answers are compared with those of the same body meshed by the analysis itself, and the
+modal and the thermal analysis are given the result of mesh_tet4 in place of the body; the answers are compared with those of the same body meshed by the analysis itself, and the
 refusals (a size beside a mesh, hexahedra, a surface mesh) are read.  Library checks, no window.  Run with FIELDES_DIR set to the folder of the program and PYTHONPATH to python/.
 '''
 import sys
@@ -51,7 +51,7 @@ def main():
 
     # --- static: the mesh of the analysis itself, against the same mesh given
     own = static_analysis(beam, [support], [push], steel, element_size=2.5)
-    mesh = mesh_volume(beam, 2.5)
+    mesh = mesh_tet4(beam, 2.5)
     given = static_analysis(mesh, [support], [push], steel)
     check('static_analysis solves on a mesh', float(given.max_displacement) > 0, 'tip movement %.5g mm on %d tetrahedra' % (given.max_displacement, given.elements))
     check('... on the tetrahedra the mesh has (none added, none dropped)', given.elements == mesh.cell_count('tet4'), (given.elements, mesh.cell_count('tet4')))
@@ -61,13 +61,13 @@ def main():
     check('... asked again it is the same answer', float(again.max_displacement) == float(given.max_displacement))
 
     # --- a graded mesh: fine at the surface, coarse inside
-    graded = mesh_volume(beam, graded_size(beam, wall_size=1.5, growth_rate=1.3, max_size=5.0))
+    graded = mesh_tet4(beam, graded_size(beam, wall_size=1.5, growth_rate=1.3, max_size=5.0))
     on_graded = static_analysis(graded, [support], [push], steel)
     check('a graded mesh is solved as it is', on_graded.elements == graded.cell_count('tet4') and on_graded.elements != given.elements, (on_graded.elements, given.elements))
     check('... and reads the tip movement within 12 % of the uniform mesh', close(on_graded.max_displacement, given.max_displacement, 0.12), (on_graded.max_displacement, given.max_displacement))
 
     # --- a 10-node mesh: its corners are taken, and the quadratic element is made on them
-    ten = mesh_volume(beam, 3.0, element='tet10')
+    ten = mesh_tet10(beam, 3.0)
     on_ten = static_analysis(ten, [support], [push], steel)
     check('a 10-node mesh gives its corners to the linear element', on_ten.elements == ten.cell_count('tet10'), (on_ten.elements, ten.cell_count('tet10')))
     quadratic = static_analysis(ten, [support], [push], steel, element='tet10')
@@ -77,10 +77,10 @@ def main():
     # --- the refusals
     ok, text = refused(lambda: static_analysis(mesh, [support], [push], steel, element_size=2.0), 'element_size')
     check('element_size beside a mesh is an error that says so', ok, text)
-    hexes = mesh_volume(beam, 4.0, element='hex')
+    hexes = mesh_hex_quanta(beam, 4.0)
     ok, text = refused(lambda: static_analysis(hexes, [support], [push], steel), 'hexahedra')
     check('a mesh of hexahedra is refused, with the reason', ok, text)
-    ok, text = refused(lambda: static_analysis(mesh_surface(beam, 3.0), [support], [push], steel), 'no cells')
+    ok, text = refused(lambda: static_analysis(mesh_surface_tri(beam, 3.0), [support], [push], steel), 'no cells')
     check('a surface mesh is refused, with the reason', ok, text)
     ok, text = refused(lambda: static_analysis(mesh, [support], [push], steel, element='hex'), 'voxel')
     check("element='hex' takes no mesh", ok, text)
@@ -100,7 +100,7 @@ def main():
 def fluid():
     # the flow of example 16 (water past a post in a slab), solved on the mesh of the fluid and on the mesh the analysis makes itself
     W, H, T = 80.0, 40.0, 4.0
-    post = cylinder(5.0, T + 2, position=(24.0, 20.0, -1.0))
+    post = cylinder(5.0, T + 2, position=(24.0, 20.0, -1.0 + (T + 2) / 2))
     slab = box((W, H, T), position=(W / 2, H / 2, T / 2))
     faces = union(box((W + 2, H + 2, 1.01), position=(W / 2, H / 2, -0.495)), box((W + 2, H + 2, 1.01), position=(W / 2, H / 2, T + 0.495)))
     sides = union(box((W + 2, 1.01, T + 2), position=(W / 2, -0.495, T / 2)), box((W + 2, 1.01, T + 2), position=(W / 2, H + 0.495, T / 2)))
@@ -108,11 +108,11 @@ def fluid():
     outlet_face = box((1.01, H + 2, T + 2), position=(W + 0.495, H / 2, T / 2))
     items = dict(inlets=[inlet(inlet_face, speed=4.0)], outlets=[outlet(outlet_face, pressure=0)], boundaries=[slip(faces), slip(sides)], fluid=water)
     own = fluid_analysis(post, slab, element_size=2.0, **items)
-    mesh = mesh_volume(difference(slab, post), 2.0)
+    mesh = mesh_tet4(difference(slab, post), 2.0)
     given = fluid_analysis(post, mesh, **items)
     check('fluid_analysis takes the mesh of the fluid as its domain and solves on its tetrahedra', given.elements == mesh.cell_count('tet4'), (given.elements, mesh.cell_count('tet4')))
-    # (a flow at 2 mm past a post of 5 mm radius is sensitive to the mesh: with empty caches the same fluid gave 6.8e-7 on the analysis's own mesh, 7.8e-7 on a mesh_volume mesh whose edges were cut
-    # and 9.2e-7 on one whose edges are square: the two meshings of mesh_volume differ by 15 % and the analysis's own mesh is 26 % under the second, so 15 % against it was luck; the check is that the
+    # (a flow at 2 mm past a post of 5 mm radius is sensitive to the mesh: with empty caches the same fluid gave 6.8e-7 on the analysis's own mesh, 7.8e-7 on a mesh_tet4 mesh whose edges were cut
+    # and 9.2e-7 on one whose edges are square: the two meshings of mesh_tet4 differ by 15 % and the analysis's own mesh is 26 % under the second, so 15 % against it was luck; the check is that the
     # drag is the same flow's, of the same size)
     check('... and gets the drag on the post within 35 % of the same flow meshed by the analysis itself', close(given.wall_force[0], own.wall_force[0], 0.35) and float(given.wall_force[0]) != 0.0,
           (given.wall_force[0], own.wall_force[0]))
@@ -130,8 +130,10 @@ def example_39():
           tuple(r[k].elements for k in ('coarse', 'uniform', 'graded')))
     check('... the coarse mesh has fewer elements than the graded one, which has fewer than the uniform one', r['coarse'].elements < r['graded'].elements < r['uniform'].elements,
           tuple(r[k].elements for k in ('coarse', 'graded', 'uniform')))
-    check('... the coarse mesh bends the plate more than 3 times as much as the uniform one (too few elements across the thickness)', float(r['coarse'].max_displacement) > 3 * float(r['uniform'].max_displacement),
-          (r['coarse'].max_displacement, r['uniform'].max_displacement))
+    # (since the element size is fitted to the body -- at least two layers across a thin part -- the coarse mesh no longer bends the plate several times too much: it bends it like the others and
+    # reads its peak stress a quarter too low, 77 % of the textbook's: the mistake a coarse mesh makes without saying so, which is what the example shows)
+    check('... the coarse mesh bends the plate like the uniform one, within 10 %', close(r['coarse'].max_displacement, r['uniform'].max_displacement, 0.1), (r['coarse'].max_displacement, r['uniform'].max_displacement))
+    check('... but its peak stress is more than 15 % under the textbook\'s (the hole is a few elements round)', float(r['coarse'].max_von_mises) < 0.85 * textbook, (r['coarse'].max_von_mises, textbook))
     check('... the graded mesh bends it like the uniform one, within 20 %', close(r['graded'].max_displacement, r['uniform'].max_displacement, 0.2), (r['graded'].max_displacement, r['uniform'].max_displacement))
     check('... the uniform mesh finds the textbook peak stress within 15 %', close(r['uniform'].max_von_mises, textbook, 0.15), (r['uniform'].max_von_mises, textbook))
     check('... the graded mesh finds it within 25 %', close(r['graded'].max_von_mises, textbook, 0.25), (r['graded'].max_von_mises, textbook))

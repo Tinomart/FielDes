@@ -43,7 +43,7 @@ import weakref
 from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import content_cached
-from fieldes.stdlib.fea import _Support, _Force, _Gravity, _Thermal, _bounds, FeaError
+from fieldes.stdlib.fea import _Support, _Force, _Pressure, _Gravity, _Thermal, _bounds, FeaError
 from fieldes.stdlib.fields import evaluate
 from fieldes.i18n import tr as _tr
 
@@ -52,10 +52,11 @@ __all__ = []
 # What a colour of the picture means (the colour map 'bc' of the application: the value is the category; see colormap.hpp)
 FIXED, SLIDING, FORCE, GRAVITY, HEAT, SELECTED = 1, 2, 3, 4, 5, 6
 INLET, OUTLET, WALL, SLIP, TEMPERATURE, CONVECTION, GENERATION = 7, 8, 9, 10, 11, 12, 13
+PRESSURE = 14
 _NAMES = {FIXED: 'Fixed support', SLIDING: 'Sliding support', FORCE: 'Force', GRAVITY: 'Gravity', HEAT: 'Heat in', INLET: 'Inlet',
           OUTLET: 'Outlet', WALL: 'Wall', SLIP: 'Slip', TEMPERATURE: 'Fixed temperature', CONVECTION: 'Convection',
-          GENERATION: 'Heat generated'}
-CATEGORIES = 13
+          GENERATION: 'Heat generated', PRESSURE: 'Pressure'}
+CATEGORIES = 14
 _RANGE = (0.0, float(CATEGORIES))
 
 # How many symbols a loaded or supported face gets (about), and how big they may be, as shares of the part's size
@@ -68,6 +69,9 @@ def _kind_of(item):
     ''' How a condition is drawn: (category, 'pad' | 'in' | 'out' | 'none', the text beside it) -- a pad lies on the surface, an arrow goes in
         (its tip on the surface) or out (its tail on it), 'none' is only the tint '''
     from fieldes.stdlib import thermal, fluid
+    if isinstance(item, _Pressure):
+        # (a pressure presses at right angles on the surface: arrows along the inward normal when it pushes in, along the outward one when it pulls -- a traction)
+        return PRESSURE, 'in' if item.value >= 0 else 'out', (_tr('Pressure %g MPa') % item.value) if item.value >= 0 else (_tr('Traction %g MPa') % -item.value)
     if isinstance(item, thermal._Temperature):
         value = item.value
         return TEMPERATURE, 'pad', ('%g °C' % value) if isinstance(value, (int, float)) else _tr('Temperature (a field)')
@@ -117,7 +121,10 @@ def _support_text(item):
     held = ''.join(a for a, on in zip('xyz', item.axes) if on)
     moved = ', '.join('{} {:g} mm'.format(a, d) for a, d, on in zip('xyz', item.displacement, item.axes) if on and d != 0)
     text = _tr('Fixed') if len(held) == 3 else _tr('Sliding (fixed in {})').format(held or _tr('nothing'))
-    return text + (_tr(', displaced {}').format(moved) if moved else '')
+    # (H192: the turning of the region it restrains -- about which axes, and, when it turns the region, by how much)
+    kept = ''.join(a for a, r, on in zip('xyz', item.rotation or (0, 0, 0), item.turns) if on and r == 0)
+    turn_to = ', '.join('{} {:g}°'.format(a, r) for a, r, on in zip('xyz', item.rotation or (0, 0, 0), item.turns) if on and r != 0)
+    return text + (_tr(', displaced {}').format(moved) if moved else '') + (_tr(', not turning about {}').format(kept) if kept else '') + (_tr(', turned {}').format(turn_to) if turn_to else '')
 
 
 def describe(item):
@@ -126,10 +133,14 @@ def describe(item):
         held = ''.join(a for a, on in zip('xyz', item.axes) if on)
         moved = ', '.join('{} {:g} mm'.format(a, d) for a, d, on in zip('xyz', item.displacement, item.axes) if on and d != 0)
         text = 'fixed ({})'.format(held) if len(held) == 3 else 'sliding support (fixed in {})'.format(held or 'nothing')
-        return text + (', displaced {}'.format(moved) if moved else '')
+        kept = ''.join(a for a, r, on in zip('xyz', item.rotation or (0, 0, 0), item.turns) if on and r == 0)
+        turn_to = ', '.join('{} {:g} deg'.format(a, r) for a, r, on in zip('xyz', item.rotation or (0, 0, 0), item.turns) if on and r != 0)
+        return text + (', displaced {}'.format(moved) if moved else '') + (', not turning about {}'.format(kept) if kept else '') + (', turned {}'.format(turn_to) if turn_to else '')
     if isinstance(item, _Force):
         n = math.sqrt(sum(c * c for c in item.vector))
         return 'force {:g} N ({:g}, {:g}, {:g})'.format(n, *item.vector)
+    if isinstance(item, _Pressure):
+        return 'pressure {:g} MPa'.format(item.value)
     if isinstance(item, _Gravity):
         return 'gravity ({:g}, {:g}, {:g}) mm/s2'.format(*item.g)
     if isinstance(item, _Thermal):
@@ -217,7 +228,11 @@ def _draw(items, part):
         lo, hi = (-50.0, -50.0, -50.0), (50.0, 50.0, 50.0)
     size = max(hi[i] - lo[i] for i in range(3)) or 1.0
     lift = 0.002 * size             # the symbols stand this far off the surface
-    tol = 0.012 * size              # a place counts as inside a region within this of it
+    # (H197, the user, 2026-11-13: "boundary conditions visuals do not reflect their acutal region (they show as larger than the surface or body they are created from)": a place counts as inside a region
+    # within this of it, and the tint reached that far past the region -- it was 1.2 % of the part, 1.2 mm on a part of 100 mm, on top of the layer a selected surface has of its own (measured on a box
+    # 100 x 40 x 20 with its top face selected: the tint went 1.8 mm down the side face).  The tolerance is only for a body that touches the part exactly (a plate against it): a fifth of a per cent.
+    # Put back at his word 2026-11-15 ("restore the newer display code, there was a fix for its bounds in there that actually worked"): the old release (1.2.1) draws the same picture with either value)
+    tol = 0.002 * size
 
     pieces = []                     # (category, field that is < 0 inside it, tolerance): the tint
     glyphs = []                     # (kind, tip at the point, point, direction, size): what the viewport draws
@@ -309,6 +324,15 @@ def _draw(items, part):
     # The tint: the part itself, coloured by what each place is -- 0 nothing, else the category of the region it
     # is in (the larger wins: a load is shown over a support)
     out = Shape(lib.libfive_tree_copy(part.ptr))
+    # (H220: the viewer reads private notes of a part when it sets up how it is meshed -- where it came from, its metrics, the box and the resolution it was made for -- and the copy that carries the tint had
+    # none of them: its mesh covered only the middle of the bracket, |x| < 50 of 75, so the pads stood on plates that the tint did not have.  It gets the part's own notes, the colour ones apart)
+    for name in ('_content_key', '_step_metrics', '_step_ref', '_part_name', '_exact_source', '_exact_sources', '_distance_of', '_render_hint', '_feature_size', '_resolution_override', '_placed_from',
+                 '_own_len', '_kind', 'xyz', 'size'):
+        if hasattr(part, name):
+            try:
+                setattr(out, name, getattr(part, name))
+            except Exception:
+                pass
     out.supports, out.loads, out.notes = supports, drawn_loads, notes
     out._no_gizmo = True
     out._bounds = (tuple(lo), tuple(hi))

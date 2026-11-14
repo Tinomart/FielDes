@@ -471,8 +471,10 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
 
 void SymmetryPanel::setSymmetry(const Symmetry& s, int images, bool exists, bool inUse, const QString& name)
 {
-    setVisible(exists);
-    if (!exists) return;
+    // The card is there while the symmetry is in use, and goes when it is stopped (H177, the user, 2026-11-12: "pressing the x or pressing shift + s both did not close the panel and only disabled
+    // symmetry"): the X and Shift+S stop using it, and Shift+S again -- or selecting the symmetry -- starts it and brings the card back
+    setVisible(exists && inUse);
+    if (!exists || !inUse) return;
     raise();
     m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  " + T("Symmetry") + (name.isEmpty() ? QString() : ": " + name));
     m_updating = true;
@@ -502,7 +504,7 @@ void SymmetryPanel::setSymmetry(const Symmetry& s, int images, bool exists, bool
     auto number = [](float x) { return QString::number(std::fabs(x) < 5e-5f ? 0.0 : double(x), 'g', 4); };
     m_info->setText((s.kind == Symmetry::Turn ? T("Copies: %1. Images of what you make: %2. Axis (%3, %4, %5)") : T("Planes: %1. Images of what you make: %2. Axis (%3, %4, %5)"))
                         .arg(s.kind == Symmetry::Turn ? s.count : s.planeNormals().size()).arg(images)
-                        .arg(number(s.c.x()), number(s.c.y()), number(s.c.z())) + (inUse ? QString() : "  " + T("(not in use)")));
+                        .arg(number(s.c.x()), number(s.c.y()), number(s.c.z())));
 }
 
 bool SymmetryPanel::eventFilter(QObject* obj, QEvent* e)
@@ -520,17 +522,8 @@ void SymmetryPanel::showEvent(QShowEvent* e)
 void SymmetryPanel::place()
 {
     if (!CardController::sized(this)) resize(330, std::max(minimumSizeHint().height(), sizeHint().height()));
-    if (parentWidget() && !CardController::moved(this))
-    {
-        // Top-right, below the orientation triad -- and below the section card and the work plane's, when they are there too
-        int top = 124;
-        for (const char* name : {"SectionPanel", "WorkPlanePanel", "GridPanel"})
-        {
-            if (auto other = parentWidget()->findChild<QWidget*>(name))
-                if (other->isVisible()) top = std::max(top, other->geometry().bottom() + 8);
-        }
-        move(parentWidget()->width() - width() - 8, top);
-    }
+    // Top-right, below the orientation triad.  Where another card is, the card is put at the nearest free place (CardController::settle, H184): no card goes over another, and none follows another
+    if (parentWidget() && !CardController::moved(this)) move(parentWidget()->width() - width() - 8, 124);
 }
 
 }   // namespace FielDes

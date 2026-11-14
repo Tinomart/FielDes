@@ -29,7 +29,7 @@ box_1
 sphere_1 = sphere(10, position=(-30, 0, 10))
 sphere_1
 
-cylinder_1 = cylinder(10, 20, position=(-10, 0, 0))
+cylinder_1 = cylinder(10, 20, position=(-10, 0, 10))
 cylinder_1
 
 cone_1 = cone(10, 20, position=(10, 0, 0))

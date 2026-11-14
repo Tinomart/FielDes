@@ -1025,6 +1025,14 @@ bool drawCondition(QPainter& p, const QString& name, const QColor& c)
         arrowOf(p, QPointF(3.2, 3.2), QPointF(12.8, 12.8), c, 1.9, 4.2);
         return true;
     }
+    if (name == "pressure")
+    {
+        // a pressure: a surface with three arrows pressing on it at right angles
+        p.setPen(strokeOf(c, 2.2));
+        p.drawLine(QPointF(2.4, 12.6), QPointF(13.6, 12.6));
+        for (double x : {4.4, 8.0, 11.6}) arrowOf(p, QPointF(x, 2.6), QPointF(x, 10.6), c, 1.5, 3.0);
+        return true;
+    }
     if (name == "gravity")
     {
         // a weight falling: a ball above an arrow down

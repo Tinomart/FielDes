@@ -193,7 +193,9 @@ Returns a shell of a shape with the given offset
 
 The union of any number of shapes.  radius (mm, default 0: a sharp union) blends the surfaces where they meet
 with a smooth transition of that radius, so parts that do not quite fit together are joined by a fillet --
-a lattice and the body it is added to, a rib and a plate.  It works on any field, lattices included.
+a lattice and the body it is added to, a rib and a plate.  It works on any field, lattices included, and it
+blends their DISTANCES: a part whose field is not a distance (an optimized part: a density) is blended by its
+exact distance, so the radius is the radius.
 (A radius that is a field makes a blend that varies.)
 
 ## Moving, rotating, scaling, deforming
@@ -334,15 +336,15 @@ Scales a shape by sx on the x axis about 0 or an optional offset
 
 ### `scale_xyz(t, s, center=(0, 0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-Scales a shape on all three axes, about 0 or an optional offset
+Scales a shape on all three axes, about 0 or an optional offset.  The field stays a distance: it is multiplied by the scale (by the smallest of the three where they differ)
 
 ### `scale_y(t, sy, y0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-Scales a shape by sx on the x axis about 0 or an optional offset
+Scales a shape by sy on the y axis about 0 or an optional offset
 
 ### `scale_z(t, sz, z0=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-Scales a shape by sx on the x axis about 0 or an optional offset
+Scales a shape by sz on the z axis about 0 or an optional offset
 
 ### `shear_x_y(t, base, height, offset, base_offset=0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
@@ -770,7 +772,7 @@ Writes the surface of a body as a triangle mesh file, in the format of the file'
 
     .stl (binary; ascii=True for text), .obj, .ply, .3mf, .glb, .gltf, .fbx (Autodesk FBX, ASCII 7.4: see fbx.py), .off, .dxf (3DFACE)
 
-A mesh of elements -- what mesh_volume and mesh_surface make -- is written as it is, with its zones: .msh (Gmsh), .vtu, .inp (Abaqus), .bdf (Nastran), .unv, .stl,
+A mesh of elements -- what the meshing functions (mesh_tet4, mesh_tet10, mesh_hex_quanta, mesh_surface_tri ...) make -- is written as it is, with its zones: .msh (Gmsh), .vtu, .inp (Abaqus), .bdf (Nastran), .unv, .stl,
 .obj, or format='fluent' / 'openfoam' (a folder); the options (scale=0.001 for metres, ...) are those of Mesh.export (see meshwriters.py)
 
 part        a body (a shape, a list of them, the design an optimisation made, the body of an analysis' result)
@@ -903,9 +905,11 @@ Write it under a shape's definition, after its handles() call:
 Linked copies: `instance(shape)`.
 
 A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
-(its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: its POSITION and its ROTATION are
-its own, not the original's -- moving or turning the original does not move or turn the copy, and the other way round -- with its gizmo, which drags the `position=` and `rotation=` of the copy's call.
-Nothing else is its own: no scale knobs (a scale the original has is part of that shape, and the copy has it too).  Its surfaces CAN be dragged, as the original's can,
+(its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is where it is, how it is turned and how big it is: its POSITION, its ROTATION and its SCALE
+are its own, not the original's -- moving, turning or scaling the original does not move, turn or scale the copy, and the other way round (the user, 2026-11-12: "all of the gizmo operations are completely
+independent for clones") -- with its gizmo, which drags the `position=`, `rotation=` and `scale=` of the copy's call.  A body of points is placed by its points, so its copy is the body in a frame of its own: the points
+moved together move the original and leave the copy where it is.  A copy of a profile or a line is placed through the images of its points, moved and turned; a copy written without `scale=` (a script of an earlier
+version) is scaled as its original is.  Its surfaces CAN be dragged, as the original's can,
 and they are linked: both are pulled by the numbers of the original's `handles(...)`, so dragging a surface of the copy moves the original's and every other copy's, and the
 other way round.  (A copy that has a shape of its own is another thing: copy the model's statements instead -- Shift+D in FielDes.)
 
@@ -915,6 +919,7 @@ FielDes writes one with Ctrl+D (or Operations > Repeating > instance):
         plate,
         position=(var(0), var(0), var(0)),
         rotation=(var(0), var(0), var(0)),
+        scale=(var(1), var(1), var(1)),
     )  # shadow: plate
 
 The original is only REFERRED to: the mark `# shadow: plate` keeps it where it is in the model tree (a shadow of it is shown under the copy), whether it is
@@ -927,11 +932,12 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
-### `instance(shape, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
+### `instance(shape, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A linked copy of `shape`: the very same shape -- its surfaces, sizes, colours and properties are the original's, and change with it -- that can only be
-moved and rotated, with its gizmo (the `position=` and `rotation=` of its call).  It cannot be scaled: its shape is the original's -- and so are the numbers its
-surfaces are pulled by, so dragging a surface of the copy or of the original moves both.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
+A linked copy of `shape`: the very same shape -- its surfaces, sizes, colours and properties are the original's, and change with it -- with a place of its own: its `position=`, `rotation=` and `scale=`, the
+numbers of its gizmo, are the copy's, not the original's (the user, 2026-11-12, H174: "all of the gizmo operations are completely independent for clones"): moving, turning or scaling the original does not
+move, turn or scale the copy, and the other way round.  A copy that says no `scale=` (a script written before) is scaled as its original is, as it was.  The numbers its surfaces are pulled by are the
+original's, so dragging a surface of the copy or of the original moves both.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
 locked or not).  A copy that has a shape of its own is a copy of the statements instead (Shift+D)
 
 ## Symmetry
@@ -1049,11 +1055,12 @@ bounds of what is made of it: nothing of the ball is painted.)
 
 ### `Surface`
 
-An open surface: the zero set of a field, with no body behind it (negative on one side, positive on the other)
+An open surface: infinitely thin, with no inside and no outside.  Its field IS the surface -- one field, the distance to the sheet, zero on it and nowhere else: `|f|` for a sheet that goes on, and
+`sqrt(f^2 + e^2)` for a finite one, where `e` is how far a place is beyond the end of the sheet (zero up to the end).  A finite sheet ends because the field stops being zero there
 
-### `cylinder_surface(radius=5.0, axis='z', *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
+### `cylinder_surface(radius=5.0, axis='z', length=40.0, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-The surface of an infinite cylinder along an axis: a surface, negative inside
+The surface of a cylinder along an axis, `length` mm long round the centre: a surface with limits, without its inside
 
 ### `displayed(shape)`
 
@@ -1069,7 +1076,8 @@ images of a profile or a line in a symmetry, and of a placed copy of one (see ha
 
 ### `plane(normal=(0, 0, 1), width=40.0, height=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A plane through `point`, positive on the side `normal` points to: a surface
+A flat rectangle, `width` by `height` mm (a square when there is no height), round `point`, in the plane `normal` is perpendicular to: a surface with limits, as thin as any surface.
+Its handles are on its outside: each edge changes the size across it
 
 ### `point(*, smooth=None, radius=None, influence=None, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
@@ -1090,9 +1098,10 @@ The surface of a sphere (without its inside): a surface, negative inside
 
 An open surface from any field: where the field is 0.  (A body's field as a surface is its skin.)
 
-### `wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0, width=40.0, length=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
+### `wave_surface(amplitude=2.0, period=10.0, axis='x', width=40.0, length=None, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
-A wavy sheet z = height + amplitude sin(2 pi s / period) along an axis (s = x or y): a surface, positive above it
+A wavy sheet z = height + amplitude sin(2 pi s / period) along an axis (s = x or y), a rectangle `width` mm along x by `length` mm along y (a square when there is no length) round the middle:
+a surface with limits, as thin as any surface.  Its handles are on its outside: each pair of edges changes the width or the length
 
 ### `weld_shift_of(shape)`
 
@@ -1161,6 +1170,12 @@ The controls of a curve (`rounds` False: a point that says it is round is a corn
 ### `dot(a, b)`
 
 *(no description yet)*
+
+### `expand_points(points)`
+
+The points of a curve, a profile or a body as a list: the mirrored points of a point (`p_images = symmetry_images(p, symmetry)`, the set that FielDes writes when a point is mirrored) stand in it for
+the images they are -- each one a point that follows its original -- so that a mirrored point is a point like any other (H162, the user's report, 2026-11-08: "Mirrored Points cannot be used
+to create a spline ... the spline just ignored the selected mirrored point"; "For mirrored points to be able to be used for any operation just like any regular point")
 
 ### `fillets(ctrls, default, closed, normal=None)`
 
@@ -1534,6 +1549,18 @@ reach: how far from the surface the distance is made, mm (default a quarter of t
 (and not drawn) over the whole of space; an offset, a shell or a thickness asks for as much as it needs.  bounds: the box round the shape, when it cannot be found --
 only its size is used (the step of the gradient).
 
+### `exact_of(v, resolution=None)`
+
+THE FIELD OF A BODY (H190, the user, 2026-11-12, capitals: "ALL BODIES ARE ALWAYS TRUE DISTANCE FIELDS. THAT IS THE DEFINITION OF THE TYPE ... HAVE IT ENFORCED EVERYWHERE AS A REQUIREMENT as a part
+of the type itself"; 2026-11-13: "MAKE A BODYS FIELD ALWAYS A TRUE SIGNED DISTANCE FIELD"): the signed distance (mm, negative inside) from every point to the surface of the body -- its value, not a
+bound of it.  This is `Body.field` (fieldes.shape.Body), and what every reading of a body is.  The tree a body is made as is not always it: the min and max of a boolean are bounds (inside a
+union, outside an intersection or a difference), the weighted sum of a smoothing, the field of a cylinder outside its rim, a scale that is not the same in all directions, a blend are not -- and
+that tree is what is meshed (the surface of the two is the same) and what the next body is built from.
+In order: the distance the body carries (`_distance_of`: an optimized part, an imported one, a part whose faces are pulled, a combination of those), the body itself when it says it is exact
+(`_exact`), and else the distance to the body's own surface -- the surface of the body meshed finely (200 samples across it, a cell of a half percent of its size: the edges and corners
+are kept) and the exact distance to those triangles, which the kernel makes (a closest-point search, nothing sampled onto a grid), made once for the body and kept.  A field that is not a body
+(a ramp, a noise) is itself.  `resolution` samples per mm for that surface, when it is to be finer
+
 ### `field_from_body(body)`
 
 The values of a body as a FIELD: the same number at every point as the body (its distance to its surface, negative
@@ -1808,21 +1835,27 @@ itself, named for readability
 
 ### `smooth(shape, radius, steps=1)`
 
-Smooths the surface of a body without thickening it: bumps, dents, ridges and stair-steps smaller than
-about `radius` mm are smoothed away, edges and corners are eased, and a flat or gently curved face stays
-where it is (unlike offset() or thicken(), which move or grow the surface).  The field of the body is
-averaged over the points a `radius` away on all six sides -- the smoothing of a mesh's Laplacian, done on the
-field -- and `steps` of those make the field of the smoothed body: more steps smooth further (the reach
-grows as the square root of the number of steps).  The radius is a number or a field (smoothed more where
-the field is large, not at all where it is 0).  Like any smoothing it eases convex features slightly
-inwards and concave ones slightly outwards; the body as a whole does not grow.
+Smooths the surface of a body without taking material off it (H178, the user, 2026-11-12: "the smooth operaitons took off material that made smoothing the topology optimization ... become a
+disconnected mesh, instead of getting cleanly smoother"): bumps, dents, ridges and stair-steps smaller than about `radius` mm are smoothed away, edges and corners are eased, and a flat or
+gently curved face stays where it is (unlike offset() or thicken(), which move or grow the surface).  The field of the body is averaged over the points a `radius` away on all six sides --
+the smoothing of a mesh's Laplacian, done on the field -- and `steps` of those are one smoothing: more steps smooth further (the reach grows as the square root of the number of steps).
+What took the material off the optimized part was the field the average was taken of -- a density, which rises 0 to 11 times as fast as a distance and saturates a few millimetres from
+the surface -- and not the average: of the DISTANCE of the part (fields._dist: the primitives and what is made of them are one; a part imported from STEP or an optimized part is replaced by
+its exact distance, as offset() does) the average keeps the volume (measured on his bowl: +0.1 %, one piece, where the average of the density took 4.5 %).  What is thinner than about the radius
+is smoothed away.  The radius is a number or a field (smoothed more where the field is large, not at all where it is 0).
 
-The result is a field like any other, a weighted sum of copies of the body's own field moved by whole
-radii (6 copies for one step, 19 for two, 44 for three, 85 for four; more steps than four are four at a
-larger radius, which smooths as far), so nothing is measured or meshed here: the surface is found when it
-is drawn, and the cost is that of the field times the copies.  The body's field should be about a
-distance (the primitives and what is made of them are; a part imported from STEP is replaced by its exact
-distance, as offset() does), because a field that rises faster smooths by as much more.
+The result is a field like any other, the average of SIX copies of the body's distance moved by the radius (H188, the user: "nothing over a marginal performance loss (below 10%) ... it would be better
+if it ran even faster": the average of two steps took 19 copies, a shrink-free version of it 25 and 12, and a smoothing inside a smoothing multiplies the copies: his bowl nests one in another, 19 times 6
+copies and then 12 times 12; more steps are one smoothing at a larger radius, which smooths as far -- the reach of n steps of a radius is that of one step of the radius times the square root of n --,
+so six copies whatever the steps), so nothing is measured or meshed here: the surface is found when it is drawn, and the cost is that of the field times the copies.
+
+The optimized part of a topology optimization is a SURFACE already, and it is smoothed as one (H178, the user, 2026-11-14: "The smoothing still separated different parts at even small radii like
+3 mm"): an average of copies of its distance eats what is thinner than the radius (on his bowl at 2 mm smooth(3, 2) kept half of the volume, in four pieces) and only copies the bumps round.  Its
+surface is smoothed by a balanced pair of steps -- a step towards the average of the neighbours and a step back by the same weight, which does not grow it and shrinks it only slowly --, the vertices on
+a border are held, and the result is the exact distance of the smoothed surface, moved out by the volume the smoothing took: no copies, so it costs what the part itself costs.  The number of
+pairs follows the radius as the FOURTH power of (radius over the length of an edge of the surface), because that is how such a pair takes a bump away (H178, the user, 2026-11-14: "I input an extreme radius of 10
+mm here and I see barely ANY difference to 1 mm": the number of pairs went as the square, and radius 10 got 42 of them on his bowl): on his bowl the angle between neighbouring triangles falls from 6.8 degrees
+(mean) to 6.1 at radius 1, 5.1 at 3 and 3.9 at 10, in one piece, with 0.4 %, 1 % and 6 % less volume (the surface cannot grow past what the design may fill).
 
 ### `smooth_difference(a, b, radius, *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
@@ -1878,6 +1911,14 @@ A solid wall of the given thickness centred on a field's zero
 surface (e.g. a plane, a TPMS surface, a shape's skin); the
 thickness may be a field
 
+### `tight_extent(shape)`
+
+The box round a shape that a MESH is fitted to (H202, the user, 2026-11-13: the element size is adjusted to fit the body, which a lattice or a grid can only do against the true faces of the
+body).  find_extent's box comes out up to a tenth of a millimetre larger than the body on each side (interval arithmetic stops at a tolerance); here every face of the box that is a flat face
+of the body, square to an axis -- a box, a plate, a prism, the end of a bar -- is put on the face itself: along a grid of 15 x 15 lines across the face the place where the body begins
+is found within the margin, and the face is taken only when the lines that find it agree to a hundredth of the margin and no point of the grid just outside it is inside the body.  A face
+that is curved (the pole of a sphere), tilted, or that the lines do not find stays where find_extent had it: the box never cuts the body.  None when find_extent finds no box
+
 ### `twist_z(shape, degrees_per_mm, center=(0, 0), *, position=None, rotation=None, scale=None, alpha=None, origin=None)`
 
 Twists a shape about the z axis; the rate may be a field
@@ -1899,7 +1940,10 @@ that are too thin (or too thick) to make.  Capped at max_thickness.
 
 ### `wave(axis='x', period=10.0, amplitude=1.0, phase=0.0)`
 
-A 3D wave: the height above a wavy sheet, z - amplitude * sin(2 pi s / period + phase), s the coordinate along the axis.  It is zero on the sheet and grows with z, so the section viewer shows the sheet cut by its disc and the colours change as the disc is dragged up and down.  (Given a field instead of an axis name, it is the plain sine of that field, amplitude * sin(2 pi field / period + phase).)
+A 3D wave: the height above a wavy sheet, z - amplitude * sin(2 pi s / period + phase), s the coordinate along
+the axis.  It is zero on the sheet and grows with z, so the section viewer shows the sheet cut by its disc and the
+colours change as the disc is dragged up and down.  (Given a field instead of an axis name, it is the plain sine
+of that field, amplitude * sin(2 pi field / period + phase).)
 
 ### `x_field()`
 
@@ -2961,7 +3005,7 @@ The edge of `shape` nearest `near`: for a straight edge a polyline of two points
 hole, the base of a cone) a closed curve that says its circle; for any other edge a curve through places that are followed along the surface where the two faces meet (the way the frame of a
 lattice follows the creases of a body), closed when it comes round to where it began and open when it ends at a corner.  The line follows its body and the two faces of the edge, as the corner
 of `corner_at` follows its three: a face that is pulled by its handle takes it along.
-In the window a lost edge does not stay: about a second after the edit that lost it is done (never while a mouse button is down) the model tree removes the edge from the script, with the routine that deletes a model -- what was made of it has `...` where it was, so the script has no error --, and a message says so (it has "Don't show this again", and Settings > Tell me when an edge is removed turns it on again); Undo brings the edge back.  An edge that something else of the script still uses is not removed.  What follows is what the library itself does, for a script that is run without the window. An edge counts as lost by an edit when the same statement found its edge earlier in this session; the place the call writes is not part of that memory, because the program rewrites it while the edge follows a drag (the user, 2026-11-04: the edge was lost by dragging the handles and stayed in the script).
+In the window a lost edge does not stay: about a second after the edit that lost it is done (never while a mouse button is down) the model tree removes the edge from the script, with the routine that deletes a model -- what was made of it has `...` where it was, so the script has no error --, and a message says so (it has "Don't show this again", and Settings > Tell me when an edge is removed turns it on again); Undo brings the edge back.  An edge that something else of the script still uses is not removed.  What follows is what the library itself does, for a script that is run without the window. An edge counts as lost by an edit when the same statement found its edge earlier in this session, at about the place the call writes now.  The statement is its function and the name it gives its result (`edge_1` of `edge_1 = edge_at(...)`), not the line it stands on, because the first selection of a shape writes a `handles(...)` line above it; and the place is where the edge was last found, because the program rewrites it while the edge follows a drag (the user, 2026-11-04: the edge was lost by dragging the handles and stayed in the script).
 An edge that is not found -- the body was changed or dragged so that no edge is there any more, or the search met a state it could not work in -- never stops the script: the line is a short
 one at the place, and a note in the output says why (the statements after it still run: a new model is made, with its handles).  Only a `scale` that is given says "error", for an edge that is
 not there: ValueError.  See `_edge_at` for the details and the module and `corner_at`
@@ -3186,7 +3230,7 @@ e.g. an FEA result) with a colour map; hovering the model shows the
 value.  range=(lo, hi) fixes the colour scale (default: the field's
 range on the part).  Anywhere else it is simply `shape`.
 
-### `fixed(*regions, region=None, body=None, displacement=(0.0, 0.0, 0.0), **removed)`
+### `fixed(*regions, region=None, body=None, displacement=(0.0, 0.0, 0.0), rotation=(inf, inf, inf), **removed)`
 
 A support: the part is held wherever it lies inside `region` (a Shape: a body, a field, a selected surface).  Any number
 of regions can be given, one argument after the other -- fixed(a, b) holds the part where either is.
@@ -3199,6 +3243,12 @@ displacement  (dx, dy, dz) in mm, where the part is held in each direction -- al
               `inf`) leaves that direction free, so `displacement=(0, 0, inf)` is a support the part slides along z on.  Any other number is a
               displacement the support imposes: `(0, 0, -0.5)` pushes the part 0.5 mm down where it is held (a static analysis on tetrahedra
               solves for the rest of it; a modal analysis holds it still, a topology optimization refuses it).
+rotation      (rx, ry, rz) in degrees, how the region of the support may TURN about the x, y and z axes through its centre -- the same input as the displacement: 0 does not
+              let the region turn about that axis, `inf` (the default, `(inf, inf, inf)`) leaves it free, and another number turns it by that many degrees.  A tetrahedron
+              has no rotation of its own, so the turn of a region is the mean turn of the nodes in it, held by a spring a thousand times stiffer than the nodes are
+              against turning.  A region that holds the part direction by direction already holds the turn (`displacement=(0, 0, 0)` leaves nothing to turn with), so the
+              rotation is for the supports that leave directions free: `fixed(face, displacement=(inf, inf, inf), rotation=(0, 0, 0))` lets a face slide and keeps it
+              from turning.  For a static analysis on linear tetrahedra (element='tet'); the others refuse it.
 
 ### `force(*args, region=None, body=None, vector=None, profile=None)`
 
@@ -3240,9 +3290,22 @@ fields -- displacement, ux, uy, uz).  The shapes are fields like any
 other: e.g. stiffen the part where the first mode moves most.  An
 unchanged problem is cached.
 
+### `pressure(*args, region=None, body=None, value=None, profile=None)`
+
+A load: a pressure (MPa) at right angles on every point of the part's surface inside `region`.  It takes a SURFACE always: the surface of the part
+that the region selects -- a selected surface, or a body or a field that the surface of the part lies in.  pressure(region, 2.0) and pressure(region=region, value=2.0) are the same.
+Any number of regions can be given, one argument after the other, before the value.
+
+Unlike `force()`, whose total is one vector spread evenly over the region, a pressure follows the surface: on a curved surface every point is pushed along its own normal.
+
+region   where the part is loaded: a selected surface, a body or a field (the same as the first argument)
+body     the body the load is on, when the regions are bodies that choose WHERE on it: `pressure(pad, 2.0, body=bracket)` loads the bracket's surface where it meets the pad
+value    the pressure in MPa (N/mm^2): positive PRESSES INTO the part (the way a fluid presses on the wall that holds it), negative PULLS on it (a traction, a tension on the surface)
+profile  a field: the pressure is the value times the field there (not negative), a pressure that is not the same everywhere.  (Tetrahedral elements.)
+
 ### `static_analysis(shape, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet')`
 
-Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_volume) can take the place of `shape`: the analysis then solves on its tetrahedra as they
+Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_tet4) can take the place of `shape`: the analysis then solves on its tetrahedra as they
 are, and `element_size` is not given (see docs/analysis.md, A mesh of your own).
 
 supports   what holds the part: fixed(...) items (at least one), one or a list
@@ -3253,7 +3316,7 @@ element_size   the element edge in mm (default: the part's longest
            side over 60; over 30 with element='tet10' -- or larger, for a
            solid part that would have more than a million tetrahedra
            (250 000 with 'tet10'): the size at which it has that many.
-           A size that is given is used as it is)
+           A size that is given is a target: it is adjusted, as little as it can be, to fit the part, so that the elements are as even as they can be)
 element    'tet' (default: tetrahedra that follow the part's surface),
            'tet10' (the same with 10 nodes: quadratic elements, about
            three times the element size for the same accuracy),
@@ -3324,7 +3387,7 @@ grow_limit:   mm, with grow=True: the most the design may reach out from the par
               of it: left out, nothing limits how far the design grows
 extrude:      'x', 'y' or 'z' -- the design is the same all along that axis (outside the keep / avoid regions): a profile to
               extrude, or to cut right through from one side
-iterations:   at most this many design updates (default 100; a body in a flow 80: it is sharpened a little at every iteration): it stops sooner when the design has settled (from the 15th on,
+iterations:   at most this many design updates (default 20; more for a finer design): it stops sooner when the design has settled (from the 15th on,
               once the sharpness has been reached, when the design hardly changes or the objective stays flat for 5 iterations
               -- and every constraint is kept).  It also sets the pace of the sharpening and the size of the steps
 filter_radius: the smallest member size scale, mm (default 1.5 elements)
@@ -3752,33 +3815,41 @@ WHERE on it.
 
 ## Meshing for the solver of another program
 
-Meshing: a body as a mesh of elements, for the solver of another program.
+Meshing: a body as a mesh of elements, for the solver of another program.  Every kind of element and every way of meshing is a function of its own, with only the arguments it uses.
 
     from fieldes import *
 
     part = ...                                                   # any body, in mm
-    mesh = mesh_volume(part, element_size=2.0)                   # tetrahedra of about 2 mm that follow the surface
-    mesh = mesh_volume(part, 2.0, element='hex')                 # hexahedra (each tetrahedron cut into four)
-    mesh = mesh_volume(part, 2.0, element='tet10')               # 10-node tetrahedra, the edges on the surface curved
-    mesh = mesh_volume(part, graded_size(part, wall_size=0.5, growth_rate=1.2, max_size=4.0))      # 0.5 mm at the surface, growing inwards
-    mesh = mesh_volume(air, 2.0, boundary_layers=inflation_layers(body, first_height=0.05, growth_rate=1.2, layers=6),
+
+    # Volume
+    mesh = mesh_tet4(part, element_size=2.0)       # tetrahedra of 4 nodes, about 2 mm, that follow the surface
+    mesh = mesh_tet10(part, 2.0)                     # tetrahedra of 10 nodes: a node in the middle of every edge, the edges on the surface curved
+    mesh = mesh_hex_quanta(part, 2.0)                # hexahedra only, the cubes of a Cartesian grid: the boundary is a staircase of whole cubes (Salome's Body Fitting with Quanta)
+    mesh = mesh_hex20_quanta(part, 2.0)              # the same cubes with a node in the middle of every edge (20 nodes)
+    mesh = mesh_cartesian(part, 2.0)                 # hexahedra inside, and the cells the surface cuts out of the cubes at the surface (Salome's Body Fitting)
+    mesh = mesh_hex_extrusion(prism, 1.0)            # a body that is a prism along an axis: quadrilaterals swept along it, the surface exact (Salome's Extrusion 3D)
+    mesh = mesh_tet4(part, graded_size(part, wall_size=0.5, growth_rate=1.2, max_size=4.0))      # 0.5 mm at the surface, growing inwards
+    mesh = mesh_tet4(air, 2.0, boundary_layers=inflation_layers(body, first_height=0.05, growth_rate=1.2, layers=6),
                        zones={'inlet': inlet, 'outlet': outlet})                # a flow: prism layers on the wall, named patches
-    surface = mesh_surface(part, 1.0, element='quad')            # the surface alone, triangles or quadrilaterals
 
-    print(mesh)                                                  # what it has
-    print(mesh.quality().report())                               # skewness, orthogonal quality, aspect ratio ... and what they mean for a solver
-    mesh.export('part.msh')                                      # Gmsh;  .vtu .inp .bdf .unv .stl ...;  format='fluent' | 'openfoam'
+    # Surface
+    surface = mesh_surface_tri(part, 1.0)                # the surface alone, as triangles
+    surface = mesh_surface_quad(part, 1.0)           # the surface alone, as quadrilaterals
 
-The mesh is made by isosurface stuffing on the body's own field (a conforming tetrahedral mesh whose boundary vertices lie on the surface: see the kernel's
-tetmesh.hpp), and what is asked of it afterwards is done to that mesh:
+    print(mesh)                                      # what it has
+    print(mesh.quality().report())                   # skewness, orthogonal quality, aspect ratio ... and what they mean for a solver
+    mesh.export('part.msh')                          # Gmsh;  .vtu .inp .bdf .unv .stl ...;  format='fluent' | 'openfoam'
 
-    element_size    a number (mm), or a field -- a body whose value at a point is the element size there, a function of a list of points that returns their sizes,
+The tetrahedra are made by isosurface stuffing on the body's own field (a conforming tetrahedral mesh whose boundary vertices lie on the surface: see the kernel's
+tetmesh.hpp), and what is asked of them afterwards is done to that mesh.  Arguments that the functions have in common:
+
+    element_size    a number (mm), or -- for the tetrahedra -- a field: a body whose value at a point is the element size there, a function of a list of points that returns their sizes,
                     or graded_size(...).  The mesh starts at the largest size the field has and is refined where it asks for less: the longest edge of a tetrahedron
                     is bisected (with the tetrahedra round it, so the mesh stays conforming) until its edges are no longer than the size asked for there, and the new
-                    vertices of the boundary are put on the surface.  Without one: about forty elements along the longest side, no more than about a hundred thousand tetrahedra.
-    element         'tet' (linear tetrahedra), 'tet10' (10-node tetrahedra), 'hex' (hexahedra: every tetrahedron cut into four -- the elements have the shape the
-                    tetrahedra give them, which is not a hex-dominant mesh's, but they are hexahedra for a solver that needs them)
-    boundary_layers inflation_layers(...): prism layers on the surface of a solid, growing into the fluid (the first height, the growth rate, the number of layers)
+                    vertices of the boundary are put on the surface.  Without one: about forty elements along the longest side, no more than about a hundred thousand tetrahedra
+                    (about fifteen thousand cells for the hexahedra)
+    boundary_layers inflation_layers(...): layers on the surface of a solid, growing into the fluid (the first height, the growth rate, the number of layers): prisms with mesh_tet4,
+                    hexahedra with mesh_hex_extrusion
     zones           the names of the patches of the boundary: {'inlet': region, 'outlet': region}: a boundary face lies in the first region that holds its middle,
                     and the rest are `default_zone` ('wall'); feature_angle splits that one into walls at the creases
     cell_zones      the same for the cells: {'solid': region}; the rest are 'fluid'
@@ -3813,7 +3884,7 @@ Every cell as (kind, index in its kind): the order the writers number them in
 
 #### `Mesh.corners(self, kind, i, faces=False)`
 
-The corner nodes of cell i (or of face i) of that kind
+The corner nodes of cell i (or of face i) of that kind (a polyhedron's or a polygon's: its nodes, once each, in the order of its faces)
 
 #### `Mesh.export(self, path, format=None, **options)`
 
@@ -3824,6 +3895,14 @@ options: scale (a factor for the coordinates: 0.001 for metres), zones=False (wi
 #### `Mesh.face_count(self, kind=None, zone=None)`
 
 *(no description yet)*
+
+#### `Mesh.polygons(self)`
+
+The boundary faces of more than four nodes, as tuples of nodes
+
+#### `Mesh.polyhedra(self)`
+
+The polyhedra: for each, its faces as tuples of nodes, turned outward
 
 #### `Mesh.quality(self, full=False, max_cells=150000)`
 
@@ -3856,51 +3935,150 @@ the ratio of the longest edge to the shortest, the volume of an element beside t
 
 *(no description yet)*
 
+### `curvature_size(body, element_size, segments=12, min_size=None, growth_rate=1.3)`
+
+An element size that follows the curvature of a body: `element_size` where its surface is flat, and smaller where it curves, so that a hole, a fillet or a small sphere has `segments` elements round
+a full circle (12: a chord is 3.4 % of the radius off the circle) -- the size at a curve of radius R is 2 pi R / segments, not below `min_size` (default a quarter of `element_size`) -- growing back
+to `element_size` by `growth_rate - 1` mm for every mm from the curve.  It is what mesh_tet4's element_size takes, like graded_size:
+
+    mesh = mesh_tet4(part, curvature_size(part, element_size=3.0, segments=16))
+
+Edges and corners are not curves: they are found by the mesher itself.  `body` is the body that is meshed
+
 ### `graded_size(wall, wall_size, growth_rate=1.2, max_size=None)`
 
 An element size that grows with the distance from a surface: `wall_size` at the surface of `wall`, and `growth_rate - 1` more for every mm from it (1.2: the
-size has grown by 0.2 mm after one mm), up to `max_size`.  It is what mesh_volume's element_size takes for a mesh that is fine where the flow or the stress is
+size has grown by 0.2 mm after one mm), up to `max_size`.  It is what mesh_tet4's element_size takes for a mesh that is fine where the flow or the stress is
 and coarse elsewhere:
 
-    mesh = mesh_volume(air, graded_size(body, wall_size=0.5, growth_rate=1.2, max_size=8))
+    mesh = mesh_tet4(air, graded_size(body, wall_size=0.5, growth_rate=1.2, max_size=8))
 
 `wall` is a body: the distance is that from the surface of it, on either side (a solid in a fluid, or the fluid's own boundary)
 
 ### `inflation_layers(on, first_height, growth_rate=1.2, layers=5)`
 
-Layers of prisms on the surface of a solid, for a flow: `layers` of them, the one at the wall `first_height` thick and each one `growth_rate` times as thick
-as the one before it (the first height is what sets y+: about y+ times the viscosity over the friction velocity).  mesh_volume's `boundary_layers` takes it:
+Layers of prisms (mesh_tet4) or of hexahedra (mesh_hex_extrusion) on the surface of a solid, for a flow: `layers` of them, the one at the wall `first_height` thick and each one
+`growth_rate` times as thick as the one before it (the first height is what sets y+: about y+ times the viscosity over the friction velocity).  mesh_tet4's `boundary_layers` takes it:
 
     air = difference(box_of_air, body)
-    mesh = mesh_volume(air, 2.0, boundary_layers=inflation_layers(body, first_height=0.05, growth_rate=1.2, layers=6))
+    mesh = mesh_tet4(air, 2.0, boundary_layers=inflation_layers(body, first_height=0.05, growth_rate=1.2, layers=6))
 
 `on` is the solid whose surface the layers grow from, into the mesh.  The core of the mesh is the body with that much taken off the surface, the layers are
 what is between it and the surface: they are made of its boundary, moved to the surface in steps, so the layers follow it -- and at a sharp convex corner,
 where the direction of the surface is not defined, they are skewed: round the corners of a body that needs good layers.  The total thickness must be less than
 half of the thinnest passage of the fluid
 
-### `mesh_surface(body, element_size=None, element='tri', zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None)`
+### `locking_note(wall, h)`
 
-The surface of `body` as a mesh of triangles ('tri') or quadrilaterals ('quad': every triangle cut into three, so the quadrilaterals are about half the
-size of the triangles).  It is the boundary of the tetrahedra that mesh_volume makes, so it follows the body's surface and is conforming, and it costs the
-volume mesh; its arguments are mesh_volume's
+The advice about linear tetrahedra for a body whose walls (the thickness that a tenth of its surface is thinner than) are `wall` mm and whose elements are `h` mm: a sentence when fewer than THIN_FEW_ACROSS
+elements lie across them, else None
 
-### `mesh_volume(body, element_size=None, element='tet', boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=6, optimize=True, bounds=None, name=None)`
+### `mesh_cartesian(body, element_size=None, threshold=10.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None)`
 
-The inside of `body` as a mesh of elements (see the description of this module).
+The inside of `body` as a grid of cubes CUT by the body: hexahedra inside it, and where the surface cuts a cube the cell of what is inside -- a tetrahedron, prism, pyramid, hexahedron or polyhedron by its faces --
+with its nodes on the surface (Salome's Body Fitting).
 
-    mesh = mesh_volume(part, element_size=2.0)
+    mesh = mesh_cartesian(part, 2.0)
+
+element_size    the edge of the cubes in mm; default: about fifteen thousand cubes
+threshold       a cube that the surface cuts is made only when what is inside holds more than 1 / threshold of it (10 by default: a tenth of a cube; Salome's default is 4, a quarter, which leaves
+                the corners of the staircase round a concave edge open); 1e9 makes every one
+axes            the grid turned, as for mesh_hex_quanta
+zones, default_zone, feature_angle, cell_zones, bounds, name   as for mesh_tet4
+
+The grid has one size: no size field and no layers.
+
+### `mesh_hex20_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None)`
+
+The inside of `body` as HEXAHEDRA of 20 nodes only: the cubes of mesh_hex_quanta with a node in the middle of every edge.
+
+    mesh = mesh_hex20_quanta(part, 2.0)
+
+All the arguments are the ones of mesh_hex_quanta.
+
+### `mesh_hex_extrusion(body, element_size=None, axis='z', layers=None, smooth=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None)`
+
+A body that is a PRISM along `axis` as hexahedra: its end face meshed with quadrilaterals and swept along it, the surface exact (Salome's Extrusion 3D).  A body that is not a prism along the axis is refused.
+
+    mesh = mesh_hex_extrusion(plate_with_holes, 1.0)             # along z, the cells about 1 mm across
+
+element_size    the cell edge in mm; default: about fifteen thousand cells
+axis            the axis the body is a prism along: 'x', 'y' or 'z'
+layers          the layers along it: a whole number, or a list of their thicknesses in mm (default: cells of the element size)
+smooth          rounds of smoothing the hexahedra (default 10)
+boundary_layers inflation_layers(...): layers of hexahedra on the surface of a solid, growing into the mesh
+zones, default_zone, feature_angle, bounds, name   as for mesh_tet4
+
+### `mesh_hex_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None)`
+
+The inside of `body` as HEXAHEDRA of 8 nodes only: the cubes of a Cartesian grid, those the surface cuts included when `quanta` of them is inside (Salome's Body Fitting with Quanta).  Every cell is
+a perfect cube; the boundary is a staircase of whole cubes.
+
+    mesh = mesh_hex_quanta(part, 2.0)
+
+element_size    the edge of the cubes in mm; default: about fifteen thousand cubes
+quanta          a cube that the surface cuts is a whole cube of the grid when what is inside holds at least this part of it (0.5 by default, so that the mesh has about the volume of the body), and is left out when it holds less
+axes            the grid of cubes turned, as the rotation= of a placement is -- (x, y, z) in degrees: a box turned by 30 degrees about z is a block of perfect cubes along its own sides with axes=(0, 0, 30)
+zones, default_zone, feature_angle, cell_zones, bounds, name   as for mesh_tet4
+
+The grid has one size: no size field and no layers.  The cubes with a node in the middle of every edge are mesh_hex20_quanta.
+
+### `mesh_surface_quad(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None)`
+
+The surface of `body` as a mesh of QUADRILATERALS: every triangle of mesh_surface_tri cut into three, so the quadrilaterals are about half the size of the triangles.
+
+    surface = mesh_surface_quad(part, 1.0)
+
+All the arguments are the ones of mesh_surface_tri.
+
+### `mesh_surface_tri(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None)`
+
+The surface of `body` as a mesh of TRIANGLES.  It is the boundary of the tetrahedra that mesh_tet4 makes, so it follows the body's surface and is conforming, and it costs the volume mesh; its arguments are
+mesh_tet4's.
+
+    surface = mesh_surface_tri(part, 1.0)
+
+The surface as quadrilaterals is mesh_surface_quad.
+
+### `mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None)`
+
+The inside of `body` as a mesh of TETRAHEDRA of 10 nodes: the tetrahedra of mesh_tet4 with a node in the middle of every edge, the ones on the surface put on it (the edges there curved).
+
+    mesh = mesh_tet10(part, element_size=3.0)
 
 element_size    the element edge in mm, or a field (see graded_size); default: about 40 elements along the longest side, no more than about a hundred thousand tetrahedra
-element         'tet', 'tet10' or 'hex'
-boundary_layers inflation_layers(...): prisms on the surface of a solid
 zones           {name: region}: the patches of the boundary; the rest are `default_zone`; feature_angle (degrees) splits those at the creases
 cell_zones      {name: region}: zones of cells; the rest are 'fluid'
-curved          the nodes the elements have in the middle of edges and faces on the boundary (tet10, hex) lie on the surface
-smooth          rounds of moving the nodes of poor tetrahedra toward the middle of their neighbours (along the surface for the nodes on it), where that makes the
-                worst of their tetrahedra better; 0 for none
+curved          the nodes in the middle of the edges and faces on the boundary lie on the surface (False: halfway between the corners)
+smooth, optimize, bounds, name   as for mesh_tet4
+
+Layers of prisms (boundary_layers) are made with mesh_tet4: a prism has no node in the middle of every edge of the tetrahedra.
+
+### `mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None)`
+
+The inside of `body` as a mesh of TETRAHEDRA of 4 nodes that follow its surface (see the description of this module).
+
+    mesh = mesh_tet4(part, element_size=2.0)
+
+element_size    the element edge in mm, or a field (see graded_size); default: about 40 elements along the longest side, no more than about a hundred thousand tetrahedra
+boundary_layers inflation_layers(...): layers of prisms on the surface of a solid, growing into the mesh (Salome's Viscous Layers)
+zones           {name: region}: the patches of the boundary; the rest are `default_zone`; feature_angle (degrees) splits those at the creases
+cell_zones      {name: region}: zones of cells; the rest are 'fluid'
+smooth          rounds of moving the nodes of poor tetrahedra toward the middle of their neighbours (default 6); 0 for none
 optimize        mend the poor tetrahedra: twice the nodes are moved as `smooth` says and edges and faces are swapped (False: the mesh as it comes, the fastest)
-bounds         ((x0, y0, z0), (x1, y1, z1)): the box to mesh in, when the body's cannot be found
+bounds          ((x0, y0, z0), (x1, y1, z1)): the box to mesh in, when the body's cannot be found
+
+### `thin_size(shape, lo, hi, h, budget, tets_per_cube=12.0, hard=4000000, across=None, walls=None, unit='tetrahedra')`
+
+The element size that holds the thin walls of a body (H193, the user, 2026-11-13: "make it recoginze features properly"; found 2026-11-14: a shell box of walls 1.2 mm was refused at its default size, a 1.5 mm
+plate kept 48 % of its volume, a tube with a wall of 1 mm 1 %).  The tetrahedra are cut from a lattice of spacing h, and a wall that is not about as thick as the spacing is lost or half filled: measured, a plate
+of 1.5 mm held 41 % of its volume at spacings of 2.5 and 1.9 mm and all of it from 1.5, the curved wall of a tube 58 % at one spacing across and all of it from 1.25.  The kernel gives a sample of the lattice
+vertices that lie near the surface (probeSurface); the thickness of the material is measured there, along the normal into the body, and when THIN_AREA of them or more lie in walls thinner than THIN_AT_RISK
+spacings the size is made THIN_ACROSS elements across the wall that a tenth of the surface is thinner than (the thinner walls beyond it are left to chance, as a rib is).  The size is then looked at again at that
+size (a thinner wall may be found), and when the tetrahedra there are more than `budget` it is made coarser again as far as the budget asks, never coarser than the walls over THIN_COARSEST: the budget
+gives way to the walls, up to `hard` tetrahedra.  Netgen does the same by restricting the local size by the distance across a thin part (stlgeom RestrictHChartDistOneChart).
+`unit` names what is counted in the note ('hexahedra' for a grid of cubes: `tets_per_cube` is then the 2 vertices that a cubic lattice has to the cube, and the count the cells).
+Returns (the size, a note on what was found or None)
 
 ## CAD operations: turning, mirroring, patterns, revolving, holes, measuring
 
@@ -4069,7 +4247,7 @@ Your own solvers: write the equations of a problem in Python, and FielDes meshes
     result                                                  # displayed: the temperature of the plate, with the elements behind it (the Elements button)
     print(result.max_temperature)
 
-`solve(name, part, element_size=None, **parameters)` meshes `part` with tetrahedra (`mesh_volume`, `element_size` as there; or give it a mesh you made), makes a `Problem` of the
+`solve(name, part, element_size=None, **parameters)` meshes `part` with tetrahedra (`mesh_tet4`, `element_size` as there; or give it a mesh you made), makes a `Problem` of the
 mesh and calls the solver `name` with the problem and the parameters.  The solver gives back the fields it found -- one number at every node of the mesh -- and, if it likes,
 some numbers.  The result is displayed like the result of any analysis: coloured by the field, with the mesh behind it.
 
@@ -4175,7 +4353,7 @@ temperature and the place -- then the temperature is found by iterating: the con
 
 ### `solve(name, part, element_size=None, **parameters)`
 
-Runs the solver `name` on `part` (see the module): the part is meshed with tetrahedra -- `element_size` as in mesh_volume, or give `part` as a mesh you made -- and the
+Runs the solver `name` on `part` (see the module): the part is meshed with tetrahedra -- `element_size` as in mesh_tet4, or give `part` as a mesh you made -- and the
 solver is called with the problem and `parameters`.  Returns a SolverResult
 
 ### `solver(name, description='', equation='')`
@@ -4353,7 +4531,7 @@ conditions    what the design is for, a list of optimization conditions made fro
               (keep_below, keep_above, keep_between, or one comparison written whole, optimization_condition(max_von_mises_1 <= 90)) and at most one goal,
               minimize(x) or maximize(x), x a result of the analysis or a formula of them (mass_1 + 0.01 * compliance_1).  Without a goal the search stops at the first
               design that keeps the conditions
-max_evaluations  how many designs it tries at most (default 20 + 10 for each variable)
+max_evaluations  how many designs it tries at most (default 20; with more than 18 variables, the number of variables and 2)
 tolerance     it stops when the designs it is looking at are this close, of the ranges (default 0.2 %)
 apply         True writes the best numbers into the var()s of the text when the run is over (otherwise they hold for this run only)
 
@@ -4760,6 +4938,25 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
+### `Body`
+
+A BODY: a 3D shape.  What makes it a different type from a field is its FIELD -- a field is any value at every point of space (a ramp, a stress, noise); the field of a body is always
+the TRUE SIGNED DISTANCE to its surface (negative inside, 0 on the surface, the distance to the surface outside), whatever made the body: a box, a union, a difference with a blend, a smoothing,
+an offset, a scale that is not the same in every direction, an optimized part, an import (the user, 2026-11-12 and 2026-11-13: "A Field can be anything arbitrary, a body is always TRUE
+SIGNED DISTANCE").  The type keeps it, and no operation can give a body that is not a distance: everything the library returns that is a body is a Body, made so by one funnel at the
+library's door (fieldes.stdlib.body_law), not by each operation.
+
+`body.field` is that distance, and it is what every reading of a body is: `body(x, y, z)`, `evaluate`, `sample_grid`, `field_range`, the field viewers, and a function that makes a field from
+a body (`distance_to_surface`, `normal_field`, `wall_thickness` ...).  The distance has no formula for the inside of a union, a difference, a smoothing (the nearest point of the surface may
+lie on a crease: a search), and the numbers of its var()s change without a run of the script, so `field` is made from the surface of the body, finely meshed, and the kernel's exact
+distance to those triangles -- made the first time something reads it, for the numbers the body has then, and kept (see fields.exact_of).  `ptr`, the tree of the body as it is made,
+is what is MESHED (the viewport, the exports, the analyses) and what the library builds the next body from: its zero set is the surface, which is all a drawing and a boolean need, and
+it is the same surface as the zero set of `field`.
+
+#### `Body.remap(self, x_, y_, z_)`
+
+Performs the remapping f(x_, y_, z_)
+
 ### `Shape`
 
 *(no description yet)*
@@ -4804,6 +5001,12 @@ This is convenient to chain transforms without deep call trees.
 #### `Shape.cos(self)`
 
 *(no description yet)*
+
+#### `Shape.distance(self, resolution=None)`
+
+The signed distance from every point to the surface of this body (negative inside): its exact distance, whatever made the body -- a union, a smoothing, a blend and the rest have fields
+that are bounds or sums, and this is the value (H190: "ALL BODIES ARE ALWAYS TRUE DISTANCE FIELDS ... as a part of the type itself").  See fieldes.stdlib.fields.exact_of.  What
+is drawn is the body's own field, whose surface is the same
 
 #### `Shape.exp(self)`
 
@@ -4891,6 +5094,11 @@ quality is the negative order of magnitude of maximum error
 #### `Shape.wrap(t)`
 
 Ensures that the input argument is a Shape, converting constants
+
+### `become_body(out)`
+
+`out`, a shape that something has just made, is a BODY when it is one -- of the kind 'solid' or 'lattice' (a 2D shape is drawn flat and a field, a point, a curve, a surface are what they are):
+it is made one in place, the same object. See Body
 
 ### `field_shape(ptr)`
 

@@ -160,6 +160,8 @@ protected:
     QString workingDirectory() const;
 
     bool loadFile(QString f, bool reload=false);
+    /*  A model file that FielDes imports (.step .stp .stl .obj .ply .3mf .glb .gltf) opened as a file is a new script with its import statement, saved next to it (H180)  */
+    bool openImported(const QString& path);
 
     /*  Adds import code for a model file to the script  */
     void importModel(const QString& path);

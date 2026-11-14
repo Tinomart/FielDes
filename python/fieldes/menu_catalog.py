@@ -130,13 +130,22 @@ HINTS = {
                           'Select points first (random_points)'),
     'delaunay_lattice': tr('A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were '
                            'made in.  Select points first (random_points)'),
-    'instance': tr('A linked copy of the selected model: the same shape, following every change of it, that can only be moved and rotated (Ctrl+D)'),
+    'instance': tr('A linked copy of the selected model: the same shape, following every change of it, with a place of its own: moved, turned and scaled by its own gizmo (Ctrl+D)'),
     'keep_below': tr('The optimization keeps the selected result at most a limit: keep_below(result, limit)'),
     'keep_above': tr('The optimization keeps the selected result at least a limit: keep_above(result, limit)'),
     'keep_between': tr('The optimization keeps the selected result between a lower and an upper limit: keep_between(result, lower, upper)'),
     'minimize': tr('The optimization makes the selected result as small as it can be (one goal at most): minimize(result)'),
     'maximize': tr('The optimization makes the selected result as large as it can be (one goal at most): maximize(result)'),
     'optimization_condition': tr('One condition written whole, a comparison of analysis results: optimization_condition(max_von_mises_1 <= 90). It must have an analysis result in it'),
+    # the meshing functions of the Engineering menu: what each one makes
+    'mesh_tet4': tr('The body as tetrahedra of 4 nodes that follow its surface'),
+    'mesh_tet10': tr('The body as 10-node tetrahedra (a node in the middle of every edge, those of the boundary on the surface): the element for the stress of a part'),
+    'mesh_hex_quanta': tr('The body as the cubes of a Cartesian grid (hexahedra only, a staircase boundary, every cell a perfect cube)'),
+    'mesh_hex20_quanta': tr('The same cubes with a node in the middle of every edge (the 20-node hexahedron)'),
+    'mesh_cartesian': tr('A grid of cubes cut by the body: hexahedra inside it, and where the surface cuts a cube the cell that is inside, with its nodes on the surface'),
+    'mesh_hex_extrusion': tr('A body that is a prism along an axis: its end face meshed with quadrilaterals and swept along it, the surface exact'),
+    'mesh_surface_tri': tr('The surface of the body as triangles'),
+    'mesh_surface_quad': tr('The surface of the body as quadrilaterals'),
 }
 
 # A profile or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
@@ -265,6 +274,7 @@ PRIMITIVES = [
     # What an analysis is given
     ('fixed', 'Supports and loads', 'fixed()'),
     ('force', 'Supports and loads', 'force(vector=(0, -100, 0))'),
+    ('pressure', 'Supports and loads', 'pressure(value=1.0)'),
     ('gravity', 'Supports and loads', 'gravity()'),
     ('thermal_expansion', 'Supports and loads', 'thermal_expansion({temp})'),
     ('fixed_temperature', 'Thermal conditions', 'fixed_temperature(value={temp})'),
@@ -330,8 +340,14 @@ PARAMS = {
     'modal_analysis': {'modes': 6, 'es': '$es'},
     'thermal_analysis': {'temp': 20, 'watts': 5, 'es': '$es'},
     'fluid_analysis': {'speed': 100, 'es': '$es'},
-    'mesh_volume': {'es': '$es'},
-    'mesh_surface': {'es': '$es'},
+    'mesh_tet4': {'es': '$es'},
+    'mesh_tet10': {'es': '$es'},
+    'mesh_hex_quanta': {'es': '$es'},
+    'mesh_hex20_quanta': {'es': '$es'},
+    'mesh_cartesian': {'es': '$es'},
+    'mesh_hex_extrusion': {'es': '$es'},
+    'mesh_surface_tri': {'es': '$es'},
+    'mesh_surface_quad': {'es': '$es'},
     'fixed_temperature': {'temp': 20},
     'heat_input': {'watts': 5},
     'heat_generation': {'watts': 5},
@@ -371,6 +387,7 @@ def _apply_params(name, values):
 BODY_CONDITIONS = {
     'fixed': 'fixed({region})',
     'force': 'force({region}, vector=(0, -100, 0))',
+    'pressure': 'pressure({region}, value=1.0)',
     'fixed_temperature': 'fixed_temperature({region}, value={temp})',
     'heat_input': 'heat_input({region}, watts={watts})',
     'heat_generation': 'heat_generation({volume}, watts={watts})',
@@ -497,9 +514,17 @@ OPERATIONS = [
     # (the optimization conditions are listed after parametric_optimization, in a submenu of their own)
     ('thermal_analysis', 'Simulations', 'thermal_analysis({body})', 'optional'),
     ('fluid_analysis', 'Simulations', 'fluid_analysis({body})', 'optional'),
-    # Meshing: the body as a mesh of elements for the solver of another program (its own category of the Engineering menu)
-    ('mesh_volume', 'Simulations', 'mesh_volume({body})', 'optional'),
-    ('mesh_surface', 'Simulations', 'mesh_surface({body})', 'optional'),
+    # Meshing: the body as a mesh of elements for the solver of another program (its own category of the Engineering menu, in two sections, Volume and Surface: see SUBMENUS).  Every kind of element and every
+    # way of meshing is a function of its own with only its own arguments (the user, 2026-11-14: "IF THEY NEED DIFFERENT INPUTS, THEN YOU FUCKING MAKE THEM SEPARATE FUNCITONS"; "Make two sections in meshing
+    # called Volume and surface")
+    ('mesh_tet4', 'Simulations', 'mesh_tet4({body})', 'optional'),
+    ('mesh_tet10', 'Simulations', 'mesh_tet10({body})', 'optional'),
+    ('mesh_hex_quanta', 'Simulations', 'mesh_hex_quanta({body})', 'optional'),
+    ('mesh_hex20_quanta', 'Simulations', 'mesh_hex20_quanta({body})', 'optional'),
+    ('mesh_cartesian', 'Simulations', 'mesh_cartesian({body})', 'optional'),
+    ('mesh_hex_extrusion', 'Simulations', 'mesh_hex_extrusion({body})', 'optional'),
+    ('mesh_surface_tri', 'Simulations', 'mesh_surface_tri({body})', 'optional'),
+    ('mesh_surface_quad', 'Simulations', 'mesh_surface_quad({body})', 'optional'),
     ('solve', 'Simulations', "solve('heat', {body})", 'optional'),
     # What works over an analysis of any domain, and so is in no category of the Engineering menu: it is given the result of an analysis (a simulation) and
     # finds the best numbers for the var()s the model is made of
@@ -523,6 +548,9 @@ QUICK = ('center', 'bounding_box', 'distance_to_point', 'radial_field')
 
 # Entries of the Engineering menu that are in a submenu of their own, by the name of the submenu: the optimization conditions
 SUBMENUS = {name: tr('Optimization condition') for name in ('keep_below', 'keep_above', 'keep_between', 'minimize', 'maximize', 'optimization_condition')}
+# ... and the two sections of the Mesh category: Volume (the elements that fill a body) and Surface (the elements of its surface)
+SUBMENUS.update({name: tr('Volume') for name in ('mesh_tet4', 'mesh_tet10', 'mesh_hex_quanta', 'mesh_hex20_quanta', 'mesh_cartesian', 'mesh_hex_extrusion')})
+SUBMENUS.update({name: tr('Surface') for name in ('mesh_surface_tri', 'mesh_surface_quad')})
 
 # What is the first entry of the Engineering menu, on its own, above the categories of the domains: nothing now.  The optimisations -- topology_optimization, parametric_optimization -- and what they are
 # given -- an analysis result, an optimization condition -- are the category Optimization of the menu, with a picture of their own each (the user, 2026-11-02: "this should be ordered into its own
@@ -584,7 +612,7 @@ def catalog():
                       + [{'name': b['name'], 'group': 'Custom blocks', 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['primitive']],
         # (`other`: takes the other selected models; `needs_other`: is not offered without a second model)
-        'operations': [dict({'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True, 'quick': n in QUICK, 'top': n in TOP},
+        'operations': ([dict({'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True, 'quick': n in QUICK, 'top': n in TOP},
                             **({'section': SECTIONS[g]} if g in SECTIONS else {}), **({'hint': HINTS[n]} if n in HINTS else {}),
                             **({'domain': DOMAIN_OF_FUNCTION[n]} if g == 'Simulations' and n in DOMAIN_OF_FUNCTION else {}),
                             **({'submenu': SUBMENUS[n]} if n in SUBMENUS else {}),
@@ -592,7 +620,7 @@ def catalog():
                                                                                        {'type': 'lattice'} if g in ('Periodic lattices', 'Non-periodic lattices') else {}))
                        for n, g, _, o in OPERATIONS]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'other': False, 'type': 'block', 'doc': b['doc']}
-                         for b in blocks if b['operation']],
+                         for b in blocks if b['operation']]),
         'python': [{'name': n, 'label': l, 'doc': d} for n, l, d, _code in PYTHON],
         'sections': SECTION_MENUS,
     })
@@ -1195,7 +1223,10 @@ def _images_after(r, head, expression):
             break
     else:
         return ''
-    if r.get('body') or r.get('other') or r.get('points'):
+    # (only what is made OF the models selected -- the points a body of points was made through -- has its images in them already.  A symmetry has to be selected to be in use: the window sends it as `body`
+    # for every entry that can be made from the selection, and a morph body made while it was selected was written with no images, the box beside it with them -- H204, the user, 2026-11-14: "when symmetry is
+    # active morph body ... DO NOT AUTOMATICALLY GET MIRRORED ON CREATION LIKE OTHER BODIES")
+    if r.get('_from_selection') or r.get('points'):
         return ''
     text = sym.post_for(r.get('var') or (r['name'] + '_1'), expression, r, head)
     return sym.POST + text if text else ''
@@ -1292,6 +1323,7 @@ def _call(r):
     if kind == 'primitive' and name in FROM_SELECTION and selected:
         built = _from_selection(name, selected, values)
         if built:
+            r['_from_selection'] = True             # (made of the models selected: no images of its own -- see _images_after)
             return built
     if kind == 'primitive' and name in BODY_CONDITIONS and selected:
         # a condition made of the regions selected: whatever is selected says where it acts -- a surface, a field, a body.  The conditions

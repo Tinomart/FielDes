@@ -870,7 +870,9 @@ def _report_numeric(ctx, constraints, direction, samples, supports=None, bar=Non
         extent = max([max(p[a] for p in points) - min(p[a] for p in points) for a in range(3)] or [ctx.size]) if points else ctx.size
         # (two flagged places closer than two lengths of the rule are one place to whoever makes the part -- and the samples of a feature as small as the rule are sparse where the sampler thins them, a hole of 0.3 mm
         # for a gap rule of 0.4 had one sample of its wall 0.41 mm from the others: two regions where there is one hole)
-        link = _link_distance(broken_points, 2.0 * limit if unit == 'mm' else 0.0, extent / 8.0)
+        # (a bridge asks for less: the limit of a longest bridge is a length of material, not the size of a flaw -- two roofs 26 mm apart over a rule of 20 mm are two places, and tests/internal/mfg_a7_bridge_spans.py,
+        # which asks for two regions for the spans of 22 and 30 mm, failed on the floor of 40 mm (it made them one); without a floor each roof fell into several, 9 of them: the floor is the limit itself, 20 mm)
+        link = _link_distance(broken_points, (1.0 if rule == 'max_bridge' else 2.0) * limit if unit == 'mm' else 0.0, extent / 8.0)
         regions = []
         for group in _clusters(broken_points, link)[:12]:
             xs, ys, zs = [p[0] for p in group], [p[1] for p in group], [p[2] for p in group]

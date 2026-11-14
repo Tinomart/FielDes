@@ -54,6 +54,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "libfive/run_progress.hpp"
 
 class QMenu;
+class QLineEdit;
 namespace FielDes { class ScenePanel; }
 
 #include "libfive/eval/eval_jacobian.hpp"
@@ -111,6 +112,11 @@ public slots:
     /*  The shapes of a run.  With keepFromLine >= 0 (a partial picture: the run is not over) the shapes shown that come from statements at or
      *  after that line, and are not in the list, stay -- they are not made yet in this run, and a render that is going on is not stopped  */
     void setShapes(QList<Shape*> shapes, int keepFromLine = -1);
+    /*  H208 (the user, 2026-11-14: "When setting a cached object from visible to hidden and back and forth and so on, it is not instant. It should be."): the eye of a model that has a shape is a switch of that
+     *  shape, not a run of the script.  The shape of the statement on `line0` is parked -- out of the picture, with the mesh it has -- or put back; false when there is nothing to park or to put back (the
+     *  model was never drawn since the last run, it is not one shape, it is not done, it is a result): the script is run as it was.  A run of the script drops what is parked, which it made again  */
+    bool parkShape(int line0);
+    bool unparkShape(int line0);
 
     /*  Model-tree selection: highlight the shapes displayed by these
      *  (0-based) script lines  */
@@ -330,6 +336,9 @@ public slots:
     bool fieldViewer(const QString& key, FieldViewSettings& s, QVector3D& regionMin, QVector3D& regionMax) const;
     /*  The card changed a viewer: its axis, its radius, its opacity  */
     void setFieldView(QString key, FieldViewSettings s);
+    /*  H191: the ends of the colours typed in the legend of the field viewer's card / the Section card (or, `automatic`, the values' own ends again)  */
+    void setFieldRange(QString key, float lo, float hi, bool automatic);
+    void setSliceColourRange(float lo, float hi, bool automatic);
     /*  Where a field's icon is on the screen (for scripted tests); false when it is not in the scene  */
     bool fieldIconPoint(const QString& key, QPoint& out) const;
     /*  Where a part of the gizmo of an open viewer's disc is on the screen (for scripted tests: 1, 2 the arrows in its plane, 3 the dot, 4 the arrow along its normal); false when there is none  */
@@ -876,6 +885,8 @@ protected:
     QStringList fieldKeysInside(const QRect& r) const;
 
     QList<Shape*> shapes;
+    QHash<int, QPair<Shape*, Settings>> m_parked;          // (the shapes whose eye was closed since the last run, by their line, with the render settings they had: see parkShape)
+    void afterParking();
     bool settings_enabled=true;
     Settings settings;
     libfive::BRepAlgorithm alg = libfive::BRepAlgorithm::DUAL_CONTOURING;
@@ -890,6 +901,17 @@ protected:
     bool show_legends=true;
     QSet<QString> hidden_legends;                  // closed with their x (by label)
     QVector<QPair<QRect, QString>> legend_close;   // the x buttons drawn, for clicks
+    // H191 (the user, 2026-11-13: "Legend bounds should be adjustable in the legend"): the lowest and the highest number of every bar the viewport draws are typed over by a click on them, and an
+    // Auto under the bar gives the ends of the values back.  `lo` / `hi` are the ends as they are shown (in the unit chosen); the range is kept by the shapes (Shape::setUserRange) and by the
+    // viewer (m_choiceRanges), so that the next run's shapes have it too
+    struct LegendEnd { QRect rect; QString label; bool high; float lo, hi; };
+    QVector<LegendEnd> legend_ends;
+    QVector<QPair<QRect, QString>> legend_auto;
+    QLineEdit* m_legendEdit = nullptr;
+    LegendEnd m_legendEditing;
+    void editLegendEnd(const LegendEnd& end);
+    void commitLegendEdit();
+    QHash<QString, QPair<float, float>> m_choiceRanges;     // "result:<channel name>" or "field:<legend label>" -> the ends typed, as the program keeps them
     QVector<QRectF> bottom_items;                  // legends and scale bar drawn (the render bar avoids them)
     bool y_up=false;
 
@@ -942,6 +964,14 @@ protected:
     ResultPanel* m_resultPanel=nullptr;
     void updateResultPanel();
     void placeResultPanel();
+    /*  The key of the boundary conditions, a card of its own (H191): what it should show, kept here, and the card made and shown when the paint has seen it change  */
+    KeyCard* m_bcCard=nullptr;
+    bool m_bcWanted=false;
+    QString m_bcTitle;
+    QList<int> m_bcCats;
+    void updateBcCard(bool wanted, const QString& title, const QList<int>& cats);
+    void applyBcCard();
+    void placeBcCard();
     QTimer m_stepTimer;                 // play: the next step of the results
     QTimer m_flowTimer;                 // the particles on the streamlines of a flow move
     /*  An optimisation that is running: the kernel puts a picture of the design after every iteration (run_progress::liveView) -- the
@@ -993,6 +1023,10 @@ private:
 
 public:
     ScenePanel* scenePanel() const { return m_scene; }
+    /*  The lowest and the highest number of the legend bars the viewport draws, and the Auto of those that have typed ends, as "label|high or low or auto|x|y|w|h" in the viewport's
+     *  coordinates (H191, for the scripted tests); and the same numbers of the result card's colour scale as rectangles of the screen  */
+    QStringList legendEndsDump() const;
+    QRect resultEndLabelGlobal(bool high) const { return m_resultPanel ? m_resultPanel->endLabelGlobal(high) : QRect(); }
     /*  The entries of File > Export model: what can be written of the model displayed on `line` (0-based) to a file -- a mesh of its surface, a field on a grid, the finite-element
      *  model and the results of an analysis, a mesh for another solver.  A file is not made by a menu of the viewport: those write code  */
     void addExportEntries(QMenu* into, int line);
@@ -1060,6 +1094,7 @@ protected:
         float radius = 0;                        // 0: not chosen: half the render region
         float opacity = 0.9f;
         bool rangeKnown = false;
+        bool rangeTyped = false;                 // (the ends were typed in the viewer's legend, H191: not found from the field)
         QPair<float, float> range;               // the colours of the field, found when it is first shown and kept until the script runs again
         Plane plane;
     };

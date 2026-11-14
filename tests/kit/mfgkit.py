@@ -262,12 +262,12 @@ def control(t, part, lo, hi, name, res_=3, rules=None):
 
 def sampler():
     ''' A plate 70 x 40 x 5 with a thin fin, two blocks with a narrow slot between them, an L of two walls, a round boss and a hole: a bit of everything a process asks about '''
-    plate = difference(box((70, 40, 5), position=(35, 20, 2.5)), cylinder(2.5, 7, position=(62, 8, -1)))
+    plate = difference(box((70, 40, 5), position=(35, 20, 2.5)), cylinder(2.5, 7, position=(62, 8, 2.5)))
     fin = box((0.5, 15, 12), position=(5.25, 12.5, 11))
     block_a = box((8, 15, 8), position=(14, 12.5, 9))
     block_b = box((8, 15, 8), position=(22.3, 12.5, 9))
     ell = union(box((12, 3, 10), position=(38, 6.5, 10)), box((3, 20, 10), position=(33.5, 15, 10)))
-    boss = cylinder(5, 10, position=(55, 28, 5))
+    boss = cylinder(5, 10, position=(55, 28, 10))
     part = plate
     for piece in (fin, block_a, block_b, ell, boss):
         part = union(part, piece)
@@ -315,7 +315,7 @@ def random_part(rng):
             desc.append('fin %.2f' % th)
         elif kind == 'post':
             r, h = rng.uniform(1.0, 5.0), rng.uniform(6, 20)
-            piece = cylinder(r, h, position=(x + 5, y + 5, tp))
+            piece = cylinder(r, h, position=(x + 5, y + 5, tp + h / 2))
             desc.append('post r%.1f' % r)
         elif kind == 'block':
             w, d, h = rng.uniform(4, 12), rng.uniform(4, 12), rng.uniform(5, 18)
@@ -335,7 +335,7 @@ def random_part(rng):
             desc.append('L')
         else:
             r = rng.uniform(0.5, 4.0)
-            part = difference(part, cylinder(r, tp + 2, position=(x + 6, y + 6, -1)))
+            part = difference(part, cylinder(r, tp + 2, position=(x + 6, y + 6, -1 + (tp + 2) / 2)))
             desc.append('hole r%.1f' % r)
             continue
         part = union(part, piece)

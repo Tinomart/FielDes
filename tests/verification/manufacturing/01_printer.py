@@ -20,16 +20,16 @@ t = Table('01 a printer\'s job: a thin fin, a narrow slot, a ledge and a round h
 
 # THE PART (written out here: boxes and cylinders, nothing computed).  In front: a fin 1.2 thick, two blocks 0.7 apart, an L of two walls, a round boss, a hole.  Behind: a wall with a ledge (left) and a
 # block with a horizontal hole (right)
-plate = difference(box((76, 90, 5), position=(38, 45, 2.5)), cylinder(2.5, 7, position=(62, 8, -1)))
+plate = difference(box((76, 90, 5), position=(38, 45, 2.5)), cylinder(2.5, 7, position=(62, 8, 2.5)))
 fin = box((1.2, 15, 12), position=(5.6, 12.5, 11))
 block_a = box((8, 15, 8), position=(14, 12.5, 9))
 block_b = box((8, 15, 8), position=(22.7, 12.5, 9))
 ell = union(box((12, 3, 10), position=(38, 6.5, 10)), box((3, 20, 10), position=(33.5, 15, 10)))
-boss = cylinder(5, 10, position=(55, 28, 5))
+boss = cylinder(5, 10, position=(55, 28, 10))
 wall = box((10, 40, 40), position=(5, 66, 25))
 ledge = box((20, 40, 5), position=(20, 66, 27.5))
 block = box((40, 20, 30), position=(56, 56, 20))
-hole = rotate_x(cylinder(5, 30, position=(56, 20, -71)), math.pi / 2)          # (a round hole along y through the block, its axis at x = 56, z = 20)
+hole = rotate_x(cylinder(5, 30, position=(56, 20, -56)), math.pi / 2)          # (a round hole along y through the block, its axis at x = 56, z = 20)
 part = plate
 for piece in (fin, block_a, block_b, ell, boss, wall, ledge):
     part = union(part, piece)

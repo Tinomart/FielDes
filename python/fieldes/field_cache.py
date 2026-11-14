@@ -242,8 +242,8 @@ def lookup(p, gs, source_lines):
 
 def store(key, shape, printed, seconds):
     ''' Keeps a field this statement built (called after a miss), if it took long enough to be worth it '''
-    from fieldes.shape import Shape
-    if key is None or type(shape) is not Shape or seconds < _MIN_SECONDS:
+    from fieldes.shape import Shape, Body
+    if key is None or type(shape) not in (Shape, Body) or seconds < _MIN_SECONDS:
         return
     # (a body made of points -- morph_polyhedron, morph_body: `_ctrls` -- marks the points it was made of, what each is and how long its edges are (see curves.mark): a result handed back by the cache
     # would not mark the points of the run that asked for it, and a double click on one of them would find "not a point of a profile or a curve".  A profile and a curve are of their own types, which
@@ -267,7 +267,7 @@ def _write(key, shape, printed):
     from fieldes.ffi import lib
     if not hasattr(lib, 'libfive_tree_can_save') or not lib.libfive_tree_can_save(shape.ptr):
         return
-    extra = {k: v for k, v in vars(shape).items() if k not in ('ptr', '_content_key', '_made_from')}          # (_made_from: the models of this run, not part of what is kept)
+    extra = {k: v for k, v in vars(shape).items() if k not in ('ptr', '_content_key', '_made_from', '_field_memo')}          # (_made_from: the models of this run, not part of what is kept; _field_memo: the distance of a body that was read, made again when it is)
     if not all(_plain(v) for v in extra.values()):
         return                                         # (something the file cannot hold: kept in memory only)
     tree_path, head_path = _paths(key)
@@ -304,6 +304,8 @@ def _read(key):
         shape = Shape(ptr)
         for k, v in head.get('extra', {}).items():
             setattr(shape, k, _unjson(v))
+        from fieldes.shape import become_body
+        become_body(shape)                             # (a body that is read back is a body, with the field of one: the law of fieldes.stdlib.body_law)
         os.utime(head_path, None)                      # (used just now: kept longest)
         return shape, head.get('printed', '')
     except Exception:

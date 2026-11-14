@@ -86,7 +86,7 @@ check('H113: ... and it was found before by this statement: the tree removes it'
 # script: the file is called <file> and its text is runner.running_source
 SCRIPT = '''from fieldes import *
 {pad}s = sphere(2.5, position=(0.512616, -6, 1.6))
-c = cylinder(2.5, 5, position=({cx}, {cy}, {cz}))
+c = cylinder(2.5, 5, position=({cx}, {cy}, {cz} + 2.5))
 d = difference(s, c)
 edge_1 = edge_at(d, ({px}, {py}, {pz}))
 '''
@@ -115,7 +115,7 @@ check('H113: an edge of that name at another place, that never was found there, 
 # of a sphere in a cylinder the search found the sphere (35 samples), the cylinder (25) and a straddling cluster (12) whose normal turns most against the cylinder's, took that one for the second face, and the trace
 # of the edge that started from it was lost at once
 from fieldes.stdlib import features as F
-dent = difference(cylinder(10, 40), sphere(14.8548, position=(8, 0, 20)))
+dent = difference(cylinder(10, 40, position=(0, 0, 20)), sphere(14.8548, position=(8, 0, 20)))          # (a model stands by its position, its middle: the cylinder is from z = 0 to z = 40)
 _near, _scale, _size, _values = F._prepare(dent, (6.9512, -7.1887, 28.259), None, None, 'edge_at')
 _found = F._wider(lambda s: F.find_feature(_values, _near, s, _size, 'edge'), _scale, _size, False)
 _planes = F._plane_set(F._Surface(_values, _size), _found['point'], max(min(_scale, 0.2 * _size), 2e-3 * _size), 2) if _found else None

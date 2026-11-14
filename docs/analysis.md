@@ -36,8 +36,9 @@ hole). Nothing is selected by clicking faces: you describe where.
 
 | Function | |
 |---|---|
-| `fixed(region, displacement=(0, 0, 0))` | The part is held wherever it lies inside `region`. `displacement` is where it is held, in each direction (mm): **0** (the default) lets the part not move there, **`inf`** leaves that direction free -- `displacement=(0, 0, inf)` is a support the part slides along z on (`inf` is `math.inf`, `float('inf')`; `from fieldes import *` has it as `inf`) -- and **any other number is a displacement the support imposes**: `(0, 0, -0.5)` pushes the part 0.5 mm down where it is held, and a static analysis on tetrahedra solves for the rest of it (its reaction forces are the result). A modal analysis holds the part still there, a topology optimization refuses an imposed displacement (hold the part and load it with a force). |
+| `fixed(region, displacement=(0, 0, 0), rotation=(inf, inf, inf))` | The part is held wherever it lies inside `region`. `displacement` is where it is held, in each direction (mm): **0** (the default) lets the part not move there, **`inf`** leaves that direction free -- `displacement=(0, 0, inf)` is a support the part slides along z on (`inf` is `math.inf`, `float('inf')`; `from fieldes import *` has it as `inf`) -- and **any other number is a displacement the support imposes**: `(0, 0, -0.5)` pushes the part 0.5 mm down where it is held, and a static analysis on tetrahedra solves for the rest of it (its reaction forces are the result). A modal analysis holds the part still there, a topology optimization refuses an imposed displacement (hold the part and load it with a force). **`rotation=(rx, ry, rz)`** (degrees) is the same input for how the region may **turn** about the x, y and z axes through the middle of its nodes: **0** does not let it turn about that axis, **`inf`** (the default) leaves it free, another number turns it by that many degrees -- `fixed(face, displacement=(inf, inf, inf), rotation=(0, 0, 0))` lets a face slide and keeps it from turning. A tetrahedron has no rotation of its own, so the turn of a region is the mean turn of its nodes, held by a spring a thousand times as stiff as the nodes are against turning; a region that holds the part direction by direction (`displacement=(0, 0, 0)`) cannot turn already. For a static analysis on linear tetrahedra (`element='tet'`); the others refuse it. |
 | `force(region, fx, fy=None, fz=None)` | A total force (N) spread evenly over the part's **surface** inside `region`. `force(region, (0, 0, -100))` works too. |
+| `pressure(region, value)` | A **pressure** (MPa) at right angles on every point of the part's **surface** inside `region` -- it takes a surface always (a selected surface, or a body or a field that the part's surface lies in), like `force()`. Unlike a force, whose total is one vector spread evenly, a pressure follows the surface: on a curved surface every point is pushed along its own normal. **Positive presses into the part** (the way a fluid presses on the wall that holds it), **negative pulls on it** (a traction): `pressure(edge, -10)` is a tension of 10 MPa on `edge`. `profile=field` makes it differ over the surface. Tetrahedra, linear and 10-node. From the menus: Engineering > Supports and loads > pressure. |
 | `gravity(g=(0, 0, -9810))` | The part's own weight (acceleration in mm/s², 1 g down by default) with the material's density. |
 | `thermal_expansion(temperature, reference=20)` | See [Thermal stress](#thermal-stress). |
 
@@ -61,7 +62,7 @@ each kind of condition it takes; a kind it has none of is `[]`:
 
 | Simulation | Its inputs for conditions (each a list, all of them required) |
 |---|---|
-| `static_analysis(part, supports, loads, material=steel, ...)` | `supports` (`fixed(...)`), `loads` (`force(...)`, `gravity(...)`, `thermal_expansion(...)`) |
+| `static_analysis(part, supports, loads, material=steel, ...)` | `supports` (`fixed(...)`), `loads` (`force(...)`, `pressure(...)`, `gravity(...)`, `thermal_expansion(...)`) |
 | `modal_analysis(part, supports, material=steel, ...)` | `supports` |
 | `topology_optimization(analysis, conditions, ...)` | none of its own: the problem is the **analysis** it is given -- its part, supports, loads and material (a list of analyses is several load cases, see [Topology optimization](#topology-optimization)); of a `thermal_analysis`: its part, conditions and material |
 | `thermal_analysis(part, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium, ...)` | those four |
@@ -108,7 +109,7 @@ symbol. Only a script with no body at all draws the regions themselves.
 A legend at the bottom right names the colours (close it with its ×). The arrows, pads and texts are drawn by the
 viewport over the model, not meshed with it: they follow the zoom and are never cut off by the render region. The
 coloured places are the part's own surface, drawn a hair towards the eye -- only those: the part is not drawn with them, so it can stay displayed or not. A place counts as in a region when it is within
-about a hundredth of the part's size of it. `describe(condition)` says one line about a condition.
+about a five-hundredth of the part's size of it (a selected surface has a thin layer of its own on top of that). `describe(condition)` says one line about a condition.
 
 **Making them.** Right-click empty space -> **Engineering** -> **Structural** -> **New support or load** (fixed, force, gravity, thermal
 expansion), **New thermal condition** (fixed temperature, heat input, heat generation, convection), **New flow condition** (inlet,
@@ -205,7 +206,7 @@ result                                             # shown: the stress on the de
 `static_analysis(shape, supports, loads, material=steel, element_size=None, bounds=None,
 tolerance=1e-6, cache=True, element='tet')` with the
 conditions of [Boundary conditions](#boundary-conditions) (`loads=[]` for none). The element size defaults to the part's
-longest side over 60 (over 30 with `element='tet10'`, the 10-node element: see [Elements and accuracy](#elements-and-accuracy)); a solid part that this would give more than a million tetrahedra (250 000 with `'tet10'`) gets the larger element at which it has that many -- a cube 0.4 mm on a side has 1 063 776 and solves in 5.7 s, where it had 2 678 400 and 18.6 s (the number of tetrahedra is estimated, and is right to a few percent) -- and a size that is given is used as it is, with no limit. It raises `FeaError` if the problem cannot be solved as given (no support touching the
+longest side over 60 (over 30 with `element='tet10'`, the 10-node element: see [Elements and accuracy](#elements-and-accuracy)); a solid part that this would give more than a million tetrahedra (250 000 with `'tet10'`) gets the larger element at which it has that many -- a cube 0.4 mm on a side has 1 063 776 and solves in 5.7 s, where it had 2 678 400 and 18.6 s (the number of tetrahedra is estimated, and is right to a few percent) -- a part with walls thinner than that size (a shell, a plate, a tube: the lattice that the tetrahedra are cut from loses a wall thinner than about 0.7 of its spacing, and a shell box with walls of 1.2 mm was refused at the size above) gets the size at which its walls are held, half of the thickness of the walls that a tenth of its surface is thinner than, as far as the budget of tetrahedra allows and never coarser than the wall over 1.5 (see [Meshing](meshing.md)) -- and a size that is given is a target with no limit: it is adjusted, as little as it can be, to fit the part (the tetrahedra's lattice is spaced along each axis so that the part is a whole number of cubes across, never coarser than the size given by more than a twentieth; the voxels are one size, within a quarter of the one given, at which the part is a whole number of voxels across, or nearly), so that the elements are as even as they can be -- see [The element size is fitted to the body](meshing.md#element-size). It raises `FeaError` if the problem cannot be solved as given (no support touching the
 part, supports that do not hold it in place).
 
 ## Reading a result
@@ -317,7 +318,7 @@ just grow. Static analysis only.
 
 ## Topology optimization
 
-`topology_optimization(analysis, conditions, iterations=100, filter_radius=None, keep=None, avoid=None, grow=0.0, extrude=None,
+`topology_optimization(analysis, conditions, iterations=20, filter_radius=None, keep=None, avoid=None, grow=0.0, extrude=None,
 penalty=3, sharpness=16, symmetry='auto', tolerance=1e-5, cache=True)` finds the layout of material, inside the part of an analysis,
 that is best for what you ask of it. **The analysis is the problem**: its part is the design space, and its supports, loads and
 material are what the design is made for. Anything the analysis measures can be the goal or a condition, as in
@@ -402,7 +403,7 @@ design = topology_optimization([push, pull], conditions=[minimize(compliance_pus
 | `grow_limit` | mm, with `grow=True`: the most the design may reach out from the part -- **a restriction on top of `grow`, never the base of it**; left out, nothing limits how far the design grows |
 | `extrude` | `'x'`, `'y'`, `'z'`: the same design along that axis (a profile to extrude, or to cut right through) |
 | `filter_radius` | the smallest member size, mm (default 1.5 elements) |
-| `iterations` | at most this many (default 100); it stops sooner when the design has settled. **It sets the size of the steps too** -- there is no step to choose: how far a density may move in one iteration starts large (the fewer the iterations, the larger, so a short run still goes the whole way), is smaller as they go (so the design has settled by the last), grows while the objective improves as the sensitivities predicted, and a step that makes the design worse is taken back and halved |
+| `iterations` | at most this many (default 20, for a topology optimization of any kind -- a structure, a heat conduction, a body in a flow); it stops sooner when the design has settled. **It sets the size of the steps too** -- there is no step to choose: how far a density may move in one iteration starts large (the fewer the iterations, the larger, so a short run still goes the whole way), is smaller as they go (so the design has settled by the last), grows while the objective improves as the sensitivities predicted, and a step that makes the design worse is taken back and halved |
 | `symmetry` | `'auto'` (default), `None`, `'x'` / `'y'` / `'z'` or several (`'xz'`), or `{'z': 0.0}` with the plane's position. **A symmetric problem gets a symmetric design.** Left to itself an optimiser does not keep a symmetric problem symmetric: the mesh of a symmetric part is never exactly symmetric, the small difference grows, and one of two members that do the same job takes the other's material -- a strut on one side and none on the other. With `'auto'` the planes through the middle of the part (x, y, z) are tried: when the part, its supports, its loads (what acts on one side is what acts on the other, mirrored) and the `keep` / `avoid` regions are all symmetric about one, the design is kept symmetric about it (the output says which). `None` leaves the design alone; `'z'` asks for the plane through the middle of the part whatever the loads; a dict gives a plane of your own. `result.symmetry` says what was used |
 | `sharpness` | how crisp the design is (default 16). The density is pushed towards 0 and 1 more and more as the iterations go on, up to this much -- reached at three quarters of the iterations, however many there are (a Heaviside projection; it waits while a condition is broken by more than a hundredth, so a design is not made crisp while it is still being moved): the part ends up solid or empty, not grey, and nothing wanders in at the end. `1` leaves the density as the filter makes it: soft edges, a third of the part grey, and the shape then depends on where the threshold is cut |
 | `penalty` | the power the density is raised to in the stiffness (default 3) |
@@ -682,7 +683,7 @@ result and choose it, and the call is written with `variables=...` and `conditio
 | `analysis` | the result of an analysis made in this script and made of the `var()`s -- a static, modal, thermal or flow analysis. |
 | `variables` | `(var, low, high)`: the `var()` that is changed and the range it is looked for in; a list of them for several. |
 | `conditions` | what the design is for -- **one list** of optimization conditions made from results of the `analysis`, as in [topology_optimization](#topology-optimization). **The goal**: `minimize(x)` makes x as small as it can be, `maximize(x)` as large (at most one) -- x is **a result** of the analysis or a formula of results (`mass_1`, `mass_1 + 0.01 * compliance_1`; the results an analysis offers include `mass`, `max_von_mises`, `max_displacement`, `compliance`, `safety_factor`, `volume`, `max_temperature`, `pressure_drop`, `frequencies[0]`). **What the best design keeps**: `keep_below(x, limit)`, `keep_above(x, limit)`, `keep_between(x, lower, upper)`, or one comparison written whole, `optimization_condition(x <= limit)`. A condition made from another analysis than `analysis` is refused. Without a goal the search stops at the first design that keeps the conditions. |
-| `max_evaluations` | how many designs it tries at most (default 20, and 10 for each variable). |
+| `max_evaluations` | how many designs it tries at most (default 20; with more than 18 variables, the number of variables and 2). |
 | `tolerance` | it stops when it has closed in to this fraction of the ranges and nothing better comes (default 0.2 %). |
 | `apply` | `True` writes the best numbers into the `var()`s of the text when the run is over, the way dragging does. Otherwise they hold for the run only: the model, and everything after the call, is the best design, and the numbers in the text are as you wrote them. |
 
@@ -745,21 +746,71 @@ are reproduced exactly (the checks that were run on the element); a very fine 10
 
 Smaller elements are more accurate and slower. A reasonable workflow: solve coarsely to find the load path,
 then halve `element_size` once and see whether the peak stress moved by more than a few percent. The solver
-is a preconditioned conjugate gradient (multigrid for large voxel problems).
+is a preconditioned conjugate gradient (multigrid for large voxel problems). On a body-fitted mesh the preconditioner is block-Jacobi (the 3 x 3 block of each node), and
+a solve that stalls -- after 100 iterations, and every 50 after that, the residual of the last 50 has not fallen or its rate says that more than 300 more are needed, as it does for a **plate or a shell of tetrahedra**, where the
+number of iterations grows with the square of length over thickness -- goes on with a **smoothed-aggregation algebraic multigrid** (Vanek, Mandel and Brezina; the six
+rigid-body modes of each aggregate of nodes are the tentative prolongator, as in the elasticity solvers of Trilinos' ML and PyAMG): it makes the coarser levels by itself from the matrix and the
+nodes' positions, so a thin part takes tens of iterations instead of thousands (a steel plate of 40 x 24 x 0.6 mm of ten-node elements, 303,584 of them, 40 s; it did not finish in 280 s with block-Jacobi alone). The answer is the same to the tolerance of the solve (the known answers v1 and v2 are unchanged), and a big solid part is solved sooner.
 
-**Measured on the bracket of example 05** (linear elements of 2 mm, 445,000 tetrahedra, a pull of 2 kN on the lugs): the peak von Mises stress was 58, 62, 67 and 67 MPa with the mesh lattice at four places (a quarter of an element apart in x), and 41 MPa on one more, while the largest displacement was 0.0498 to 0.0501 mm (0.6 %). The stress at a corner or a fillet is the mesh's, the displacement and the compliance are not: the safety factor of the example reads between 1.4 and 1.6 (it read 2.3 on the mesh of an earlier version), and a peak is to be trusted to no better than that before the element size is halved or `element='tet10'` is asked for.
+**A thin part wants `element='tet10'`.** The default element size holds a thin wall with two elements across it ([meshing.md](meshing.md), thin walls), and two linear tetrahedra across a plate are too stiff in bending: a steel cantilever plate (40 x 24 x 0.6 mm, 1 N at the end) came out 19 % too stiff with linear tetrahedra of 0.3 mm (the larger the elements against the thickness, the more), 4 % too soft with ten-node tetrahedra of the same size (beam theory with the shear of Timoshenko; the 1.2 mm plate the same, -4.2 %). The static and the modal analysis, at their default element size, print a note when the body has walls with fewer than five linear elements across them (a plate of 1.2 mm at 0.67 mm: "walls about 1.2 mm thick, 1.8 elements ... use element='tet10'"), because nothing in the result shows the stiffness; with `element='tet10'` there is no note.
+**Measured on the bracket of example 05** (linear elements of 2 mm, 445,000 tetrahedra, a pull of 2 kN on the lugs; on the raw lattice, before the kernel mended it: the worst scaled Jacobian of its 456,000 tetrahedra was 0.074 with 391 below 0.2 and 612 above skewness 0.85, mended 0.199, 2 and 77; the displacement 0.0497 mm in both, the safety factor read 1.4 raw and 1.8 mended): the peak von Mises stress was 58, 62, 67 and 67 MPa with the mesh lattice at four places (a quarter of an element apart in x), and 41 MPa on one more, while the largest displacement was 0.0498 to 0.0501 mm (0.6 %). The stress at a corner or a fillet is the mesh's, the displacement and the compliance are not: the safety factor of the example reads between 1.4 and 1.6 (it read 2.3 on the mesh of an earlier version), and a peak is to be trusted to no better than that before the element size is halved or `element='tet10'` is asked for.
+
+## Surface or elements: `surface_fit`
+
+A mesh cut from a lattice has odd elements near the surface -- slivers where the lattice cuts a sharp edge across -- and the mesher decides which of them go: **the mender** (Netgen's volume optimization, see [meshing.md](meshing.md)) works on every tetrahedron whose mean ratio is under a threshold -- it swaps, collapses
+or splits it -- and a collapse of the skin is allowed while the surface stays within a tolerance; **the edge pass** moves the nodes beside a sharp edge onto it unless a tetrahedron round the node would be left poorer than a floor or with a smaller dihedral angle than a limit. Four numbers decide, and
+`surface_fit` is the choice between them, made by you, as `element_size` is the choice of the size:
+
+| `surface_fit=` | the mender works on tetrahedra under | how far the skin may stand off the exact surface | the edge pass leaves a tetrahedron no poorer than / with no smaller angle than | what it is |
+|---|---|---|---|---|
+| `'balanced'` (default) | 0.60 | 0.06 of an element | 0.15 / 10 degrees | what the mesher has always done |
+| `'surface'` | 0.50 | 0.02 of an element | 0.03 / 2 degrees | **more surface conformity**: the nodes go onto the edges even where the tetrahedra get poor, the mender takes fewer elements out so the skin keeps its triangles, and the skin stays nearer the exact surface |
+| `'elements'` | 0.70 | 0.12 of an element | 0.15 / 10 degrees | **fewer odd elements**: the mender works on every tetrahedron under 0.70 and may take the skin up to 0.12 of an element off the surface to do it, so the skin has fewer, larger triangles, and the mesh can take longer |
+
+Measured on the bracket of example 05 (about 456,000, 137,000 and 57,000 tetrahedra; library, 2026-11-15, one mesh each: another lattice gives other numbers, a handful of tetrahedra decide the worst one). Faces that lean = boundary faces
+that lean more than 12 degrees from the surface (what a node that stays beside an edge costs); the mean ratio is 1 for a regular tetrahedron:
+
+| element size, `surface_fit=` | faces that lean | worst tetrahedron | tetrahedra under 0.4 | the 0.1 percentile of the mean ratio | boundary triangles | time of the analysis (2 mm) / of its mesh |
+|---|---|---|---|---|---|---|
+| 2 mm `'surface'` | 168 | 0.31 | 2 | 0.526 | 58,724 | 18.2 s |
+| 2 mm `'balanced'` | 160 | 0.48 | 0 | 0.604 | 58,204 | 16.4 s |
+| 2 mm `'elements'` | 152 | 0.50 | 0 | **0.653** | **56,120** | 18.3 s |
+| 3 mm `'surface'` | **126** | 0.31 | 10 | 0.508 | 25,854 | 5.9 s |
+| 3 mm `'balanced'` | 168 | 0.47 | 0 | 0.600 | 25,410 | 5.5 s |
+| 3 mm `'elements'` | 186 | 0.41 | 0 | **0.640** | **23,998** | 7.4 s |
+| 4 mm `'surface'` | 250 | 0.28 | 16 | 0.496 | 13,834 | 2.2 s |
+| 4 mm `'balanced'` | 262 | 0.34 | 6 | 0.583 | 13,690 | 2.5 s |
+| 4 mm `'elements'` | 262 | 0.37 | 4 | **0.620** | **12,926** | 2.6 s |
+
+What it says, plainly. **`'elements'`** has the better bulk at every size (the tetrahedra of the 0.1 percentile are 6 to 8 % better than the default's), the same or fewer tetrahedra under 0.4, and a skin of 4 to 6 % fewer triangles; it costs time (up to 35 % more)
+and does **not** follow the edges better (the faces that lean: 5 % fewer at 2 mm, 11 % more at 3 mm, the same at 4 mm). **`'surface'`** has a finer skin (1 to 2 % more triangles) and its bulk is poorer (the 0.1 percentile 13 to 15 % lower, more tetrahedra under 0.4, a worst one of 0.3);
+the gain in the edges is real at some sizes and not at others (the faces that lean: a quarter fewer at 3 mm, 5 % fewer at 4 mm, 5 % more at 2 mm), so take it when straighter edges matter more than the elements and look at the result. Every boundary node of every variant, at every size, stays within
+0.014 of an element of the exact surface: **the surface itself is exact in all three** -- what differs is how many triangles describe it, how even the elements are and how well its edges are followed. Where I tried the numbers one at a time (the floor and the angle of the edge pass, the skin
+tolerance, the limits of the lattice stage, the reach of the feature snap) none bought better elements -- with the edge pass off a 3 mm mesh had 32 tetrahedra under 0.4 and 916 faces that lean, so the passes help both -- and only the mender's threshold trades elements for skin.
+
+```python
+result = static_analysis(bracket, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, surface_fit='elements')
+mesh = mesh_tet4(bracket, 2.0, surface_fit='surface')
+```
+
+The argument is on `static_analysis`, `modal_analysis`, `thermal_analysis`, `fluid_analysis`, `mesh_tet4` and `mesh_tet10`; the default is the same as before, so nothing changes where it is not given. A **mesh that is given** to an analysis is the
+elements as they are: the choice is made when the mesh is made, and `surface_fit` beside a mesh is an error. A result made with another choice is another result (it is not taken from what was kept for the default).
+Where a part has no sharp edge -- a ball -- the three agree to a few elements: there is no edge to decide. **The choice is not a quality setting that makes a mesh better**: each value gives something up (poorer tetrahedra beside the edges for `'surface'`, a coarser skin and time for `'elements'`), and the
+usual rule stays: halve the element size and see whether the answer moves.
 
 ## A mesh of your own
 
-An analysis that is given a body meshes it itself: tetrahedra of **one size** (`element_size`) cut from a lattice laid over the body. The meshing operations ([meshing.md](meshing.md)) do more --
+An analysis that is given a body meshes it itself: tetrahedra of **one size** (`element_size`) cut from a lattice laid over the body and then **mended** by the kernel's passes of Netgen's volume optimization
+(`kernel/src/fea/tetmender.cpp`, described in [meshing.md](meshing.md): the poorest tetrahedra swapped, split and smoothed, the needle triangles of the surface flipped -- before the mending
+the bracket of example 05 at 2 mm had 391 of its 456,000 tetrahedra with a scaled Jacobian below 0.2 and 612 above skewness 0.85, the mended mesh 2 and 77). The meshing operations ([meshing.md](meshing.md)) do more --
 a size that grows from the surface (`graded_size`), a size given by a field, a mesh that was mended after it was cut, 10-node elements -- so an analysis takes **the mesh in place of the part**:
 
 ```python
-mesh = mesh_volume(bracket, graded_size(bracket, wall_size=0.6, growth_rate=1.3, max_size=5.0))     # fine at the surface, coarse inside
+mesh = mesh_tet4(bracket, graded_size(bracket, wall_size=0.6, growth_rate=1.3, max_size=5.0))     # fine at the surface, coarse inside
 result = static_analysis(mesh, supports=[fixed(base)], loads=[force(lug, (0, 0, -300))], material=steel)
 ```
 
-`static_analysis`, `modal_analysis` and `thermal_analysis` take the mesh as their part, and `fluid_analysis` takes the mesh **of the fluid** as its `domain` (`mesh_volume(difference(domain, body), ...)`;
+`static_analysis`, `modal_analysis` and `thermal_analysis` take the mesh as their part, and `fluid_analysis` takes the mesh **of the fluid** as its `domain` (`mesh_tet4(difference(domain, body), ...)`;
 the `body` is still given, for the drawing and the force on it). The analysis solves on those tetrahedra **exactly as they are**: none is added and none is dropped (one of no volume is, and one that is
 inside out is turned), so `result.elements` is the number of tetrahedra of the mesh. Everything else is as it was: supports and loads are regions (the nodes inside a region are held, the boundary
 faces inside it are loaded), a material or a load that is a field is read at the centre of each element, `element='tet10'` makes the quadratic element on the corners of the mesh, the result is drawn on
@@ -767,12 +818,12 @@ the body the mesh was made of, and it is drawn as its own tetrahedra (a mesh has
 
 What a mesh must be for them:
 
-- **tetrahedra**: the default of `mesh_volume` (`element='tet'`), or `'tet10'`, whose four corners are taken. The solvers of FielDes work on tetrahedra, so a mesh of hexahedra, or one with the prisms of
+- **tetrahedra**: the default of `mesh_tet4` (`element='tet'`), or `'tet10'`, whose four corners are taken. The solvers of FielDes work on tetrahedra, so a mesh of hexahedra, or one with the prisms of
   `boundary_layers` (they are for the solver of another program), is refused, and the error says so;
-- **conforming**: two tetrahedra share a whole face or nothing (a mesh of `mesh_volume` is). A face that more than two tetrahedra share is refused;
-- the mesh of **a body**: `mesh_volume(body, ...)` remembers its body; the analysis draws on it, finds the bounds from the mesh, and a region is placed on it as ever.
+- **conforming**: two tetrahedra share a whole face or nothing (a mesh of `mesh_tet4` is). A face that more than two tetrahedra share is refused;
+- the mesh of **a body**: `mesh_tet4(body, ...)` remembers its body; the analysis draws on it, finds the bounds from the mesh, and a region is placed on it as ever.
 
-`element_size` beside a mesh is an error (the mesh is the elements: make it finer with `mesh_volume(body, element_size)`), and so is `element='hex'` (a voxel grid of its own). `topology_optimization` designs on
+`element_size` beside a mesh is an error (the mesh is the elements: make it finer with `mesh_tet4(body, element_size)`), and so is `element='hex'` (a voxel grid of its own). `topology_optimization` designs on
 its own lattice and takes the shape. The element size the result reports is the **middle edge length** of the mesh. An analysis of a mesh is cached by the content of the mesh: the same mesh asked again is not solved again.
 
 ## Caching
@@ -804,17 +855,16 @@ of it is found in the render cache too. `cache=False` solves every time. See
 
 ## Verification: four known answers
 
-**FielDes is not validated for safety-critical use.** It is a design tool: the result card says so, and the limits are above. What is checked is the program, against four
-problems whose answers are known, in `tests/verification/known_answers/`. Each script solves its problem, prints the program's number next to the exact one, and **stops with an error
-when they differ by more than its tolerance** -- run them after a change to the solvers, the elements or the caches (`python scripts/run_example.py
-tests/verification/known_answers/v1_cantilever_beam.py`). They do not use the result cache, so they always solve.
+**FielDes is not validated for safety-critical use.** It is a design tool: the result card says so, and the limits are above. What is checked is the program, against problems whose answers are known, in `validation/`: **the whole list, with the benchmarks of NAFEMS, a mesh convergence study and a section for every kind of analysis, is on one page,
+[Validation and accuracy](validation.md)** (Help > Validation and accuracy); the first four are repeated here. Each script solves its problem, prints the program's number next to the exact one, and **stops with an error
+when they differ by more than its tolerance** -- run them after a change to the solvers, the elements or the caches (open one in FielDes from the links of Help > Validation and accuracy, or with File > Open: they are in the `validation` folder beside the program). They do not use the result cache, so they always solve.
 
-| Script | The problem | The exact answer | FielDes (as measured 2026-10-14) | Tolerance |
+| Script | The problem | The exact answer | FielDes (as measured 2026-11-15) | Tolerance |
 |---|---|---|---|---|
-| `v1_cantilever_beam.py` | a steel bar 100 x 10 x 10 mm held at one end, 100 N across the other | tip movement by Timoshenko beam theory, 0.2016 mm | 0.1975 mm, **−2.0 %** (67,000 tetrahedra, 1 s); 10-node: **−0.8 %** (1,300 elements, 0.1 s) | 5 % and 2 % |
-| `v2_plate_with_hole.py` | a plate 80 x 40 x 3 mm with a hole of 8 mm, pulled with 100 MPa (one eighth of it is solved, by symmetry) | stress concentration 3.14 (Peterson, for the width of the plate) | 3.02, **−3.7 %** (960,000 tetrahedra, 18 s); 10-node: **+0.4 %** (45,000 elements, 13 s) | 6 % and 3 % |
-| `v3_channel_flow.py` | water between two plates 10 mm apart, mean speed 5 mm/s, developed inlet | speed at the middle 1.5 x the mean; pressure gradient 12 mu U / H^2 | **−0.3 %** and **+0.2 %** (22,000 tetrahedra, 1 s) | 3 % and 6 % |
-| `v4_slab_conduction.py` | an aluminium bar held at 100 C and 20 C at its ends, the sides insulated | a straight line in temperature, Fourier's heat flux | 0.14 K and **−0.5 %** (5,000 tetrahedra) | 0.3 K and 2 % |
+| `v1_cantilever_beam.py` | a steel bar 100 x 10 x 10 mm held at one end, 100 N across the other | tip movement by Timoshenko beam theory, 0.2016 mm | 0.1975 mm, **−2.0 %** (72,000 tetrahedra, 1 s); 10-node: **−0.8 %** (1,300 elements, 0.1 s) | 5 % and 2 % |
+| `v2_plate_with_hole.py` | a plate 80 x 40 x 3 mm with a hole of 8 mm, pulled with 100 MPa (one eighth of it is solved, by symmetry) | stress concentration 3.14 (Peterson, for the width of the plate) | 3.15, **+0.4 %** (1,013,000 tetrahedra); 10-node: 3.12, **−0.6 %** (66,000 elements) | 6 % and 3 % |
+| `v3_channel_flow.py` | water between two plates 10 mm apart, mean speed 5 mm/s, developed inlet | speed at the middle 1.5 x the mean; pressure gradient 12 mu U / H^2 | **+0.0 %** and **+0.0 %** (24,000 tetrahedra, 1 s) | 3 % and 6 % |
+| `v4_slab_conduction.py` | an aluminium bar held at 100 C and 20 C at its ends, the sides insulated | a straight line in temperature, Fourier's heat flux | **0.00 K** and **0.0 %** (7,700 tetrahedra) | 0.3 K and 2 % |
 
-Linear tetrahedra are stiff in bending and average a stress over each element, so the first two come out a little low and come nearer as the elements get smaller -- slowly (the beam: -5.6 % with 4 elements across its depth, -1.0 % with 16; the plate: -9 % with 1 mm elements, -8 % with 0.5 mm, -4 % with 0.25 mm), so the stress at a notch is the number to be most careful with: it comes out **low**. The 10-node elements (`element='tet10'`) do much better at the same size, and the first two scripts check them too (the beam -0.8 %, the plate +0.4 %). The two others are exact for what linear elements can represent. Four cases do not make a validation: **compare any result with a hand calculation and, where it matters, a test,
+Linear tetrahedra are stiff in bending and average a stress over each element, so a bent beam comes out a little low with them and nearer as the elements get smaller, and the stress at a notch or a corner is the number to be most careful with: it scatters with the mesh (the convergence study and the NAFEMS benchmarks on the validation page show how much, size by size). The 10-node elements (`element='tet10'`) do much better at the same size, and the first two scripts check them too. The two others are exact for what linear elements can represent. These cases do not make a validation: **compare any result with a hand calculation and, where it matters, a test,
 before you rely on it.**

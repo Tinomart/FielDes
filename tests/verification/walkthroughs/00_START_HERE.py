@@ -16,6 +16,8 @@ view.set_quality(8)
 #   05_the_part_turned.py                  a manufacturing result whose way up was left free is drawn standing the way it is printed
 #   06_your_own_primitives.py              Primitives > Manage primitives: make anything you built a primitive of your own, available in every file
 #   07_the_night_of_2026_10_26.py          snap, the corners and edges of the right-click menu, custom_resolution as an argument row, an imposed displacement, a body as the region of a support
+#   09_thin_parts_2026_11_14.py            a plate 1.2 mm thick: solved with ten-node tetrahedra in seconds (multigrid), drawn in colour, its vibration, the note on linear tetrahedra, a thin shell box meshed whole
+#   10_element_types_2026_11_14.py         one plate with a hole meshed six ways (tet, tet10, hex, hex20, cartesian, extrusion), a table of the numbers a solver is told about, the six side by side to look at
 #
 # The manufacturing showcases are in the folder next to this one (manufacturing, start with its 00_START_HERE.py); the clean manufacturing example for users is examples/33_manufacturing_optimization.py.
 

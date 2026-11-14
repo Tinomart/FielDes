@@ -17,7 +17,7 @@ channel = box((60, 30, 10), position=(30, 0, 5))
 post = cylinder(4, 14, position=(20, 0, 5))
 air = difference(channel, post)
 
-mesh = mesh_volume(
+mesh = mesh_tet4(
     air,
     # 0.8 mm at the post, growing by 0.25 mm for every mm from it, up to 3 mm
     element_size=graded_size(post, wall_size=0.8, growth_rate=1.25, max_size=3.0),

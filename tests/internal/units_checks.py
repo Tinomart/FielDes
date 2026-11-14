@@ -229,7 +229,7 @@ def msh_extent(path):
 
 
 units.configure({'length': 'm'})
-mesh = run('mesh_volume of the cube', lambda: mesh_volume(cube, element_size=12.7))
+mesh = run('mesh_tet4 of the cube', lambda: mesh_tet4(cube, element_size=12.7))
 if mesh is not None:
     path = run('Mesh.export in metres', lambda: mesh.export(os.path.join(folder, 'cube.msh')))
     if path:

@@ -24,6 +24,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <cassert>
 
 #include <iostream>
+#include <QAbstractItemView>
+#include <QCompleter>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -46,6 +48,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QSizePolicy>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QStringListModel>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QPainterPath>
 #include <QPolygonF>
@@ -163,6 +166,25 @@ public:
     std::function<void()> run;
     std::function<void(int)> history;
     std::function<void()> leave;            // (Escape: back to the script -- the window's own Escape, which cancels a render, is not for this line)
+    std::function<QStringList(const QString&)> words;       // (the words that complete what is typed before the cursor: asked of the library at the moment of typing, H206)
+
+    ConsoleInput()
+    {
+        // The line Python is typed in completes Python (H206, the user, 2026-11-14: "it should obviously do auto completes for everything python realted in real time, not just parts internal to FielDes"):
+        // what the console has, the library, the built-ins, the modules that can be imported now, and after a dot what an object offers
+        m_model = new QStringListModel(this);
+        m_completer = new QCompleter(m_model, this);
+        m_completer->setWidget(this);
+        m_completer->setCompletionMode(QCompleter::PopupCompletion);
+        m_completer->setCaseSensitivity(Qt::CaseInsensitive);
+        m_completer->setMaxVisibleItems(10);
+        connect(m_completer, QOverload<const QString&>::of(&QCompleter::activated), this, [this](const QString& word) {
+            QTextCursor tc = textCursor();
+            tc.movePosition(QTextCursor::Left, QTextCursor::KeepAnchor, int(m_completer->completionPrefix().length()));
+            tc.insertText(word);
+            setTextCursor(tc);
+        });
+    }
 
 protected:
     bool event(QEvent* e) override
@@ -175,8 +197,55 @@ protected:
         return QPlainTextEdit::event(e);
     }
 
+    void offer(bool asked)
+    {
+        const QTextCursor c = textCursor();
+        const QString line = c.block().text().left(c.positionInBlock());
+        int start = int(line.size());
+        while (start > 0 && (line[start - 1].isLetterOrNumber() || line[start - 1] == '_')) --start;
+        const QString prefix = line.mid(start);
+        const bool afterDot = start > 0 && line[start - 1] == '.';
+        if (!words || (prefix.isEmpty() && !afterDot && !asked)) { m_completer->popup()->hide(); return; }
+        const QStringList list = words(line);
+        if (list.isEmpty()) { m_completer->popup()->hide(); return; }
+        m_model->setStringList(list);
+        m_completer->setCompletionPrefix(prefix);
+        if (m_completer->completionCount() == 0 || (m_completer->completionCount() == 1 && m_completer->currentCompletion() == prefix))
+        {
+            m_completer->popup()->hide();
+            return;
+        }
+        m_completer->popup()->setCurrentIndex(m_completer->completionModel()->index(0, 0));
+        m_completer->popup()->setFont(document()->defaultFont());
+        QRect cr = cursorRect();
+        cr.setWidth(m_completer->popup()->sizeHintForColumn(0) + m_completer->popup()->verticalScrollBar()->sizeHint().width() + 8);
+        m_completer->complete(cr);
+    }
+
     void keyPressEvent(QKeyEvent* event) override
     {
+        // (the keys that the popup of the completion takes itself: it handles them, the line does not)
+        if (m_completer->popup()->isVisible())
+        {
+            switch (event->key())
+            {
+                case Qt::Key_Enter:
+                case Qt::Key_Return:
+                case Qt::Key_Escape:
+                case Qt::Key_Tab:
+                case Qt::Key_Backtab:
+                    event->ignore();
+                    return;
+                default:
+                    break;
+            }
+        }
+        const bool askedFor = (event->modifiers() & Qt::ControlModifier) && event->key() == Qt::Key_Space;
+        if (askedFor)
+        {
+            offer(true);
+            return;
+        }
         if (event->key() == Qt::Key_Escape && leave)
         {
             leave();
@@ -199,7 +268,17 @@ protected:
             return;
         }
         QPlainTextEdit::keyPressEvent(event);
+        // (the words are offered while an identifier is typed, and after a dot; kept up to date on Backspace while the list is open)
+        const QString typed = event->text();
+        const bool identKey = !typed.isEmpty() && (typed[0].isLetterOrNumber() || typed[0] == '_' || typed[0] == '.');
+        if (words && identKey && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) offer(false);
+        else if (m_completer->popup()->isVisible() && event->key() == Qt::Key_Backspace) offer(false);
+        else if (m_completer->popup()->isVisible()) m_completer->popup()->hide();
     }
+
+private:
+    QStringListModel* m_model = nullptr;
+    QCompleter* m_completer = nullptr;
 };
 
 }   // namespace
@@ -274,6 +353,14 @@ QWidget* Editor::buildTerminal()
     };
     input->history = [this](int step) { consoleHistory(step); };
     input->leave = [this] { script->setFocus(Qt::OtherFocusReason); };
+    // (what completes what is typed in the console is Python's: the library is asked at the moment of typing -- H206)
+    input->words = [this](const QString& before) {
+        QStringList list;
+        QString error;
+        const QString answer = callSupport("complete_python", QString::fromUtf8(QJsonDocument(QJsonObject{{"before", before}, {"console", true}}).toJson(QJsonDocument::Compact)), &error);
+        for (const auto v : QJsonDocument::fromJson(answer.toUtf8()).array()) list << v.toString();
+        return list;
+    };
     connect(m_consoleInput, &QPlainTextEdit::textChanged, this, &Editor::fitConsoleInput);
     fitConsoleInput();
     r->addWidget(prompt, 0, Qt::AlignTop);
@@ -386,29 +473,67 @@ void Editor::runConsole(const QString& code)
     appendConsole(">>> " + shown, 0);
     m_consoleBusy = true;
     m_consoleInput->setReadOnly(true);
+    // (every fraction of a second what the command has printed so far is shown: a `pip install` goes through its steps on the screen as it does in a terminal)
+    if (!m_consoleTimer)
+    {
+        m_consoleTimer = new QTimer(this);
+        m_consoleTimer->setInterval(150);
+        connect(m_consoleTimer, &QTimer::timeout, this, [this] { pollConsole(); });
+    }
+    m_consoleTimer->start();
     // (on a thread of its own: a long computation does not stop the window; the interpreter takes turns with the script that may be running)
     const QString request = QString::fromUtf8(QJsonDocument(QJsonObject{{"code", code}}).toJson(QJsonDocument::Compact));
     auto watcher = new QFutureWatcher<QPair<QString, QString>>(this);
     connect(watcher, &QFutureWatcher<QPair<QString, QString>>::finished, this, [this, watcher] {
         const auto answer = watcher->result();
         watcher->deleteLater();
-        m_consoleBusy = false;
-        m_consoleInput->setReadOnly(false);
-        if (!answer.second.isEmpty())
-        {
-            appendConsole(answer.second, 3);
-            return;
-        }
-        const QJsonObject r = QJsonDocument::fromJson(answer.first.toUtf8()).object();
-        const QString output = r["output"].toString(), value = r["value"].toString(), error = r["error"].toString();
-        if (!output.isEmpty()) appendConsole(output.endsWith('\n') ? output.left(output.size() - 1) : output, 1);
-        if (!value.isEmpty()) appendConsole(value, 2);
-        if (!error.isEmpty()) appendConsole(error, 3);
+        if (m_consoleTimer) m_consoleTimer->stop();
+        auto show = [this, answer] {
+            m_consoleBusy = false;
+            m_consoleInput->setReadOnly(false);
+            if (!answer.second.isEmpty())
+            {
+                appendConsole(answer.second, 3);
+                return;
+            }
+            const QJsonObject r = QJsonDocument::fromJson(answer.first.toUtf8()).object();
+            const QString output = r["output"].toString(), value = r["value"].toString(), error = r["error"].toString();
+            if (!output.isEmpty()) appendConsole(output.endsWith('\n') ? output.left(output.size() - 1) : output, 1);
+            if (!value.isEmpty()) appendConsole(value, 2);
+            if (!error.isEmpty()) appendConsole(error, 3);
+        };
+        // (a request for the lines that is still on its way is shown first: they are older than the answer)
+        if (m_consolePolling) m_afterPoll = show;
+        else show();
     });
     watcher->setFuture(QtConcurrent::run([this, request] {
         QString error;
         const QString out = callSupport("terminal_exec", request, &error);
         return qMakePair(out, error);
+    }));
+}
+
+// The lines the running console command has printed since the last time, asked of the library on a thread of its own (the window never waits for the interpreter) and shown when they arrive
+void Editor::pollConsole()
+{
+    if (!m_consoleBusy || m_consolePolling) return;
+    m_consolePolling = true;
+    auto watcher = new QFutureWatcher<QString>(this);
+    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher] {
+        const QString text = watcher->result();
+        watcher->deleteLater();
+        m_consolePolling = false;
+        if (!text.isEmpty()) appendConsole(text.endsWith('\n') ? text.left(text.size() - 1) : text, 1);
+        if (m_afterPoll)
+        {
+            auto next = m_afterPoll;
+            m_afterPoll = nullptr;
+            next();
+        }
+    });
+    watcher->setFuture(QtConcurrent::run([this] {
+        QString error;
+        return callSupport("terminal_poll", QString(), &error);
     }));
 }
 
@@ -1765,15 +1890,20 @@ void Editor::applyEditsLive(QList<TextEdit> edits, QString description)
     applyEditsNoted(edits, description, true);
 }
 
+void Editor::applyEditsSilent(QList<TextEdit> edits, QString description)
+{
+    applyEditsNoted(edits, description, false, true);
+}
+
 // The edits that the program makes by itself, after what the user did, to go with it -- the lines that make a selected model ready to be dragged (its gizmo, its handles) and the
 // render region that follows a new model -- are not steps of their own for undo and redo: one undo takes them with the user's edit before them, one redo brings them back
-void Editor::applyEditsNoted(QList<TextEdit> edits, const QString& description, bool live)
+void Editor::applyEditsNoted(QList<TextEdit> edits, const QString& description, bool live, bool silent)
 {
     const bool own = (description.startsWith("Make ") && description.contains(" draggable")) || description == "Grow the region";
     // (a live edit that joins the one before it is no step of its own at all)
     const bool joined = live && m_liveRevision >= 0 && m_liveRevision == script_doc->revision();
     const bool chain = m_readyDoc == script_doc && m_readyRevision >= 0 && script_doc->toPlainText() == m_readyText;
-    applyEditsAs(edits, live);
+    applyEditsAs(edits, live, silent);
     // What the guided tour writes -- the model of a step, a line it hides or takes out -- is not a step of the user's: an undo that took it would take the model of the step away (the user, 2026-10-27, of the
     // step "Snap one body onto another": "when I press ctrl+z then it deletes the cylinder"), and an undo that finds the program's own lines on top takes the edit before them too, which there is the tour's
     if (description == "Tour") script_doc->clearUndoRedoStacks();
@@ -1804,7 +1934,7 @@ void Editor::applyEditsNoted(QList<TextEdit> edits, const QString& description, 
         std::cerr << "[edit] " << description.toStdString() << " (revision " << script_doc->revision() << ", " << m_readyCount << " of the program's own)" << std::endl;
 }
 
-void Editor::applyEditsAs(QList<TextEdit> edits, bool live)
+void Editor::applyEditsAs(QList<TextEdit> edits, bool live, bool silent)
 {
     if (edits.isEmpty())
     {
@@ -1842,6 +1972,8 @@ void Editor::applyEditsAs(QList<TextEdit> edits, bool live)
     // An edit made by the program (the tree, a menu) is one decision, not typing that goes on: the script runs at once, without
     // the quarter of a second that waits for the next key
     m_textChangedDebounce.stop();
+    // (an edit that the viewport has done already -- a shape put away or back for the eye of its row -- is written and does not run the script: nothing in the picture is left to make)
+    if (silent) return;
     onTextChangedDebounce();
 }
 

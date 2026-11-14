@@ -123,49 +123,69 @@ def symmetric_z(t):
     return Shape(stdlib.symmetric_z(
         args[0].ptr))
 
+def _kept_a_distance(out, factors):
+    """ The field of a shape that the space was scaled by `factors` (x, y, z) -- the library's remap of the point asked at, which divides every distance by the scale -- made a DISTANCE again (the user, 2026-11-12, H176: "Fields that make a
+        body should ALWAYS be true distance fields, without any weirdness going on"; measured on his bowl: a difference with scale=3.29543 had a gradient of 0.301 = 1 / 3.295, and every union and difference made of it had less than one):
+        a surface scaled by s lies s times as far from a point, so the field is multiplied by s.  With the same factor on all three axes that is exact; with different ones no field is the distance to the
+        scaled surface in closed form, and the smallest factor is used: the field is never more than the distance (its gradient is at most 1, and exactly 1 along the axis that is scaled least).  A factor that is a
+        number or a var() (an expression: the smallest of the three, as the numbers have it) """
+    values = list(factors)
+    if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        factor = min(abs(float(v)) for v in values)
+        if factor <= 0.0 or factor == 1.0:
+            return out
+        return out * factor
+    parts = [Shape.wrap(abs(v) if isinstance(v, Shape) else abs(float(v))) for v in values]
+    smallest = parts[0]
+    for part in parts[1:]:
+        smallest = smallest.min(part)
+    return out * smallest
+
+
 stdlib.scale_x.argtypes = [libfive_tree, tfloat, tfloat]
 stdlib.scale_x.restype = libfive_tree
 def scale_x(t, sx, x0=0):
     """ Scales a shape by sx on the x axis about 0 or an optional offset
     """
     args = [Shape.wrap(t), Shape.wrap(sx), Shape.wrap(x0)]
-    return Shape(stdlib.scale_x(
+    return _kept_a_distance(Shape(stdlib.scale_x(
         args[0].ptr,
         args[1].ptr,
-        args[2].ptr))
+        args[2].ptr)), (sx, 1.0, 1.0))
 
 stdlib.scale_y.argtypes = [libfive_tree, tfloat, tfloat]
 stdlib.scale_y.restype = libfive_tree
 def scale_y(t, sy, y0=0):
-    """ Scales a shape by sx on the x axis about 0 or an optional offset
+    """ Scales a shape by sy on the y axis about 0 or an optional offset
     """
     args = [Shape.wrap(t), Shape.wrap(sy), Shape.wrap(y0)]
-    return Shape(stdlib.scale_y(
+    return _kept_a_distance(Shape(stdlib.scale_y(
         args[0].ptr,
         args[1].ptr,
-        args[2].ptr))
+        args[2].ptr)), (1.0, sy, 1.0))
 
 stdlib.scale_z.argtypes = [libfive_tree, tfloat, tfloat]
 stdlib.scale_z.restype = libfive_tree
 def scale_z(t, sz, z0=0):
-    """ Scales a shape by sx on the x axis about 0 or an optional offset
+    """ Scales a shape by sz on the z axis about 0 or an optional offset
     """
     args = [Shape.wrap(t), Shape.wrap(sz), Shape.wrap(z0)]
-    return Shape(stdlib.scale_z(
+    return _kept_a_distance(Shape(stdlib.scale_z(
         args[0].ptr,
         args[1].ptr,
-        args[2].ptr))
+        args[2].ptr)), (1.0, 1.0, sz))
 
 stdlib.scale_xyz.argtypes = [libfive_tree, tvec3, tvec3]
 stdlib.scale_xyz.restype = libfive_tree
 def scale_xyz(t, s, center=(0, 0, 0)):
-    """ Scales a shape on all three axes, about 0 or an optional offset
+    """ Scales a shape on all three axes, about 0 or an optional offset.  The field stays a distance: it is multiplied by the scale (by the smallest of the three where they differ)
     """
+    s = tuple(s)
     args = [Shape.wrap(t), list([Shape.wrap(i) for i in s]), list([Shape.wrap(i) for i in center])]
-    return Shape(stdlib.scale_xyz(
+    return _kept_a_distance(Shape(stdlib.scale_xyz(
         args[0].ptr,
         tvec3(*[a.ptr for a in args[1]]),
-        tvec3(*[a.ptr for a in args[2]])))
+        tvec3(*[a.ptr for a in args[2]]))), tuple(s))
 
 stdlib.rotate_x.argtypes = [libfive_tree, tfloat, tvec3]
 stdlib.rotate_x.restype = libfive_tree

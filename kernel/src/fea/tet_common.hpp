@@ -65,7 +65,21 @@ struct Assembly
     std::vector<uint32_t> vtStart, vtList;      // each vertex's tetrahedra (CSR)
     Bsr K;
     std::vector<double> inv;                    // per vertex: the inverse of its diagonal block, held directions as identity
+    std::vector<TurnConstraint> turns;          // the restraints of turning (H192): springs on the mean turn of a set of nodes, part of the operator
+    std::vector<double> coords;                 // the nodes' positions, x y z each (for the rigid-body modes of the multigrid; empty = no multigrid)
 };
+
+/*  y += the springs on the turns of the nodes (H192), applied to x: for each constraint 1/2 k (coef . u - target)^2, the matrix k coef coef^T  */
+void addTurnOperator(const Assembly& A, const double* x, double* y);
+
+/*  Values at the nodes from values that are constant in each tetrahedron (a stress, a heat flux): the plane through the values of the elements round a node -- a least-squares fit of a + b.x to
+ *  them, weighted by volume, taken AT the node (superconvergent patch recovery, Zienkiewicz and Zhu) -- instead of their average (H199, the user, 2026-11-13: the colours of a result "smeared").  An average
+ *  at a node of a surface takes in the deeper elements of the patch, which carry less of a bending stress, and every node does it by its own mix of them: a field that is a plane, as the stress of a
+ *  beam is, comes out low and the lower the more deep elements a node has.  The plane gives such a field back exactly, at the surface too.  The patch is two rings of elements -- the node's and its
+ *  neighbours' --: one ring keeps the oscillation of the size of an element that a linear tetrahedron's stress has.  A node whose patch cannot fix a plane (fewer than four elements, or all
+ *  on a plane) takes its own ring, and last their average; a value never leaves the range of its patch by more than the range itself.
+ *  values: `channels` numbers for each tetrahedron (row by row); out: `channels` numbers for each vertex  */
+void patchRecovery(const TetMesh& mesh, const Assembly& A, const std::vector<double>& values, int channels, std::vector<double>& out);
 
 /*  The elements' geometry and the matrix's block pattern  */
 void buildPattern(const TetMesh& mesh, Assembly& A);
@@ -85,12 +99,25 @@ struct CgResult
     std::vector<float> history;         // (the residual, relative to the load, at the start and after every iteration: the curve of the convergence that the result card draws)
 };
 
+/*  Smoothed-aggregation algebraic multigrid (tet_amg.cpp): one V-cycle is a preconditioner that is symmetric and positive definite.  It is built from the assembled matrix, the held
+ *  directions and the nodes' positions (the six rigid-body modes of each aggregate of nodes are the tentative prolongator), and is for the problems that the block-Jacobi
+ *  preconditioner cannot solve in a reasonable number of iterations: plates and shells of tetrahedra, where the number of iterations grows with (length / thickness)^2.
+ *  Null with a message when the matrix has the springs of the turns, when it cannot be coarsened or when memory is short.  */
+struct Amg;
+std::shared_ptr<Amg> buildAmg(const Assembly& A, const std::vector<unsigned char>& fixed, std::string& error);
+/*  z = one cycle on r (both of the matrix's size)  */
+void applyAmg(Amg& m, const double* r, double* z);
+std::string amgSummary(const Amg& m);
+
 /*  Preconditioned conjugate gradients for K u = b, u the starting guess and the answer; the
  *  held directions of b are ignored.  progress(fraction, text) now and then.  False with a
- *  message if the matrix is singular, the solve diverges or is cancelled.  */
+ *  message if the matrix is singular, the solve diverges or is cancelled.  With `multigrid` (and
+ *  A.coords set) a solve that stalls under the block-Jacobi preconditioner -- after 100 iterations
+ *  the rate of the last 50 says that more than 300 more are needed -- goes on with the multigrid's.  */
 bool cgSolve(const Assembly& A, const std::vector<unsigned char>& fixed, const std::vector<double>& b,
              std::vector<double>& u, double tolerance, int maxIterations, const std::atomic<bool>* cancel,
-             const std::function<void(double, const std::string&)>& progress, CgResult& out, std::string& error);
+             const std::function<void(double, const std::string&)>& progress, CgResult& out, std::string& error,
+             bool multigrid = false);
 
 /*  The `count` lowest eigenpairs of K x = lambda M x (M diagonal, `mass` per DOF; the held
  *  directions are left out): locally optimal block preconditioned conjugate gradients.  */

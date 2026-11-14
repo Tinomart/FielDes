@@ -35,6 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QJsonArray>
 #include <QLabel>
 #include <QJsonDocument>
+#include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
 #include <QSettings>
@@ -162,6 +163,32 @@ View::View(QWidget* parent)
         for (auto s : shapes)
             if (s->hasResult() && i >= 0 && size_t(i) < s->channels().size()) { m_choiceChannel = s->channels()[size_t(i)].name; break; }
         forResults([i](Shape* s) { s->setChannel(i); }, true);
+    });
+    // H191 (the user, 2026-11-13: "Legend bounds should be adjustable in the legend"): the ends typed in the legend of the result are those of the field shown; Auto gives the values' own back.
+    // They are kept by the viewer too, by the name of the field, so that the next run's result has them (applyViewerChoices)
+    connect(m_resultPanel, &ResultPanel::rangeEdited, this, [=](float lo, float hi) {
+        QString name, label;
+        for (auto s : shapes)
+            if (s->hasResult() && s->channel() >= 0 && size_t(s->channel()) < s->channels().size())
+            {
+                name = s->channels()[size_t(s->channel())].name;
+                label = s->channelLabel();
+                break;
+            }
+        if (name.isEmpty()) return;
+        const float a = float(Units::storedValue(label, lo)), b = float(Units::storedValue(label, hi));
+        if (!(b > a)) return;
+        m_choiceRanges["result:" + name] = {a, b};
+        forResults([a, b](Shape* s) { if (s->hasResult()) s->setUserRange(a, b); }, false);
+    });
+    connect(m_resultPanel, &ResultPanel::rangeAuto, this, [=]() {
+        for (auto s : shapes)
+            if (s->hasResult() && s->channel() >= 0 && size_t(s->channel()) < s->channels().size())
+            {
+                m_choiceRanges.remove("result:" + s->channels()[size_t(s->channel())].name);
+                break;
+            }
+        forResults([](Shape* s) { if (s->hasResult()) s->clearUserRange(); }, false);
     });
     connect(m_resultPanel, &ResultPanel::deformChanged, this, [=](float f) {
         for (auto s : shapes)
@@ -333,6 +360,12 @@ void View::applyViewerChoices(Shape* s) const
         s->setOpacity(m_flowOpacity);
         if (m_choiceLines >= 0) s->setShowFlowLines(m_choiceLines != 0);
     }
+    // (H191: the ends typed in a legend stay while the design changes: a coloured field by the label of its legend)
+    if (!s->hasResult() && s->hasColorField() && !m_choiceRanges.isEmpty())
+    {
+        const auto it = m_choiceRanges.constFind("field:" + s->colorLabel());
+        if (it != m_choiceRanges.constEnd()) s->setUserRange(it->first, it->second);
+    }
     if (!s->hasResult()) return;
     if (!m_choiceChannel.isEmpty())
     {
@@ -340,12 +373,82 @@ void View::applyViewerChoices(Shape* s) const
         for (size_t i = 0; i < channels.size(); ++i)
             if (channels[i].name == m_choiceChannel) { s->setChannel(int(i)); break; }
     }
+    // (...and the ends typed for a field of a result, for every field that has some: the one shown now, and the others for when they are)
+    if (!m_choiceRanges.isEmpty())
+    {
+        const auto& channels = s->channels();
+        for (size_t i = 0; i < channels.size(); ++i)
+        {
+            const auto it = m_choiceRanges.constFind("result:" + channels[i].name);
+            if (it != m_choiceRanges.constEnd()) s->setUserRangeOf(int(i), it->first, it->second);
+        }
+    }
     if (m_choiceDeform >= 0 && s->hasDeformation() && s->deformAuto() > 0) s->setDeformScale(m_choiceDeform * s->deformAuto());
     if (m_choiceElements >= 0 && s->hasElements()) s->setShowElements(m_choiceElements != 0);
 }
 
+// The shape of a statement whose eye is closed, taken out of the picture and kept, and put back: no run of the script, no render (H208)
+bool View::parkShape(int line0)
+{
+    Shape* found = nullptr;
+    for (Shape* s : shapes)
+    {
+        if (s->sourceLine() != line0) continue;
+        if (found) return false;                    // (more than one shape on the line: they are not told apart)
+        found = s;
+    }
+    if (!found || !found->done() || found->hasResult() || found == drag_target || m_parked.contains(line0)) return false;
+    if (found == hover_target)
+    {
+        found->setHover(false);
+        hover_target = nullptr;
+    }
+    if (found == m_dotHover) m_dotHover = nullptr;
+    disconnect(found, nullptr, this, nullptr);
+    disconnect(this, nullptr, found, nullptr);
+    shapes.removeOne(found);
+    m_parked.insert(line0, qMakePair(found, settings));
+    afterParking();
+    return true;
+}
+
+bool View::unparkShape(int line0)
+{
+    const auto at = m_parked.find(line0);
+    if (at == m_parked.end()) return false;
+    Shape* s = at.value().first;
+    const Settings was = at.value().second;
+    m_parked.erase(at);
+    connect(s, &Shape::redraw, this, &View::update);
+    connect(s, &Shape::gotMesh, this, &View::checkMeshes);
+    connect(s, &Shape::gotMesh, this, &View::updateResultPanel);
+    connect(s, &Shape::cacheStateChanged, this, &View::cacheStatesChanged);
+    connect(s, &Shape::gotMesh, &pick_timer, QOverload<>::of(&QTimer::start));
+    connect(this, &View::startRender, s, [=](Settings st) { s->startRender(st, this->alg); });
+    shapes.push_back(s);
+    // (the render settings have not changed since it was parked: it has its mesh and is drawn as it is.  Changed -- another region, another resolution -- it is rendered for them, as every shape is)
+    if (was != settings) s->startRender(settings, alg);
+    afterParking();
+    return true;
+}
+
+void View::afterParking()
+{
+    m_liveDrawn = false;
+    pick_timer.start();
+    updateResultPanel();
+    update();
+    requestSlice();
+    refreshSymmetry();
+    linkFollowers();
+    applyActiveCopy();
+}
+
 void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
 {
+    // (a run has made the statements again: what was parked is of the run before, and is dropped)
+    for (auto it = m_parked.begin(); it != m_parked.end(); ++it) it.value().first->deleteLater();
+    m_parked.clear();
     auto lapClock = std::chrono::steady_clock::now();
     const bool lapping = std::getenv("FIELDES_TIMING") != nullptr;
     auto lap = [&](const char* what) {
@@ -387,6 +490,8 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
     // Erase all existing shapes that aren't in the new_shapes list
     bool vars_changed = false;
     bool any_running = false;
+    const int oldShapeCount = int(shapes.size());
+    int keptShapes = 0;
     for (auto itr=shapes.begin(); itr != shapes.end(); /* no update */ )
     {
         // (same geometry coloured differently -- another field or range -- is a different shape: its colours are computed while meshing)
@@ -399,6 +504,15 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
         }
         else if (n == new_shapes_map.end())
         {
+            if (std::getenv("FIELDES_TIMING"))
+            {
+                // (why a shape of the run before is not found among the new ones -- its tree or its colours differ: its render is dropped and made again; H189)
+                std::fprintf(stderr, "[view] setShapes: the shape of line %d (tree %p, key '%s') of the run before has no match among the new ones: ", (*itr)->sourceLine() + 1,
+                             (void*)(*itr)->getUniqueId(canonical), (*itr)->identityKey(canonical).toUtf8().constData());
+                for (const auto& kv : new_shapes_map)
+                    std::fprintf(stderr, "[a new one: line %d tree %p key '%s'] ", kv.second->sourceLine() + 1, (void*)kv.first.first, kv.first.second.toUtf8().constData());
+                std::fprintf(stderr, "\n");
+            }
             if (*itr == drag_target)
             {
                 drag_target->setGrabbed(false);
@@ -424,8 +538,18 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
             (*itr)->setSourceLine(n->second->sourceLine());
             any_running |= !(*itr)->done();
             new_shapes_map.erase(n);
+            ++keptShapes;
             ++itr;
         }
+    }
+    // H207 (the user, 2026-11-14: "When openeing a new file and in section cut mode: The section cut does not get cleared immediately as it should upon opening a new file."): not one shape of the picture
+    // before is in the one that comes -- another file -- and the plane that was sampled from them is of nothing that is shown: it goes at once, and a pass that is on its way for the old shapes is not shown
+    if (oldShapeCount > 0 && keptShapes == 0 && m_sec.slice.valid())
+    {
+        m_sec.slice = FieldSlice();
+        m_sec.dirty = true;
+        m_sec.generation++;
+        emit(sliceReady(m_sec.slice));
     }
 
     lap("the old shapes against the new ones (their keys again, updateFrom)");
@@ -1216,6 +1340,8 @@ void View::paintOverlay(QPainter& painter)
     drawBoundaryLabels(painter);
     if (m_appMode) drawNameLabels(painter);
     legend_close.clear();
+    legend_ends.clear();
+    legend_auto.clear();
     bottom_items.clear();
     drawLegends(painter);
     drawScaleBar(painter);
@@ -1630,14 +1756,14 @@ void View::drawLegends(QPainter& painter)
     }
 
     // One bar per distinct colouring (label, map, range), right to left
-    struct Bar { QString label, map; float lo, hi; };
+    struct Bar { QString label, map; float lo, hi; bool manual; };       // (manual: its ends were typed in the legend, H191)
     QVector<Bar> bars;
     for (auto s : shapes)
     {
         // (analysis results have their own card; the shading of a fit that is off -- an imported part lit up from grey to red -- is its
         // colour alone: no bar of percentages, and nothing read under the cursor; the supports of a print are amber, and a line of the legend of the result: see ResultPanel)
         if (!s->hasColorField() || !s->hasMesh() || s->hasResult() || s->colorMap() == "bc" || s->colorMap() == "fit" || s->colorMap() == "support") continue;
-        Bar b{s->colorLabel(), s->colorMap(), s->colorLo(), s->colorHi()};
+        Bar b{s->colorLabel(), s->colorMap(), s->colorLo(), s->colorHi(), s->hasUserRange()};
         bool dup = false;
         for (auto& o : bars)
         {
@@ -1645,13 +1771,36 @@ void View::drawLegends(QPainter& painter)
             {   // same quantity on several parts: one bar over all of them
                 o.lo = std::min(o.lo, b.lo);
                 o.hi = std::max(o.hi, b.hi);
+                o.manual = o.manual || b.manual;
                 dup = true;
                 break;
             }
         }
         if (!dup && !hidden_legends.contains(b.label)) bars.push_back(b);
     }
-    if ((bars.isEmpty() && bcCategories.isEmpty()) || !show_legends) return;
+    // H183 and H184 (the user, 2026-11-12: "Some cards are linked when they shouldnt be, like an analysis result and the legend for boundary conditions. Every card should always move
+    // independently"; "Every card should have collision"): the legends stand in the bottom-right corner on their own, one beside the other, and do not hang on the result card -- they used to
+    // be laid out from its left edge, so that moving the card moved them.  The rectangles they take are what the cards of the viewport keep off (CardController::settle): a card that would
+    // be over one is put at the nearest free place
+    QVariantList fixedRects;
+    auto publishFixed = [this, &fixedRects] {
+        if (property("fixedCardRects").toList() == fixedRects) return;
+        setProperty("fixedCardRects", fixedRects);
+        QTimer::singleShot(0, this, [this] { CardController::settleAll(this); });
+    };
+    // (only selected surfaces shown: the key is called so)
+    const QString bcTitle = (bcCategories.size() == 1 && bcCategories.contains(6)) ? "Selection" : "Boundary conditions";     // (the key of the legend: shown through T())
+    // H191 (the user, 2026-11-14: "the boundary conditions, which are not movable for some reason"): the key of the boundary conditions is a card of its own (KeyCard), which stands in the bottom-right
+    // corner until it is moved, and the bars of the other legends beside it; the others stay painted here
+    QList<int> bcCats = bcCategories.values();
+    std::sort(bcCats.begin(), bcCats.end());
+    const bool bcWanted = !bcCategories.isEmpty() && !hidden_legends.contains(bcTitle) && show_legends;
+    updateBcCard(bcWanted, bcTitle, bcCats);
+    if (bars.isEmpty() || !show_legends)
+    {
+        publishFixed();
+        return;
+    }
 
     QFont font = painter.font();
     font.setPointSizeF(8.5);
@@ -1659,49 +1808,8 @@ void View::drawLegends(QPainter& painter)
     const QFontMetrics fm(font);
     const int barH = std::min(220, std::max(90, height() / 3));
     const int barW = 14;
-    // (to the left of the result card, which has the bottom-right corner)
-    int right = (m_resultPanel && m_resultPanel->isVisible() && m_resultPanel->parentWidget() == this) ? m_resultPanel->geometry().left() - 10 : width() - 14;
-
-    // (only selected surfaces shown: the key is called so)
-    const QString bcTitle = (bcCategories.size() == 1 && bcCategories.contains(6)) ? "Selection" : "Boundary conditions";     // (the key of the legend: shown through T())
-    if (!bcCategories.isEmpty() && !hidden_legends.contains(bcTitle))
-    {
-        static const QString names[kBcCategories + 1] = {"", T("Fixed support"), T("Sliding support"), T("Force"), T("Gravity"), T("Heat"),
-                                         T("Selected surface"), T("Inlet"), T("Outlet"), T("Wall"), T("Slip"), T("Fixed temperature"),
-                                         T("Convection"), T("Heat generated")};
-        QList<int> cats = bcCategories.values();
-        std::sort(cats.begin(), cats.end());
-        int textW = fm.horizontalAdvance(T(bcTitle)) + 16;
-        for (int c : cats) textW = std::max(textW, 18 + fm.horizontalAdvance(names[std::max(0, std::min(kBcCategories, c))]));
-        const int rowH = fm.height() + 4;
-        const int boxW = textW + 20, boxH = fm.height() + 20 + rowH * cats.size();
-        const QRect box(right - boxW, height() - boxH - 12, boxW, boxH);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(22, 76, 94, 200));
-        painter.drawRoundedRect(box, 6, 6);
-        painter.setPen(QColor(0xee, 0xe8, 0xd5));
-        painter.drawText(QRect(box.left() + 10, box.top() + 6, boxW - 20, fm.height()),
-                         Qt::AlignLeft | Qt::AlignVCenter, T(bcTitle));
-        bottom_items.push_back(QRectF(box));
-        const QRect close(box.right() - 18, box.top() + 4, 14, 14);
-        painter.setPen(QColor(0xee, 0xe8, 0xd5, 170));
-        painter.drawText(close, Qt::AlignCenter, QString(QChar(0x00d7)));
-        legend_close.push_back({close, bcTitle});
-        int y = box.top() + fm.height() + 14;
-        for (int c : cats)
-        {
-            float r, g, b;
-            bcCategoryRGB(c, r, g, b);
-            painter.setPen(QPen(QColor(0x93, 0xa1, 0xa1), 1));
-            painter.setBrush(QColor::fromRgbF(r, g, b));
-            painter.drawRect(QRect(box.left() + 10, y + 2, 12, fm.height() - 2));
-            painter.setPen(QColor(0xee, 0xe8, 0xd5));
-            painter.drawText(QRect(box.left() + 28, y, textW, rowH), Qt::AlignLeft | Qt::AlignVCenter,
-                             names[std::max(0, std::min(kBcCategories, c))]);
-            y += rowH;
-        }
-        right = box.left() - 8;
-    }
+    int right = width() - 14;
+    if (bcWanted && m_bcCard && m_bcCard->isVisible() && !CardController::moved(m_bcCard)) right = m_bcCard->x() - 8;
     for (const auto& b : bars)
     {
         auto num = [&b](float v) { return QString::number(Units::shownValue(b.label, v), 'g', 4); };      // (in the units chosen in Settings > Units, as the label names them)
@@ -1710,11 +1818,11 @@ void View::drawLegends(QPainter& painter)
         int textW = fm.horizontalAdvance(shownTitle) + 16;   // (+ the close button)
         for (int k = 0; k < ticks; k++)
         {
-            textW = std::max(textW, barW + 8 + fm.horizontalAdvance(
+            textW = std::max(textW, barW + 8 + 22 + fm.horizontalAdvance(      // (22: the box round an end that can be typed, with its pencil)
                 num(b.lo + (b.hi - b.lo) * k / (ticks - 1))));
         }
         const int boxW = textW + 20;
-        const int boxH = barH + fm.height() * 2 + 18;
+        const int boxH = barH + fm.height() * 2 + 32;       // (room for the Auto pill under the bar, H191: with 18 it stood half over the edge of the card)
         const QRect box(right - boxW, height() - boxH - 12, boxW, boxH);
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(22, 76, 94, 200));
@@ -1724,6 +1832,7 @@ void View::drawLegends(QPainter& painter)
         painter.drawText(QRect(box.left() + 10, box.top() + 6, boxW - 20, fm.height()),
                          Qt::AlignLeft | Qt::AlignVCenter, shownTitle);
         bottom_items.push_back(QRectF(box));
+        fixedRects << box;
 
         // Its close button (View > Show legends brings it back)
         const QRect close(box.right() - 18, box.top() + 4, 14, 14);
@@ -1741,17 +1850,98 @@ void View::drawLegends(QPainter& painter)
         painter.setPen(QPen(QColor(0x93, 0xa1, 0xa1), 1));
         painter.drawRect(bar);
 
-        painter.setPen(QColor(0xee, 0xe8, 0xd5));
         for (int k = 0; k < ticks; k++)
         {
             const int y = bar.bottom() - (bar.height() * k) / (ticks - 1);
+            const bool end = k == 0 || k == ticks - 1;
+            // (H191: the lowest and the highest number are typed over by a click on them -- underlined with dots to say so, in blue when they are the ones typed)
+            painter.setPen(b.manual && end ? QColor(0x7c, 0xc0, 0xff) : QColor(0xee, 0xe8, 0xd5));
             painter.drawLine(bar.right(), y, bar.right() + 4, y);
-            painter.drawText(QRect(bar.right() + 8, y - fm.height() / 2, textW, fm.height()),
-                             Qt::AlignLeft | Qt::AlignVCenter,
-                             num(b.lo + (b.hi - b.lo) * k / (ticks - 1)));
+            const QString text = num(b.lo + (b.hi - b.lo) * k / (ticks - 1));
+            const QRect labelRect(bar.right() + 8, y - fm.height() / 2, textW, fm.height());
+            if (end)
+            {
+                // (H191, the user, 2026-11-14: "NOT COMMUNICATED TO THE USER AT ALL HOW TO EDIT IT. MAKE IT CLEAR WHERE THEY CAN EDIT. And with the legend I mean EVERY LEGEND."): the two numbers that can be typed are in
+                // a box like a field to type in, a pencil after them, and the Auto switch is always there -- dim when the ends are the values', lit when they were typed
+                const int w = fm.horizontalAdvance(text);
+                const QRect field(labelRect.left() - 3, labelRect.top() - 1, w + 22, labelRect.height() + 2);
+                painter.setPen(QPen(QColor(0x7c, 0xc0, 0xff, b.manual ? 230 : 150), 1));
+                painter.setBrush(QColor(255, 255, 255, 22));
+                painter.drawRoundedRect(field, 3, 3);
+                painter.setPen(b.manual ? QColor(0x7c, 0xc0, 0xff) : QColor(0xee, 0xe8, 0xd5));
+                painter.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, text);
+                painter.setPen(QColor(0x7c, 0xc0, 0xff, 200));
+                painter.drawText(QRect(field.right() - 15, field.top(), 14, field.height()), Qt::AlignCenter, QString(QChar(0x270E)));
+                legend_ends.push_back({field, b.label, k == ticks - 1, float(Units::shownValue(b.label, b.lo)), float(Units::shownValue(b.label, b.hi))});
+            }
+            else painter.drawText(labelRect, Qt::AlignLeft | Qt::AlignVCenter, text);
+        }
+        {
+            const QRect pill(box.left() + 10, bar.bottom() + 5, fm.horizontalAdvance(T("Auto")) + 12, fm.height() + 2);
+            painter.setPen(QPen(b.manual ? QColor(38, 139, 210, 230) : QColor(0x93, 0xa1, 0xa1, 160), 1));
+            painter.setBrush(b.manual ? QBrush(QColor(38, 139, 210, 120)) : QBrush(Qt::NoBrush));      // (QBrush on both sides: `QColor : Qt::NoBrush` is a QColor, and Qt::NoBrush a black one)
+            painter.drawRoundedRect(pill, 4, 4);
+            painter.setPen(b.manual ? QColor(0xee, 0xe8, 0xd5) : QColor(0x93, 0xa1, 0xa1));
+            painter.drawText(pill, Qt::AlignCenter, T("Auto"));
+            if (b.manual) legend_auto.push_back({pill, b.label});
         }
         right = box.left() - 8;
     }
+    publishFixed();
+}
+
+// H191 (the user, 2026-11-13: "Legend bounds should be adjustable in the legend"): a click on the lowest or the highest number of a legend bar opens a box on it; Return takes the number typed
+// (in the unit the numbers are shown in) as that end of the scale, Escape gives it up
+void View::editLegendEnd(const LegendEnd& end)
+{
+    if (!m_legendEdit)
+    {
+        m_legendEdit = new QLineEdit(this);
+        m_legendEdit->setObjectName("legendRangeEdit");
+        // (a solid background, for the same reason as the result card's: the number under the box is drawn by the legend and shows through a see-through one)
+        m_legendEdit->setStyleSheet("QLineEdit { color: #eee8d5; background: #0b2230; border: 1px solid rgba(38, 139, 210, 230);"
+                                    " border-radius: 3px; padding: 0px 3px; font-size: 8pt; selection-background-color: rgba(38, 139, 210, 200); }");
+        m_legendEdit->installEventFilter(this);
+        connect(m_legendEdit, &QLineEdit::returnPressed, this, [this] { commitLegendEdit(); });
+    }
+    m_legendEditing = end;
+    m_legendEdit->setGeometry(end.rect.left(), end.rect.top(), std::max(72, end.rect.width()), end.rect.height());
+    m_legendEdit->setText(QString::number(end.high ? end.hi : end.lo, 'g', 6));
+    m_legendEdit->show();
+    m_legendEdit->raise();
+    m_legendEdit->setFocus();
+    m_legendEdit->selectAll();
+}
+
+QStringList View::legendEndsDump() const
+{
+    QStringList out;
+    for (const auto& e : legend_ends)
+        out << QString("%1|%2|%3|%4|%5|%6").arg(e.label, e.high ? "high" : "low").arg(e.rect.x()).arg(e.rect.y()).arg(e.rect.width()).arg(e.rect.height());
+    for (const auto& a : legend_auto)
+        out << QString("%1|auto|%2|%3|%4|%5").arg(a.second).arg(a.first.x()).arg(a.first.y()).arg(a.first.width()).arg(a.first.height());
+    return out;
+}
+
+void View::commitLegendEdit()
+{
+    if (!m_legendEdit) return;
+    QString text = m_legendEdit->text().trimmed();
+    m_legendEdit->hide();
+    text.replace(',', '.');                         // (a decimal comma)
+    bool ok = false;
+    const double v = text.toDouble(&ok);
+    if (!ok || !std::isfinite(v)) return;
+    const QString label = m_legendEditing.label;
+    const float lo = m_legendEditing.high ? m_legendEditing.lo : float(v);
+    const float hi = m_legendEditing.high ? float(v) : m_legendEditing.hi;
+    const float a = float(Units::storedValue(label, lo)), b = float(Units::storedValue(label, hi));
+    if (!(b > a)) return;                           // (the scale goes up: the ends are not swapped, an empty one is not taken)
+    m_choiceRanges["field:" + label] = {a, b};
+    for (auto s : shapes)
+        if (!s->hasResult() && s->hasColorField() && s->colorLabel() == label) s->setUserRange(a, b);
+    probe_valid = false;
+    update();
 }
 
 void View::resizeGL(int width, int height)
@@ -1764,6 +1954,7 @@ void View::resizeGL(int width, int height)
         m_overlay->setGeometry(rect());
     }
     placeResultPanel();
+    placeBcCard();
 }
 
 void View::placeLivePanel()
@@ -1790,6 +1981,59 @@ void View::placeResultPanel()
         m_resultPanel->move(width() - m_resultPanel->width() - 12, height() - m_resultPanel->height() - 44);
 }
 
+void View::updateBcCard(bool wanted, const QString& title, const QList<int>& cats)
+{
+    if (wanted == m_bcWanted && title == m_bcTitle && cats == m_bcCats) return;
+    m_bcWanted = wanted;
+    m_bcTitle = title;
+    m_bcCats = cats;
+    QTimer::singleShot(0, this, [this] { applyBcCard(); });         // (not from inside the paint)
+}
+
+void View::applyBcCard()
+{
+    if (!m_bcWanted)
+    {
+        if (m_bcCard) m_bcCard->hide();
+        update();
+        return;
+    }
+    if (!m_bcCard)
+    {
+        m_bcCard = new KeyCard("bc-legend", this);
+        m_bcCard->onClose = [this] {
+            hidden_legends.insert(m_bcTitle);
+            probe_valid = false;
+            update();
+        };
+    }
+    static const QString names[kBcCategories + 1] = {"", T("Fixed support"), T("Sliding support"), T("Force"), T("Gravity"), T("Heat"),
+                                     T("Selected surface"), T("Inlet"), T("Outlet"), T("Wall"), T("Slip"), T("Fixed temperature"),
+                                     T("Convection"), T("Heat generated"), T("Pressure")};
+    QVector<KeyCard::Row> rows;
+    for (int c : m_bcCats)
+    {
+        float r, g, b;
+        bcCategoryRGB(c, r, g, b);
+        rows.push_back({QColor::fromRgbF(r, g, b), names[std::max(0, std::min(kBcCategories, c))]});
+    }
+    m_bcCard->setKey(T(m_bcTitle), rows);
+    if (!CardController::sized(m_bcCard)) m_bcCard->resize(m_bcCard->sizeHint());
+    m_bcCard->show();
+    m_bcCard->raise();
+    placeBcCard();
+    CardController::settle(m_bcCard);
+    update();                                                       // (the bars of the other legends take their place beside it)
+}
+
+void View::placeBcCard()
+{
+    if (!m_bcCard || !m_bcCard->isVisible()) return;
+    // (a card the user sized keeps its size, and one the user moved keeps its place: see CardController)
+    if (!CardController::sized(m_bcCard)) m_bcCard->resize(m_bcCard->sizeHint());
+    if (!CardController::moved(m_bcCard)) m_bcCard->move(width() - 14 - m_bcCard->width(), height() - m_bcCard->height() - 12);
+}
+
 void View::updateResultPanel()
 {
     // The legend of a result is there when the result is: a shape that has its mesh (what is drawn), not one that is still being meshed or
@@ -1808,6 +2052,7 @@ void View::updateResultPanel()
     st.current = r->channel();
     st.lo = float(Units::shownValue(r->channelLabel(), r->displayLo()));      // (the colour bar in the units chosen in Settings > Units, as the label of the field names them)
     st.hi = float(Units::shownValue(r->channelLabel(), r->displayHi()));
+    st.rangeManual = r->hasUserRange();
     st.map = r->colorMap();
     st.note = r->valueNote();
     st.noteHelp = r->valueNoteHelp();
@@ -2313,6 +2558,31 @@ void View::mousePressEvent(QMouseEvent* event)
         press_target = nullptr;
         placeAt(event->pos());
         return;
+    }
+
+    // H191: a click on the lowest or the highest number of a legend types that end of the scale; on the Auto under a bar that has typed ends gives the values' own back
+    if (event->button() == Qt::LeftButton)
+    {
+        for (const auto& a : legend_auto)
+        {
+            if (a.first.contains(event->pos()))
+            {
+                m_choiceRanges.remove("field:" + a.second);
+                for (auto s : shapes)
+                    if (!s->hasResult() && s->hasColorField() && s->colorLabel() == a.second) s->clearUserRange();
+                probe_valid = false;
+                update();
+                return;
+            }
+        }
+        for (const auto& e : legend_ends)
+        {
+            if (e.rect.contains(event->pos()))
+            {
+                editLegendEnd(e);
+                return;
+            }
+        }
     }
 
     // A legend's close button
@@ -5622,7 +5892,7 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
                 into->setToolTipsVisible(true);
             }
         }
-        auto action = into->addAction(name, this, [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
+        auto action = into->addAction(o["label"].toString(name), this, [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
         if (o["type"].toString() == "block") action->setIcon(TypeIcons::icon("block"));
         if (simulations)
             action->setIcon(o["domain"].toString().isEmpty() && group != "Conditions" ? TypeIcons::icon("engineering")
@@ -5691,7 +5961,7 @@ void View::addExportEntries(QMenu* sub, int line)
     }
     if (simulation && exports.contains("meshfile"))
     {
-        // A mesh made by mesh_volume or mesh_surface: the file of another program, by the extension
+        // A mesh made by mesh_tet4 or mesh_surface_tri: the file of another program, by the extension
         auto file = sub->addMenu(T("Mesh file"));
         file->setToolTipsVisible(true);
         file->setToolTip(T("The mesh as it is, with its zones, for another program"));
@@ -6518,6 +6788,11 @@ void View::drawTriad(QPainter& p)
 
 int View::pointStyleOf(const Shape* s) const
 {
+    // H212 (the user, 2026-11-14, on a picture of a morph body and its mirror: "the points on the mirror ... DO NOT GET THE CORRECT POINT TYPES ... Double click to change the type, the special gizmos for each point
+    // type, the visual point type representation. ALL OF IT IS NOT THERE. It should be THE EXACT SAME ON THE ORIGINAL AND THE MIRROR"): the point of an image -- in a symmetry, of a copy -- is the kind of point
+    // that it is the image of: a corner, a spline point, a round corner.  It is not one of the controls of anything itself, so it was asked of nothing and was plain (style 0)
+    if (s && s->isPoint() && s->isSymmetryImage())
+        if (const Shape* original = originalOfImage(s)) return pointStyleOf(original);
     int index = -1;
     const Shape* owner = s && s->isPoint() ? controlOwner(s, index) : nullptr;
     if (owner && index >= 0 && index < int(owner->controlPoints().size()))
@@ -6534,6 +6809,9 @@ bool View::pointOfBody(const Shape* s) const
 {
     // (a body of points has no list of controls to find the point in, as a profile or a line has: it is asked which points it is made of)
     if (!s || !s->isPoint()) return false;
+    // (the point of an image is a point of a body when the point it is the image of is: its rings are the original's, H212)
+    if (s->isSymmetryImage())
+        if (const Shape* original = originalOfImage(s)) return pointOfBody(original);
     for (const Shape* b : shapes)
         if ((b->hasMorph() || b->isPointBody()) && b->morphUses(s)) return true;
     return false;
@@ -7300,6 +7578,65 @@ void View::setFieldView(QString key, FieldViewSettings s)
     update();
 }
 
+// H191 (the user, 2026-11-14: "Legend bound should inherently be editable"): the ends of a field viewer's colours typed in its card's legend, and Auto, which has them found from the field again
+void View::setFieldRange(QString key, float lo, float hi, bool automatic)
+{
+    FieldViewer* v = viewer(key);
+    if (!v) return;
+    if (automatic)
+    {
+        v->rangeKnown = false;
+        v->rangeTyped = false;
+    }
+    else
+    {
+        if (!(hi > lo)) return;
+        v->rangeKnown = true;
+        v->rangeTyped = true;
+        v->range = qMakePair(lo, hi);
+    }
+    if (v->open && v->shown) requestFieldSlice(v);
+    update();
+}
+
+// H191: the same for the colours of a model coloured by a field, in the Section card's legend.  The model whose colours the plane shows is the first one coloured by a field that is a quantity (the
+// categories -- boundary conditions, fits, supports -- have no ends to type); its ends are kept as the viewport's own legend keeps them
+void View::setSliceColourRange(float lo, float hi, bool automatic)
+{
+    Shape* first = nullptr;
+    for (auto s : shapes)
+    {
+        const bool categories = s->colorMap() == "bc" || s->colorMap() == "fit" || s->colorMap() == "support";
+        if (s->hasColorField() && !categories) { first = s; break; }
+    }
+    if (!first) return;
+    if (first->hasResult())
+    {
+        QString key;
+        if (first->channel() >= 0 && size_t(first->channel()) < first->channels().size()) key = "result:" + first->channels()[size_t(first->channel())].name;
+        if (!key.isEmpty())
+        {
+            if (automatic) m_choiceRanges.remove(key);
+            else m_choiceRanges[key] = {lo, hi};
+        }
+        for (auto s : shapes)
+            if (s->hasResult()) { if (automatic) s->clearUserRange(); else s->setUserRange(lo, hi); }
+        updateResultPanel();
+    }
+    else
+    {
+        const QString label = first->colorLabel();
+        if (automatic) m_choiceRanges.remove("field:" + label);
+        else m_choiceRanges["field:" + label] = {lo, hi};
+        for (auto s : shapes)
+            if (!s->hasResult() && s->hasColorField() && s->colorLabel() == label) { if (automatic) s->clearUserRange(); else s->setUserRange(lo, hi); }
+    }
+    probe_valid = false;
+    if (section.enabled) requestSlice();
+    pick_timer.start();
+    update();
+}
+
 bool View::fieldIconPoint(const QString& key, QPoint& out) const
 {
     const FieldViewer* v = viewer(key);
@@ -7387,13 +7724,18 @@ FieldSource View::sourceOf(Shape* s) const
 {
     FieldSource src{s->getTree(), s->getVars()};
     src.exactKey = s->exactKey();
-    if (s->hasColorField())
+    // (the colours of the boundary conditions, of a fit and of the supports of a print are CATEGORIES -- the number of a region, an amber -- and not a quantity: the viewport's legends leave them out
+    // (drawLegends), and so does the plane.  A section cut that took `bc:1` for its colours showed a rainbow of 0 to 13 and "Inside: bc:1", the user, 2026-11-14: "The section cut displays something
+    // completely odd as its legend with nonsensical numbers and colors not used anywhere")
+    const bool categories = s->colorMap() == "bc" || s->colorMap() == "fit" || s->colorMap() == "support";
+    if (s->hasColorField() && !categories)
     {   // (the field it is shown coloured by, e.g. an analysis result)
         src.color = s->colorFieldTree();
         src.lo = s->colorLo();
         src.hi = s->colorHi();
         src.map = s->colorMap();
         src.label = s->hasResult() ? s->channelLabel() : s->colorLabel();
+        src.manual = s->hasUserRange();
     }
     if (s->hasDeformation())
     {
@@ -7426,6 +7768,7 @@ void View::startSliceAt(Plane& plane, bool fine, FieldViewer* viewer)
         {
             src.lo = viewer->range.first;
             src.hi = viewer->range.second;
+            src.manual = viewer->rangeTyped;
         }
         else rangeKnown = false;
         if (!viewer->key.startsWith("line:")) src.label = viewer->key;
@@ -8545,6 +8888,10 @@ QList<const Shape*> View::outlinesWithGizmo() const
     for (const Shape* s : shapes)
     {
         if ((!s->hasControls() && !s->hasMorph()) || s->isPoint() || s->gizmo().dotOnly) continue;
+        // (a linked copy -- Ctrl+D -- of a body of points is drawn from the numbers of the ORIGINAL's points, but its gizmo is the one of its own placement: the shared gizmo of those points would move the
+        // original with it.  H174, the user, 2026-11-12: "all of the gizmo operations are completely independent for clones"; found 2026-11-14 in my window when the copy was drawn natively: a drag of the
+        // copy's gizmo moved the eight points of the original)
+        if (s->isLinked()) continue;
         const Shape::Gizmo::Mode mode = s->outlineMode();
         if (mode == Shape::Gizmo::NEVER) continue;
         if (s->isSelected() || (mode == Shape::Gizmo::ALWAYS && !anySelected && !s->isLocked())) out << s;
@@ -8694,6 +9041,16 @@ QPolygonF View::planeSquareIn(const QVector3D& pivot, float length, const QVecto
 bool View::eventFilter(QObject* watched, QEvent* event)
 {
     const QEvent::Type type = event->type();
+    if (m_legendEdit && watched == m_legendEdit)
+    {
+        // (H191: the box a legend's end is typed in: Escape and leaving it give it up)
+        if (type == QEvent::KeyPress && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape)
+        {
+            m_legendEdit->hide();
+            return true;
+        }
+        if (type == QEvent::FocusOut) m_legendEdit->hide();
+    }
     if (type == QEvent::KeyPress || type == QEvent::KeyRelease || type == QEvent::WindowDeactivate || type == QEvent::ApplicationStateChange)
     {
         const bool now = shiftHeld();
@@ -9070,6 +9427,12 @@ bool View::provisionalVisible() const
     if (!m_prov || m_provLines.isEmpty()) return false;
     // (an operation that carries parts is selected: its gizmo is the shared one of its parts, drawn at the middle of them; the provisional one is drawn at the middle of the BOX of the selected model, which is the pivot of no part -- a second gizmo, the box's pivot, in the picture of the difference of a box and a sphere: the user, 2026-11-03, H96, "There should be just one gizmo visible")
     if (carrierSelected(shapes)) return false;
+    // (the same for a selected sweep -- a path extrusion --, whose gizmo is the shared gizmo of the points of its profile and its path: it has no placement of its own, so the model tree sent the
+    // provisional gizmo, and the shared one stood beside it, a second gizmo at the middle of the box: the user, 2026-11-14, H174, "selecting the path extrude there gives multiple gizmos, which
+    // should have been fixed a long time ago".  Seen in a window on his StillFucked.py: two full gizmos, one of them see-through)
+    QList<Shape*> sharedMembers;
+    QVector3D sharedCentre;
+    if (groupGizmo(sharedMembers, sharedCentre)) return false;
     for (const Shape* s : shapes)
     {
         // (the real gizmo is there: it is the one that is drawn, and dragged)
@@ -9335,9 +9698,14 @@ void View::drawPointDots(QPainter& painter)
             // the direction a spline point leaves it in, while it is selected (or the mouse is on it): a line through the dot, its rotation turns it
             QVector3D tg;
             int controlIndex = -1;
-            Shape* owner = on ? controlOwner(s, controlIndex) : nullptr;
+            // (the point of an image has the direction of the point it is the image of, taken through the map of the image: H212, "the special gizmos for each point type")
+            const Shape* real = s;
+            if (s->isSymmetryImage())
+                if (const Shape* original = originalOfImage(s)) real = original;
+            Shape* owner = on ? controlOwner(real, controlIndex) : nullptr;
             if (owner && owner->tangentAt(controlIndex, tg))
             {
+                if (real != s && s->gizmoMapped()) tg = s->gizmoMapLinear().mapVector(tg);
                 const QPointF d = toScreen(p + tg.normalized() * gizmoLength(p)) - q;
                 const double len = std::hypot(d.x(), d.y());
                 if (len > 2.0)

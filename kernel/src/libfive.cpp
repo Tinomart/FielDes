@@ -55,6 +55,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/step/step_bspline.hpp"
 #include "libfive/fea/fea.hpp"
 #include "libfive/fea/tetmesh.hpp"
+#include "libfive/fea/tetmender.hpp"
 #include "libfive/fea/tetfea.hpp"
 #include "libfive/fea/tetthermal.hpp"
 #include "libfive/fea/tetflow.hpp"
@@ -445,6 +446,90 @@ libfive_tree libfive_mesh_from_arrays(const float* xyz, uint32_t vertex_count,
         }
     }
     return finishMeshImport(std::move(t), ok, error, mi, info);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------
+// SMOOTHING THE SURFACE OF A MESH (H178, the user, 2026-11-14: "The smoothing still separated different parts at even small radii like 3 mm and DID NOT ACTUALLY SMOOTH IT IN GENERAL and made the topology
+// optimizations edges SUPER JAGGED"; measured on his bowl at 2 mm: smooth(radius=3, steps=2) of the optimized part kept 50 % of its volume, in four pieces, and its surface was rougher than before).  An average of
+// copies of the FIELD is a diffusion: whatever is thinner than its radius is eaten, and with a few copies a bump smaller than the radius is only copied round.  The optimized part is a surface already, so the surface is
+// what is smoothed: Taubin's filter (the umbrella step with a weight `lambda`, which shrinks, then one with the weight `mu` < -lambda, which swells it back: what is longer than a few edges is not moved, what is shorter
+// is smoothed away, the volume stays).  Each vertex goes to the mean of its neighbours; the vertices on an edge that only one triangle has (the border of an open surface: the design stops there, a plane of the part
+// holds it) and on one that more than two have are held where they are.  `pairs` steps of the two.  1 when it was done
+extern "C" int libfive_mesh_smooth(float* xyz, uint32_t vertex_count, const uint32_t* tri, uint32_t tri_count, int32_t pairs, float lambda, float mu)
+{
+    if (!xyz || !tri || vertex_count < 4 || tri_count < 4 || pairs < 1) return 0;
+    const size_t n = vertex_count;
+    std::vector<std::pair<uint32_t, uint32_t> > edges;
+    edges.reserve(size_t(tri_count) * 3);
+    for (size_t t = 0; t < size_t(tri_count); ++t)
+    {
+        const uint32_t a = tri[3 * t], b = tri[3 * t + 1], c = tri[3 * t + 2];
+        if (a >= n || b >= n || c >= n) return 0;
+        edges.push_back(std::make_pair(std::min(a, b), std::max(a, b)));
+        edges.push_back(std::make_pair(std::min(b, c), std::max(b, c)));
+        edges.push_back(std::make_pair(std::min(c, a), std::max(c, a)));
+    }
+    std::sort(edges.begin(), edges.end());
+    std::vector<uint8_t> held(n, 0);
+    std::vector<std::pair<uint32_t, uint32_t> > unique;
+    unique.reserve(edges.size() / 2 + 1);
+    for (size_t i = 0; i < edges.size();)
+    {
+        size_t j = i;
+        while (j < edges.size() && edges[j] == edges[i]) ++j;
+        if (edges[i].first != edges[i].second)
+        {
+            unique.push_back(edges[i]);
+            if (j - i != 2) held[edges[i].first] = held[edges[i].second] = 1;
+        }
+        i = j;
+    }
+    std::vector<uint32_t> start(n + 1, 0);
+    for (const auto& e : unique)
+    {
+        ++start[e.first + 1];
+        ++start[e.second + 1];
+    }
+    for (size_t v = 0; v < n; ++v) start[v + 1] += start[v];
+    std::vector<uint32_t> neighbour(start[n]), fill(start.begin(), start.end() - 1);
+    for (const auto& e : unique)
+    {
+        neighbour[fill[e.first]++] = e.second;
+        neighbour[fill[e.second]++] = e.first;
+    }
+    std::vector<float> next(3 * n);
+    auto step = [&](float weight) {
+        for (size_t v = 0; v < n; ++v)
+        {
+            const uint32_t from = start[v], to = start[v + 1];
+            if (held[v] || to == from)
+            {
+                next[3 * v] = xyz[3 * v];
+                next[3 * v + 1] = xyz[3 * v + 1];
+                next[3 * v + 2] = xyz[3 * v + 2];
+                continue;
+            }
+            double sx = 0, sy = 0, sz = 0;
+            for (uint32_t k = from; k < to; ++k)
+            {
+                const size_t u = neighbour[k];
+                sx += xyz[3 * u];
+                sy += xyz[3 * u + 1];
+                sz += xyz[3 * u + 2];
+            }
+            const double inv = 1.0 / double(to - from);
+            next[3 * v] = float(xyz[3 * v] + weight * (sx * inv - xyz[3 * v]));
+            next[3 * v + 1] = float(xyz[3 * v + 1] + weight * (sy * inv - xyz[3 * v + 1]));
+            next[3 * v + 2] = float(xyz[3 * v + 2] + weight * (sz * inv - xyz[3 * v + 2]));
+        }
+        std::copy(next.begin(), next.end(), xyz);
+    };
+    for (int p = 0; p < pairs; ++p)
+    {
+        step(lambda);
+        step(mu);
+    }
+    return 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1985,12 +2070,94 @@ struct libfive_tetmesh_
 
 static std::string g_tetmesh_message;
 
-libfive_tetmesh* libfive_tetmesh_new(libfive_tree shape, libfive_region3 r, float h)
+// H225: the limits that every mesh made from now on starts from (the choice surface_fit of the meshing and analysis functions); the values of 'balanced' put them back
+void libfive_tetmesh_set_limits(double floor_ratio, double sliver_angle, double surface_tolerance, double mender_poor)
+{
+    fea::MeshLimits& limits = fea::meshLimits();
+    limits.floorRatio = floor_ratio;
+    limits.sliverAngle = sliver_angle;
+    limits.surfaceTolerance = surface_tolerance;
+    limits.menderPoor = mender_poor;
+}
+
+libfive_tetmesh* libfive_tetmesh_mend(libfive_tree shape, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets,
+                                      int rounds, int sweeps, double split_badness, int surface, int64_t* stats4)
 {
     auto m = new libfive_tetmesh_;
     std::string error;
+    if (node_count <= 0 || tet_count <= 0 ||
+        !fea::meshFromArrays(size_t(node_count), positions, size_t(tet_count), tets, m->mesh, error))
+    {
+        g_tetmesh_message = error.empty() ? "the mesh has no tetrahedra" : error;
+        delete m;
+        return nullptr;
+    }
+    fea::MendOptions options;
+    options.rounds = rounds;
+    options.smoothSweeps = sweeps;
+    options.splitBadness = split_badness;
+    options.surface = surface != 0;
+    options.surfaceTolerance = fea::meshLimits().surfaceTolerance;          // (H225: the user's choice between fewer odd elements and more surface conformity, surface_fit)
+    options.poor = fea::meshLimits().menderPoor;
+    fea::MendStats stats;
+    std::unique_ptr<Tree> tree;
+    if (shape) tree.reset(new Tree(shape));
+    if (!fea::mendTets(m->mesh, tree.get(), options, &stats))
+    {
+        g_tetmesh_message = "the mesh could not be mended (cancelled, or too large)";
+        delete m;
+        return nullptr;
+    }
+    if (stats4)
+    {
+        stats4[0] = int64_t(stats.swaps);
+        stats4[1] = int64_t(stats.flips);
+        stats4[2] = int64_t(stats.splits);
+        stats4[3] = int64_t(stats.moved);
+    }
+    g_tetmesh_message.clear();
+    return m;
+}
+
+libfive_tetmesh* libfive_tetmesh_snap(libfive_tree shape, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets,
+                                      double rim_floor, int64_t* stats2)
+{
+    auto m = new libfive_tetmesh_;
+    std::string error;
+    if (!shape || node_count <= 0 || tet_count <= 0 ||
+        !fea::meshFromArrays(size_t(node_count), positions, size_t(tet_count), tets, m->mesh, error))
+    {
+        g_tetmesh_message = error.empty() ? "the mesh has no tetrahedra" : error;
+        delete m;
+        return nullptr;
+    }
+    fea::MeshOptions options;
+    options.rimFloor = rim_floor;
+    options.smooth = false;            // (a graded mesh: its triangles differ in size on purpose, the skin is not made regular)
+    fea::snapSurface(m->mesh, Tree(shape), options);
+    if (stats2)
+    {
+        stats2[0] = int64_t(m->mesh.edgesSnapped);
+        stats2[1] = int64_t(m->mesh.rimsSnapped);
+    }
+    g_tetmesh_message.clear();
+    return m;
+}
+
+static libfive_tetmesh* tetmeshNew(libfive_tree shape, libfive_region3 r, float h, bool snap)
+{
+    auto m = new libfive_tetmesh_;
+    std::string error;
+    // (no mending here: mesh_tet4 mends after, with libfive_tetmesh_mend.  The edges and the rims are put on by meshShape, as in an analysis: one mesher, H223 -- except for a mesh that is refined after this one, a graded mesh:
+    // the passes on the coarse lattice made the mesh of example 36 worse once it was refined (worst skewness 0.957 with them on the lattice, 0.899 without the rim pass), so it is cleaned up once, after the refinement,
+    // with libfive_tetmesh_snap)
+    fea::MeshOptions plain;
+    plain.mend = false;
+    plain.rims = snap;
+    plain.edges = snap;
+    plain.smooth = snap;
     if (!fea::meshShape(Tree(shape), Eigen::Vector3d(r.X.lower, r.Y.lower, r.Z.lower),
-                        Eigen::Vector3d(r.X.upper, r.Y.upper, r.Z.upper), h, m->mesh, error))
+                        Eigen::Vector3d(r.X.upper, r.Y.upper, r.Z.upper), h, m->mesh, error, plain))
     {
         g_tetmesh_message = error;
         delete m;
@@ -1998,6 +2165,64 @@ libfive_tetmesh* libfive_tetmesh_new(libfive_tree shape, libfive_region3 r, floa
     }
     g_tetmesh_message.clear();
     return m;
+}
+
+libfive_tetmesh* libfive_tetmesh_new(libfive_tree shape, libfive_region3 r, float h)
+{
+    return tetmeshNew(shape, r, h, true);
+}
+
+libfive_tetmesh* libfive_tetmesh_new_plain(libfive_tree shape, libfive_region3 r, float h)
+{
+    return tetmeshNew(shape, r, h, false);
+}
+
+struct libfive_probe_
+{
+    fea::SurfaceProbe info;
+};
+
+libfive_probe* libfive_tetmesh_probe(libfive_tree shape, libfive_region3 r, float h, double reach, int64_t max_return)
+{
+    auto m = new libfive_probe_;
+    std::string error;
+    if (!fea::probeSurface(Tree(shape), Eigen::Vector3d(r.X.lower, r.Y.lower, r.Z.lower), Eigen::Vector3d(r.X.upper, r.Y.upper, r.Z.upper),
+                          h, reach, size_t(max_return > 0 ? max_return : 0), true, m->info, error))
+    {
+        g_tetmesh_message = error;
+        delete m;
+        return nullptr;
+    }
+    g_tetmesh_message.clear();
+    return m;
+}
+
+void libfive_probe_counts(libfive_probe* m, int64_t* out)
+{
+    out[0] = int64_t(m->info.vertices);
+    out[1] = int64_t(m->info.inside);
+    out[2] = int64_t(m->info.nearby);
+    out[3] = int64_t(m->info.pos.size());
+    out[4] = int64_t(m->info.stride);
+}
+
+double libfive_probe_spacing(libfive_probe* m)
+{
+    return m->info.h;
+}
+
+void libfive_probe_samples(libfive_probe* m, double* out)
+{
+    for (size_t i = 0; i < m->info.pos.size(); ++i)
+    {
+        for (int a = 0; a < 3; ++a) out[4 * i + size_t(a)] = m->info.pos[i][a];
+        out[4 * i + 3] = m->info.value[i];
+    }
+}
+
+void libfive_probe_delete(libfive_probe* m)
+{
+    delete m;
 }
 
 const char* libfive_tetmesh_last_message(void)
@@ -2119,6 +2344,12 @@ void libfive_tetfea_add_support(libfive_tetfea* f, libfive_tree region, int x, i
     f->prepared = f->solved = false;
 }
 
+void libfive_tetfea_add_turn(libfive_tetfea* f, libfive_tree region, int x, int y, int z, double ax, double ay, double az)
+{
+    f->problem->addTurn(Tree(region), x != 0, y != 0, z != 0, Eigen::Vector3d(ax, ay, az));
+    f->prepared = f->solved = false;
+}
+
 void libfive_tetfea_add_force(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz)
 {
     f->problem->addForce(Tree(region), Eigen::Vector3d(fx, fy, fz));
@@ -2172,6 +2403,18 @@ void libfive_tetfea_add_force_profile(libfive_tetfea* f, libfive_tree region, fl
                                       int load_case, libfive_tree profile)
 {
     f->problem->addForceProfile(Tree(region), Eigen::Vector3d(fx, fy, fz), load_case, Tree(profile));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetfea_add_pressure(libfive_tetfea* f, libfive_tree region, float value, int load_case)
+{
+    f->problem->addPressure(Tree(region), double(value), load_case, Tree::invalid());
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetfea_add_pressure_profile(libfive_tetfea* f, libfive_tree region, float value, int load_case, libfive_tree profile)
+{
+    f->problem->addPressure(Tree(region), double(value), load_case, Tree(profile));
     f->prepared = f->solved = false;
 }
 

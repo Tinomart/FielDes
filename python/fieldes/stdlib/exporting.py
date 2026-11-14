@@ -106,7 +106,7 @@ def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False
 
             .stl (binary; ascii=True for text), .obj, .ply, .3mf, .glb, .gltf, .fbx (Autodesk FBX, ASCII 7.4: see fbx.py), .off, .dxf (3DFACE)
 
-        A mesh of elements -- what mesh_volume and mesh_surface make -- is written as it is, with its zones: .msh (Gmsh), .vtu, .inp (Abaqus), .bdf (Nastran), .unv, .stl,
+        A mesh of elements -- what the meshing functions (mesh_tet4, mesh_tet10, mesh_hex_quanta, mesh_surface_tri ...) make -- is written as it is, with its zones: .msh (Gmsh), .vtu, .inp (Abaqus), .bdf (Nastran), .unv, .stl,
         .obj, or format='fluent' / 'openfoam' (a folder); the options (scale=0.001 for metres, ...) are those of Mesh.export (see meshwriters.py)
 
         part        a body (a shape, a list of them, the design an optimisation made, the body of an analysis' result)
@@ -125,7 +125,7 @@ def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False
             options['scale'] = 1.0 / units.LENGTH[units.check_length(unit)]
         return part.export(path, **options)
     if options:
-        raise TypeError('export_mesh() got unexpected keyword arguments: {} (they are for a mesh made by mesh_volume)'.format(', '.join(sorted(options))))
+        raise TypeError('export_mesh() got unexpected keyword arguments: {} (they are for a mesh made by one of the meshing functions)'.format(', '.join(sorted(options))))
     ext = os.path.splitext(path)[1].lower()
     if ext not in meshfiles.MESH_WRITE_FORMATS:
         raise ValueError('export_mesh({!r}): the mesh formats are {}'.format(path, ', '.join(meshfiles.MESH_WRITE_FORMATS)))
@@ -399,6 +399,8 @@ def _node_sets(data, result):
                 notes.append('a force(...) of the analysis touches no surface of the model: it is left out')
                 continue
             loads.append({'vector': tuple(l.vector), 'nodes': [(n, w / total) for n, w in sorted(weight.items())]})
+        elif isinstance(l, fea._Pressure):
+            notes.append('pressure(...) is not part of the exported model (the force of every face is not written as a node table)')
         elif isinstance(l, fea._Gravity):
             gravity = tuple(l.g)
         elif isinstance(l, fea._Thermal):

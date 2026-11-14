@@ -15,6 +15,12 @@ uniform vec4 cut_color;
 // triangles between them where the value crosses zero)
 uniform int patch_mode;
 
+// A field's colours on a surface (H199): when lut_mode is non-zero the vertices carry the VALUE (0..1 in the red channel) and the colour of the
+// value a fragment has between them is looked up here, in a table of the colour map -- not interpolated from the colours of the vertices, which
+// turns a red vertex next to a blue one into grey between them and blurs a sharp change of the field
+uniform sampler2D color_lut;
+uniform int lut_mode;
+
 in vec3 frag_norm;
 in vec3 frag_pos;
 in vec4 frag_color;
@@ -23,6 +29,7 @@ in float frag_patch;
 out vec4 fragColor;
 
 void main() {
+    vec3 base_color = (lut_mode != 0) ? texture(color_lut, vec2(clamp(frag_color.r, 0.0, 1.0), 0.5)).rgb : frag_color.rgb;
     if (patch_mode != 0 && frag_patch > 0.0)
     {
         discard;
@@ -60,14 +67,14 @@ void main() {
             brightness = 0.2 + 0.8 * abs(norm.z);
         }
 
-        // shading 3: the vertex colour (a field's colour map), lit
+        // shading 3: the vertex colour (a field's colour map), lit; the light never takes more than half of the colour (H219, the user, 2026-11-14: cubes "IN PITCH BLACK IS NOT ACCEPTABLE": the dark end of the map at a floor of 0.35 was black)
         fragColor = (shading == 3)
-            ? vec4(frag_color.rgb * (0.35 + 0.65 * brightness), 1.0)
+            ? vec4(base_color * (0.5 + 0.5 * brightness), 1.0)
             : vec4(brightness, brightness, brightness, 1.0);
     }
     else
     {
-        fragColor = frag_color;
+        fragColor = vec4(base_color, frag_color.a);
     }
     fragColor = fragColor * color_mul + color_add;
 }

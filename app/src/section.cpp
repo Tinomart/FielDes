@@ -20,15 +20,26 @@ of the License, or (at your option) any later version.
 
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QContextMenuEvent>
+#include <QCoreApplication>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -254,6 +265,7 @@ FieldSlice sampleField(const QVector<FieldSource>& sources,
             out.colorHi = src.hi;
             out.colorMap = src.map;
             out.colorLabel = src.label;
+            out.colorManual = src.manual;
         }
     }
     if (out.hasColor) out.color.fill(std::numeric_limits<float>::quiet_NaN(), out.w * out.h);
@@ -633,11 +645,141 @@ void FieldView::leaveEvent(QEvent*)
     update();
 }
 
+// The colour bar of a plane with its numbers, in `bar` and the line of labels under it: what the card's legend draws and what a saved image carries.  `hasColor`: a model coloured by a field (its own map
+// and range); else the distance scale, dark blue inside to orange outside with the surface in the middle
+static void paintFieldLegend(QPainter& p, const QRectF& bar, const QRectF& labels, bool valid, bool hasColor, const QString& map, const QString& label, float lo, float hi, float in, float out)
+{
+    QLinearGradient g(bar.topLeft(), bar.topRight());
+    for (int k = 0; k <= 20; ++k)
+    {
+        const float t = -1 + 2 * k / 20.f;
+        g.setColorAt(k / 20.0, !hasColor ? fieldColour(t)
+                               : map == "section" ? fieldColour(sectionLevel(lo + (hi - lo) * k / 20.f, lo, hi))
+                                                  : colormapColor(map, k / 20.f));
+    }
+    QPainterPath path;
+    path.addRoundedRect(bar, 3, 3);
+    p.fillPath(path, g);
+    if (!hasColor)
+    {
+        p.setPen(QPen(QColor(20, 20, 20), 1.5));
+        p.drawLine(QPointF(bar.center().x(), bar.top() - 1), QPointF(bar.center().x(), bar.bottom() + 1));
+    }
+    p.setPen(kDim);
+    if (hasColor)
+    {
+        p.drawText(labels, Qt::AlignLeft | Qt::AlignVCenter, QString::number(lo, 'g', 4));
+        p.drawText(labels, Qt::AlignRight | Qt::AlignVCenter, QString::number(hi, 'g', 4));
+        p.drawText(labels, Qt::AlignHCenter | Qt::AlignVCenter, label.isEmpty() ? QString() : label);
+        return;
+    }
+    if (valid)
+    {
+        p.drawText(labels, Qt::AlignLeft | Qt::AlignVCenter, T("%1%2 inside").arg(QChar(0x2212)).arg(in, 0, 'g', 3));
+        p.drawText(labels, Qt::AlignRight | Qt::AlignVCenter, T("+%1 outside").arg(out, 0, 'g', 3));
+    }
+    p.drawText(labels, Qt::AlignHCenter | Qt::AlignVCenter, "surface");
+}
+
+bool FieldView::saveImage(const QString& path) const
+{
+    if (!m_slice.valid() || m_slice.image.isNull()) return false;
+    // (row 0 of the image is the low end of v: flipped so +v points up, as the card draws it)
+    const QImage plot = m_slice.image.mirrored(false, true);
+    // As the card shows it: the plot on the card's dark ground, no transparency (the first file the test saved was a few outlines on nothing, 260 pixels wide), and large enough to look at: a whole
+    // multiple of the plot's pixels that makes its longer side at least 1000
+    const int longer = std::max(1, std::max(plot.width(), plot.height()));
+    const int factor = std::max(1, (1000 + longer - 1) / longer);
+    const int pw = plot.width() * factor, ph = plot.height() * factor;
+    // And what the colours mean (H187, the user, 2026-11-14: "the exported image should display a legend obviously, otherwise it means nothing"): the plane it is across and where, the extent of
+    // each axis, the colour bar with its numbers -- the card's own, drawn by the same code -- and what the lines are
+    static const char* names = "XYZ";
+    const int ua = FieldSlice::uAxis(m_slice.axis), va = FieldSlice::vAxis(m_slice.axis);
+    const int margin = std::max(24, pw / 40);
+    QFont f;
+    f.setPixelSize(std::max(15, pw / 52));
+    const QFontMetrics fm(f);
+    const int line = fm.height() + 8;
+    const int barH = std::max(16, pw / 60);
+    const bool distance = !m_slice.hasColor;
+    const QString title = T("Section across %1 at %2 mm").arg(names[m_slice.axis]).arg(m_slice.offset, 0, 'g', 5);
+    const QString axes = QString("%1 %2 %3 %4").arg(names[ua]).arg(m_slice.min[ua], 0, 'g', 4).arg(QChar(0x2192)).arg(m_slice.max[ua], 0, 'g', 4) + QString("   ") + QChar(0x00b7) + "   "
+                         + QString("%1 %2 %3 %4").arg(names[va]).arg(m_slice.min[va], 0, 'g', 4).arg(QChar(0x2192)).arg(m_slice.max[va], 0, 'g', 4);
+    QString note;
+    if (m_slice.hasColor) note = T("Inside: %1").arg(m_slice.colorLabel.isEmpty() ? T("result") : m_slice.colorLabel);
+    else if (m_slice.spacing > 0) note = T("%1 to %2, lines every %3").arg(m_slice.lo, 0, 'g', 3).arg(m_slice.hi, 0, 'g', 3).arg(m_slice.spacing, 0, 'g', 3);
+    const int width = pw + 2 * margin;
+    const int height = margin + line + 8 + ph + 10 + line + 12 + barH + line + (note.isEmpty() ? 0 : line) + margin;
+    QImage out(width, height, QImage::Format_RGB32);
+    out.fill(QColor(22, 76, 94));
+    QPainter p(&out);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setFont(f);
+    int y = margin;
+    p.setPen(kText);
+    p.drawText(QRect(margin, y, pw, line), Qt::AlignLeft | Qt::AlignVCenter, title);
+    y += line + 8;
+    const QRect where(margin, y, pw, ph);
+    p.fillRect(where, QColor(0, 0, 0, 60));
+    p.drawImage(where, plot);
+    y += ph + 10;
+    p.setPen(kDim);
+    p.drawText(QRect(margin, y, pw, line), Qt::AlignHCenter | Qt::AlignVCenter, axes);
+    y += line + 12;
+    const QRectF bar(margin, y, pw, barH);
+    paintFieldLegend(p, bar, QRectF(margin, y + barH + 2, pw, line), m_slice.valid(), m_slice.hasColor, m_slice.colorMap, m_slice.colorLabel, m_slice.colorLo, m_slice.colorHi, m_slice.rangeIn,
+                     m_slice.rangeOut);
+    y += barH + line;
+    if (!note.isEmpty())
+    {
+        p.setPen(kText);
+        p.drawText(QRect(margin, y, pw, line), Qt::AlignHCenter | Qt::AlignVCenter, note);
+    }
+    (void)distance;
+    p.end();
+    return out.save(path);
+}
+
+// H187 (the user, 2026-11-12: "when you right click that 2D image, I want there to be an option to save it as an image")
+// A press and a release of the right button are the plot's too: a press that nobody took goes on to the card and the viewport behind it, which opens a menu of its own -- the entry stood over that one,
+// "awkwardly placed together in the context menu as a different kind of button" (the user, 2026-11-14)
+void FieldView::mousePressEvent(QMouseEvent* e)
+{
+    e->accept();
+}
+
+void FieldView::mouseReleaseEvent(QMouseEvent* e)
+{
+    e->accept();
+}
+
+void FieldView::contextMenuEvent(QContextMenuEvent* e)
+{
+    e->accept();
+    if (!m_slice.valid()) return;
+    QMenu menu(this);
+    menu.addAction(T("Save as image..."), this, [this] {
+        const QString start = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+        const QString path = QFileDialog::getSaveFileName(this, T("Save the 2D view as an image"), QDir(start.isEmpty() ? QDir::homePath() : start).filePath("section.png"),
+                                                          T("PNG image (*.png);;JPEG image (*.jpg)"));
+        if (path.isEmpty()) return;
+        if (!saveImage(path)) QMessageBox::warning(this, T("Save as image"), T("The image could not be saved."));
+    });
+    menu.exec(e->globalPos());
+}
+
 ////////////////////////////////////////////////////////////////////////////////
+
+// H191 (the user, 2026-11-14: "The legend you made editable for H191 is NOT COMMUNICATED TO THE USER AT ALL HOW TO EDIT IT ... And with the legend I mean EVERY LEGEND. The legend in the section cut for
+// example does not have editable bounds"): the numbers at the two ends of the bar are boxes with a pencil -- a click types the end -- and under the bar a line says so, with an Auto switch that is
+// lit while the ends are the values' own and gives them back when they were typed
+static const int kLegendLabelTop = 13, kLegendLabelH = 18, kLegendHintTop = 33, kLegendHintH = 14;
 
 FieldLegend::FieldLegend(QWidget* parent) : QWidget(parent)
 {
-    setFixedHeight(30);
+    setFixedHeight(kLegendHintTop + kLegendHintH + 2);
+    setMouseTracking(true);
 }
 
 void FieldLegend::setSlice(const FieldSlice& s)
@@ -650,7 +792,45 @@ void FieldLegend::setSlice(const FieldSlice& s)
     m_label = s.colorLabel;
     m_lo = s.colorLo;
     m_hi = s.colorHi;
+    if (s.hasColor) m_manual = s.colorManual;           // (the distance scale's own: the card sets it, setManual)
     update();
+}
+
+void FieldLegend::setManual(bool manual)
+{
+    if (m_manual == manual) return;
+    m_manual = manual;
+    update();
+}
+
+QString FieldLegend::endText(bool high) const
+{
+    if (m_hasColor) return QString::number(high ? m_hi : m_lo, 'g', 4);
+    return high ? T("+%1 outside").arg(m_out, 0, 'g', 3) : T("%1%2 inside").arg(QChar(0x2212)).arg(m_in, 0, 'g', 3);
+}
+
+// The box of a number: its text, a little room round it and the pencil on the side towards the middle
+QRectF FieldLegend::endRect(bool high) const
+{
+    QFont f = font();
+    f.setPointSize(8);
+    const int w = QFontMetrics(f).horizontalAdvance(endText(high)) + 26;
+    const QRectF r(high ? width() - w : 0, kLegendLabelTop, w, kLegendLabelH);
+    return r;
+}
+
+QPoint FieldLegend::partCentre(int part) const
+{
+    if (part == 2) return autoPill().center();
+    return endRect(part == 1).center().toPoint();
+}
+
+QRect FieldLegend::autoPill() const
+{
+    QFont f = font();
+    f.setPointSize(7);
+    const int w = QFontMetrics(f).horizontalAdvance(T("Auto")) + 14;
+    return QRect(width() - w, kLegendHintTop, w, kLegendHintH);
 }
 
 void FieldLegend::paintEvent(QPaintEvent*)
@@ -658,43 +838,199 @@ void FieldLegend::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF bar(1, 2, width() - 2, 9);
-    QLinearGradient g(bar.topLeft(), bar.topRight());
-    for (int k = 0; k <= 20; ++k)
-    {
-        const float t = -1 + 2 * k / 20.f;
-        g.setColorAt(k / 20.0, !m_hasColor ? fieldColour(t)
-                               : m_map == "section" ? fieldColour(sectionLevel(m_lo + (m_hi - m_lo) * k / 20.f, m_lo, m_hi))
-                                                    : colormapColor(m_map, k / 20.f));
-    }
-    QPainterPath path;
-    path.addRoundedRect(bar, 3, 3);
-    p.fillPath(path, g);
-    if (!m_hasColor)
-    {
-        p.setPen(QPen(QColor(20, 20, 20), 1.5));
-        p.drawLine(QPointF(bar.center().x(), bar.top() - 1), QPointF(bar.center().x(), bar.bottom() + 1));
-    }
-
     QFont f = font();
     f.setPointSize(8);
     p.setFont(f);
-    p.setPen(kDim);
-    const QRectF labels(0, bar.bottom() + 2, width(), 14);
-    if (m_hasColor)
+    // (the numbers are drawn by the one painter that the saved image uses too: inset, so that they stand in their boxes)
+    paintFieldLegend(p, bar, QRectF(5, kLegendLabelTop, width() - 10, kLegendLabelH), m_valid, m_hasColor, m_map, m_label, m_lo, m_hi, m_in, m_out);
+    if (!m_valid) return;
+    const QColor accent(38, 139, 210);
+    const QColor outline = m_manual ? accent : QColor(147, 161, 161, 150);
+    for (int k = 0; k < 2; ++k)
     {
-        p.drawText(labels, Qt::AlignLeft | Qt::AlignVCenter, QString::number(m_lo, 'g', 4));
-        p.drawText(labels, Qt::AlignRight | Qt::AlignVCenter, QString::number(m_hi, 'g', 4));
-        p.drawText(labels, Qt::AlignHCenter | Qt::AlignVCenter, m_label.isEmpty() ? QString() : m_label);
+        const bool high = k == 1;
+        const bool editing = m_edit && m_edit->isVisible() && m_editHigh == high;
+        if (editing) continue;
+        const QRectF r = endRect(high).adjusted(0.5, 0.5, -0.5, -0.5);
+        p.setPen(QPen(outline, 1));
+        p.setBrush(m_manual ? QBrush(QColor(38, 139, 210, 50)) : QBrush(Qt::NoBrush));      // (QBrush on both sides: `QColor : Qt::NoBrush` is a QColor, and Qt::NoBrush a black one: the boxes hid their numbers)
+        p.drawRoundedRect(r, 3, 3);
+        p.setPen(m_manual ? accent : kDim);
+        QFont pf = f;
+        pf.setPointSize(8);
+        p.setFont(pf);
+        const QRectF pencil = high ? QRectF(r.left() + 2, r.top(), 14, r.height()) : QRectF(r.right() - 16, r.top(), 14, r.height());
+        p.drawText(pencil, Qt::AlignCenter, QString(QChar(0x270e)));
+    }
+    // The hint and the Auto switch under the bar
+    QFont sf = f;
+    sf.setPointSize(7);
+    p.setFont(sf);
+    p.setPen(kDim);
+    const QRect pill = autoPill();
+    p.drawText(QRect(0, kLegendHintTop, pill.left() - 6, kLegendHintH), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
+               m_manual ? T("Ends typed by you") : T("Click a number to type the scale"));
+    p.setPen(QPen(m_manual ? QColor(147, 161, 161, 150) : accent, 1));
+    p.setBrush(m_manual ? QBrush(Qt::NoBrush) : QBrush(QColor(38, 139, 210, 90)));
+    p.drawRoundedRect(QRectF(pill).adjusted(0.5, 0.5, -0.5, -0.5), 7, 7);
+    p.setPen(m_manual ? kDim : QColor(255, 255, 255));
+    p.drawText(pill, Qt::AlignCenter, T("Auto"));
+}
+
+void FieldLegend::mouseMoveEvent(QMouseEvent* e)
+{
+    const QPointF at = e->pos();
+    const bool over = m_valid && (endRect(false).contains(at) || endRect(true).contains(at) || (m_manual && autoPill().contains(e->pos())));
+    setCursor(over ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    QWidget::mouseMoveEvent(e);
+}
+
+void FieldLegend::leaveEvent(QEvent* e)
+{
+    unsetCursor();
+    QWidget::leaveEvent(e);
+}
+
+void FieldLegend::mousePressEvent(QMouseEvent* e)
+{
+    if (e->button() != Qt::LeftButton || !m_valid)
+    {
+        QWidget::mousePressEvent(e);
         return;
     }
-    if (m_valid)
+    const QPointF at = e->pos();
+    if (endRect(false).contains(at)) startEdit(false);
+    else if (endRect(true).contains(at)) startEdit(true);
+    else if (autoPill().contains(e->pos()))
     {
-        p.drawText(labels, Qt::AlignLeft | Qt::AlignVCenter,
-                   T("%1%2 inside").arg(QChar(0x2212)).arg(m_in, 0, 'g', 3));
-        p.drawText(labels, Qt::AlignRight | Qt::AlignVCenter,
-                   T("+%1 outside").arg(m_out, 0, 'g', 3));
+        if (m_manual) emit autoClicked();
     }
-    p.drawText(labels, Qt::AlignHCenter | Qt::AlignVCenter, "surface");
+    else
+    {
+        QWidget::mousePressEvent(e);
+        return;
+    }
+    e->accept();
+}
+
+void FieldLegend::startEdit(bool high)
+{
+    if (!m_edit)
+    {
+        m_edit = new QLineEdit(this);
+        m_edit->setStyleSheet("QLineEdit { color: #eee8d5; background: #0b2230; border: 1px solid rgba(38, 139, 210, 230);"
+                              " border-radius: 3px; padding: 0px 3px; font-size: 8pt; selection-background-color: rgba(38, 139, 210, 200); }");
+        m_edit->installEventFilter(this);
+        connect(m_edit, &QLineEdit::returnPressed, this, [this] { commitEdit(); });
+    }
+    m_editHigh = high;
+    const QRectF r = endRect(high);
+    const int w = std::max(72, int(r.width()));
+    m_edit->setGeometry(high ? width() - w : 0, int(r.top()), w, int(r.height()));
+    // (the number alone: the distance scale is one number, ± about the surface)
+    m_edit->setText(QString::number(m_hasColor ? (high ? m_hi : m_lo) : (high ? m_out : m_in), 'g', 6));
+    m_edit->show();
+    m_edit->raise();
+    m_edit->setFocus();
+    m_edit->selectAll();
+    update();
+}
+
+void FieldLegend::commitEdit()
+{
+    if (!m_edit) return;
+    QString text = m_edit->text().trimmed();
+    m_edit->hide();
+    update();
+    text.replace(',', '.');                         // (a decimal comma)
+    bool ok = false;
+    const double v = text.toDouble(&ok);
+    if (!ok || !std::isfinite(v)) return;
+    emit rangeTyped(m_editHigh, float(v));
+}
+
+bool FieldLegend::eventFilter(QObject* o, QEvent* e)
+{
+    if (o == m_edit)
+    {
+        if (e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape)
+        {
+            m_edit->hide();
+            update();
+            return true;
+        }
+        if (e->type() == QEvent::FocusOut)
+        {
+            m_edit->hide();
+            update();
+        }
+    }
+    return QWidget::eventFilter(o, e);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+KeyCard::KeyCard(const QString& cardKey, QWidget* parent) : QFrame(parent), m_close(new QToolButton(this))
+{
+    setObjectName("KeyCard");
+    setAttribute(Qt::WA_StyledBackground, true);
+    setStyleSheet("#KeyCard { background: rgba(22, 76, 94, 222); border: 1px solid rgba(147, 161, 161, 90); border-radius: 6px; }"
+                  "QToolButton { color: #eee8d5; background: transparent; border: none; font-size: 10pt; padding: 0px; }"
+                  "QToolButton:hover { background: rgba(147, 161, 161, 60); border-radius: 3px; }");
+    m_close->setText(QString(QChar(0x00d7)));
+    m_close->setToolTip(T("Close"));
+    m_close->setCursor(Qt::ArrowCursor);
+    connect(m_close, &QToolButton::clicked, this, [this] { if (onClose) onClose(); });
+    new CardController(this, cardKey, nullptr, QSize(90, 40));          // (dragged by any empty place, resized from its edges)
+}
+
+QSize KeyCard::sizeHint() const
+{
+    QFont f = font();
+    f.setPointSizeF(8.5);
+    const QFontMetrics fm(f);
+    int textW = fm.horizontalAdvance(m_title) + 24;
+    for (const Row& r : m_rows) textW = std::max(textW, 18 + fm.horizontalAdvance(r.text));
+    const int rowH = fm.height() + 4;
+    return QSize(textW + 20, fm.height() + 20 + rowH * int(m_rows.size()));
+}
+
+void KeyCard::setKey(const QString& title, const QVector<Row>& rows)
+{
+    m_title = title;
+    m_rows = rows;
+    updateGeometry();
+    update();
+}
+
+void KeyCard::resizeEvent(QResizeEvent* e)
+{
+    QFrame::resizeEvent(e);
+    m_close->setGeometry(width() - 22, 4, 18, 18);
+}
+
+void KeyCard::paintEvent(QPaintEvent* e)
+{
+    QFrame::paintEvent(e);
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QFont f = font();
+    f.setPointSizeF(8.5);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+    p.setPen(kText);
+    p.drawText(QRect(10, 6, width() - 36, fm.height()), Qt::AlignLeft | Qt::AlignVCenter, m_title);
+    const int rowH = fm.height() + 4;
+    int y = fm.height() + 14;
+    for (const Row& r : m_rows)
+    {
+        p.setPen(QPen(kDim, 1));
+        p.setBrush(r.colour);
+        p.drawRect(QRect(10, y + 2, 12, fm.height() - 2));
+        p.setPen(kText);
+        p.drawText(QRect(28, y, width() - 36, rowH), Qt::AlignLeft | Qt::AlignVCenter, r.text);
+        y += rowH;
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -872,6 +1208,7 @@ SectionPanel::SectionPanel(QWidget* parent)
     m_info->setObjectName("SectionInfo");
     m_info->setWordWrap(true);
     m_info->setMinimumHeight(16);
+    m_info->setAlignment(Qt::AlignLeft | Qt::AlignTop);        // (H182, the user, 2026-11-14: the line is anchored at the top with the other elements, not centred in the room a taller card leaves)
 
     m_show2d->setCheckable(true);
     m_show2d->setText(T("2D view"));
@@ -952,7 +1289,28 @@ SectionPanel::SectionPanel(QWidget* parent)
         m_range->setEnabled(!b);
         if (!b && m_slice.valid()) m_range->setValue(std::max(m_slice.rangeIn, m_slice.rangeOut));
         m_settings.range = b ? 0 : float(m_range->value());
+        if (!m_slice.hasColor) m_legend->setManual(!b);
         emitChange();
+    });
+    // H191 (the user, 2026-11-14: "EVERY LEGEND ... Legend bound should inherently be editable"): the numbers of the card's own legend are typed over like those of the viewport's.  The distance scale is the
+    // one number the card has in its range box (either end sets it); the colours of a model coloured by a field belong to that model's legend, so the typed ends go to the viewport, which keeps them
+    connect(m_legend, &FieldLegend::rangeTyped, this, [this](bool high, float v) {
+        if (!m_slice.hasColor)
+        {
+            const float r = std::fabs(v);
+            if (!(r > 0)) return;
+            m_autoRange->setChecked(false);
+            m_range->setValue(r);
+            return;
+        }
+        float lo = m_slice.colorLo, hi = m_slice.colorHi;
+        (high ? hi : lo) = v;
+        if (!(hi > lo)) return;             // (the scale goes up: the ends are not swapped)
+        emit colourRangeSet(lo, hi);
+    });
+    connect(m_legend, &FieldLegend::autoClicked, this, [this] {
+        if (!m_slice.hasColor) m_autoRange->setChecked(true);
+        else emit colourRangeAuto();
     });
     connect(m_range, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v){
         if (!m_autoRange->isChecked())
@@ -964,7 +1322,7 @@ SectionPanel::SectionPanel(QWidget* parent)
     connect(m_show2d, &QToolButton::toggled, this, [this](bool b){
         m_view->setVisible(b);
         if (b) m_view->setSlice(m_slice);
-        place();
+        showPlotFully(b);
     });
 
     if (parent)
@@ -972,6 +1330,40 @@ SectionPanel::SectionPanel(QWidget* parent)
         parent->installEventFilter(this);
     }
     place();
+}
+
+// H182 (the user, 2026-11-12: "When you click on it, it is not always visible immediately and the user has to manually extend the card"): the card has the room for the plot at once.  The layout has not
+// seen that the plot is shown until it is asked to (the card was sized from the height it had without it), and a card that the user sized keeps its height unless it is made taller here
+void SectionPanel::showPlotFully(bool shown)
+{
+    // And the card is the size it was when the plot is closed again (H182, the user, 2026-11-14: "the card should return to its original size as well after the 2D view has been closed").  A card that
+    // was never sized fits its contents by itself (place()); one that was sized by hand, or grown for the plot, is put back to the height it had when the plot was opened -- unless it was
+    // sized again while the plot was shown, which is the user's
+    if (shown)
+    {
+        m_heightBeforePlot = height();
+        m_heightWithPlot = 0;
+    }
+    else if (m_heightBeforePlot > 0)
+    {
+        if (CardController::sized(this) && height() == m_heightWithPlot)
+        {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+            if (layout()) layout()->activate();
+            resize(width(), std::max(m_heightBeforePlot, minimumSizeHint().height()));
+        }
+        m_heightBeforePlot = m_heightWithPlot = 0;
+    }
+    auto fit = [this, shown] {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        if (layout()) layout()->activate();
+        if (shown && CardController::sized(this)) resize(width(), std::max(height(), minimumSizeHint().height()));
+        place();
+        if (shown) CardController::settle(this);
+        if (shown) m_heightWithPlot = height();
+    };
+    fit();
+    QTimer::singleShot(0, this, fit);          // (and once more when the layout has had its turn)
 }
 
 bool SectionPanel::eventFilter(QObject* obj, QEvent* e)
@@ -1124,6 +1516,7 @@ void SectionPanel::setSlice(FieldSlice s)
 {
     m_slice = s;
     m_legend->setSlice(s);
+    if (!s.hasColor) m_legend->setManual(!m_autoRange->isChecked());
     if (m_view->isVisible())
     {
         m_view->setSlice(s);
@@ -1244,6 +1637,7 @@ FieldPanel::FieldPanel(QWidget* parent)
     m_info->setObjectName("FieldInfo");
     m_info->setWordWrap(true);
     m_info->setMinimumHeight(16);
+    m_info->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     m_show2d->setCheckable(true);
     m_show2d->setText(T("2D view"));
     m_show2d->setToolTip(T("Flat 2D plot of the disc"));
@@ -1310,40 +1704,62 @@ FieldPanel::FieldPanel(QWidget* parent)
     connect(m_show2d, &QToolButton::toggled, this, [this](bool b) {
         m_view->setVisible(b);
         if (b) m_view->setSlice(m_slice);
-        place();
+        showPlotFully(b);
     });
+    // H191: the ends of the viewer's colours, typed over in its legend (the viewer keeps them until Auto, or until the script runs again)
+    connect(m_legend, &FieldLegend::rangeTyped, this, [this](bool high, float v) {
+        float lo = m_slice.colorLo, hi = m_slice.colorHi;
+        (high ? hi : lo) = v;
+        if (!(hi > lo)) return;
+        emit rangeSet(m_key, lo, hi);
+    });
+    connect(m_legend, &FieldLegend::autoClicked, this, [this] { emit rangeAuto(m_key); });
 
     if (parent) parent->installEventFilter(this);
     place();
 }
 
+// (see SectionPanel::showPlotFully: H182)
+void FieldPanel::showPlotFully(bool shown)
+{
+    if (shown)
+    {
+        m_heightBeforePlot = height();
+        m_heightWithPlot = 0;
+    }
+    else if (m_heightBeforePlot > 0)
+    {
+        if (CardController::sized(this) && height() == m_heightWithPlot)
+        {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+            if (layout()) layout()->activate();
+            resize(width(), std::max(m_heightBeforePlot, minimumSizeHint().height()));
+        }
+        m_heightBeforePlot = m_heightWithPlot = 0;
+    }
+    auto fit = [this, shown] {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        if (layout()) layout()->activate();
+        if (shown && CardController::sized(this)) resize(width(), std::max(height(), minimumSizeHint().height()));
+        place();
+        if (shown) CardController::settle(this);
+        if (shown) m_heightWithPlot = height();
+    };
+    fit();
+    QTimer::singleShot(0, this, fit);
+}
+
 bool FieldPanel::eventFilter(QObject* obj, QEvent* e)
 {
     if (obj == parentWidget() && e->type() == QEvent::Resize) place();
-    // (the section card is open beside it: where it is and how tall it is decides where this one goes)
-    if (obj == m_sectionCard && (e->type() == QEvent::Show || e->type() == QEvent::Hide || e->type() == QEvent::Resize ||
-                                 e->type() == QEvent::Move))
-        place();
     return QFrame::eventFilter(obj, e);
 }
 
 void FieldPanel::place()
 {
     if (!CardController::sized(this)) resize(300, std::max(minimumSizeHint().height(), sizeHint().height()));
-    if (parentWidget() && !CardController::moved(this))
-    {
-        // Top-right, below the triad -- and below the section card when that is open too (the two views work together)
-        int y = 124;
-        if (m_sectionCard && m_sectionCard->isVisible()) y = m_sectionCard->y() + m_sectionCard->height() + 8;
-        move(parentWidget()->width() - width() - 8, y);
-    }
-}
-
-void FieldPanel::stackBelow(QWidget* sectionCard)
-{
-    m_sectionCard = sectionCard;
-    sectionCard->installEventFilter(this);
-    place();
+    // (top-right, below the triad; where another card is the card is put at the nearest free place: see CardController::settle -- no card goes where another one is, and none follows another)
+    if (parentWidget() && !CardController::moved(this)) move(parentWidget()->width() - width() - 8, 124);
 }
 
 float FieldPanel::radiusMax() const

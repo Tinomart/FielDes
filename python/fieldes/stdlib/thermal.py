@@ -60,7 +60,7 @@ from fieldes.stdlib.element_size import default_element_size
 from fieldes.stdlib import sim_mesh as _sim_mesh
 from fieldes.stdlib.excluded import keep_regions
 from fieldes.stdlib.fea import (FeaError, FieldResult, TopologyResult, aluminium, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
-                                _use_conditions, _with_conditions)
+                                _use_conditions, _with_conditions, _fitted_voxel_size)
 from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key, value_key
 from fieldes.stdlib.element_mesh import element_mesh as _element_mesh, elements_note as _elements_note
 from fieldes.stdlib import result_cache
@@ -336,7 +336,11 @@ def _problem(shape, boundary, k, element_size, bounds, what, element='tet', mesh
     if element_size is None:
         element_size = default_element_size(shape, lo, hi, 40.0, 1000000) if element == 'tet' else max(size) / 40.0
     element_size = float(element_size)
+    if mesh is None and element in ('hex', 'hex_basic'):
+        element_size = _fitted_voxel_size(lo, hi, element_size)         # (the voxels fitted to the part, H202)
     pad = 1e-6 * max(max(size), 1e-9)
+    if element == 'tet':
+        pad = 0.0                   # (the lattice of the tetrahedra is fitted to the region: its faces on the part's faces exactly, not a hair off them -- H202)
     region = libfive_region_t()
     for i, axis in enumerate((region.X, region.Y, region.Z)):
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
@@ -413,7 +417,7 @@ _cache = OrderedDict()
 
 @_with_conditions
 def thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium, element_size=None,
-                     bounds=None, conductivity=None, tolerance=1e-7, element='tet', cache=True):
+                     bounds=None, conductivity=None, tolerance=1e-7, element='tet', cache=True, surface_fit='balanced'):
     ''' Steady-state heat conduction in `shape` with the given boundary
         conditions, one input for each kind (each one item or a list, [] for none):
         fixed_temperatures  fixed_temperature(...) items (at least one of these or of the convections is needed)
@@ -421,18 +425,23 @@ def thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, c
         heat_generations    heat_generation(...) items
         convections         convection(...) items
         (see the module's description).  Each condition is a model of its own, drawn on `shape`.
+        surface_fit         what the mesh gives up where the exact surface and good elements pull against each other: 'balanced' (the default),
+                            'surface' (more surface conformity) or 'elements' (fewer odd elements); see static_analysis
 
         Everything else is as in the analysis below.  '''
     max_iterations = 50000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     shape, mesh = _sim_mesh.part(shape, 'thermal_analysis', element_size, element)
+    surface_fit = _sim_mesh.surface_fit_value(surface_fit, 'thermal_analysis')
+    _sim_mesh.check_fit_with_mesh(mesh, surface_fit, 'thermal_analysis')
     boundary = _boundary(fixed_temperatures, heat_inputs, heat_generations, convections, 'thermal_analysis')
     _use_conditions(boundary, shape)
-    return _thermal_analysis(shape, boundary, material, element_size, bounds, conductivity, max_iterations, tolerance, element, cache, mesh)
+    with _sim_mesh.surface_fit_scope(surface_fit):
+        return _thermal_analysis(shape, boundary, material, element_size, bounds, conductivity, max_iterations, tolerance, element, cache, mesh, surface_fit)
 
 
 def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bounds=None,
                       conductivity=None, max_iterations=50000, tolerance=1e-7, element='tet',
-                      cache=True, mesh=None):
+                      cache=True, mesh=None, surface_fit='balanced'):
     ''' Steady-state heat conduction in `shape` with the given boundary
         conditions: fixed_temperature(...), heat_input(...),
         heat_generation(...) and convection(...) items (see the module's
@@ -456,7 +465,7 @@ def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bo
     ekey = problem_key('thermal', shape=shape, part_bounds=getattr(shape, '_bounds', None),
                        boundary=boundary, material=material, conductivity=conductivity,
                        element_size=element_size, bounds=bounds, max_iterations=max_iterations,
-                       tolerance=tolerance, element=element, **_sim_mesh.key(mesh)) if cache else None
+                       tolerance=tolerance, element=element, **_sim_mesh.fit_key(surface_fit), **_sim_mesh.key(mesh)) if cache else None
     if ekey is not None and ekey in _cache:
         _cache.move_to_end(ekey)
         cached = _cache[ekey]
@@ -483,7 +492,7 @@ def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bo
         # (by their expressions, as the topology optimization's key does)
         items = boundary if isinstance(boundary, (list, tuple)) else [boundary]
         try:
-            key = (handle.fn('hash')(ptr), int(max_iterations), float(tolerance), element,
+            key = (handle.fn('hash')(ptr), int(max_iterations), float(tolerance), element, surface_fit,
                    tuple((type(b).__name__, shape_key(b.region)) +
                          tuple(sorted((k2, value_key(v)) for k2, v in vars(b).items() if k2 != 'region'))
                          for b in items))
@@ -557,7 +566,7 @@ def topology_optimization_thermal(analysis, conditions, iterations=None, filter_
     from fieldes.stdlib.fea import _optimization_analyses, _symmetry_request
     if getattr(lib, 'libfive_tetthermal_optimize_density', None) is None:
         raise FeaError('this FielDes library is too old for topology optimization of a thermal analysis')
-    iterations = 100 if iterations is None else iterations
+    iterations = 20 if iterations is None else iterations         # (H185: the default of every optimization is 20)
     if not conditions:
         raise TypeError("topology_optimization: say what the design is for -- conditions=[minimize(max_temperature_1), keep_below(volume_fraction_1, 0.3), ...]")
     if grow:

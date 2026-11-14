@@ -744,12 +744,19 @@ public:
         // A body-fitted tetrahedral mesh instead of a grid of cells: exactly what the
         // solver used
         bool isMesh = false;
+        // H219 (the user, 2026-11-14: "WHY IS EVERYTHING THE LOWEST VALUE???"): a displayed mesh (a meshing result: its cells and nothing else) is coloured between the lowest and the highest value of the cells
+        // that are DRAWN, the tetrahedra of its boundary faces; the cells inside it cannot be seen, and a range taken over all cells put every visible cell at the dark end of the map.  The result of an analysis keeps the range over all its cells
+        bool visibleRange = false;
         std::vector<float> mverts;          // 3 per vertex
         std::vector<int32_t> mtets;         // 4 per tetrahedron
         std::vector<int32_t> mfaces;        // 3 per boundary triangle (normals out)
         std::vector<int32_t> mfaceTet;      // the tetrahedron of each
         std::vector<float> mdisp;           // the solved displacement at every vertex (3 each)
         std::vector<int32_t> madj;          // per tetrahedron and face (opposite each vertex): the one across it, or -1
+        // The elements of a mesh that are not tetrahedra (hexahedra, prisms, pyramids, polyhedra) are handed over as tetrahedra, to colour and to cut: they are DRAWN as the elements they are
+        // (H203, the user, 2026-11-14: "THAT IS NOT A HEX ELEMENT. Those are Tets."):
+        std::vector<int32_t> mhidden;       // pairs of vertices (a < b): an edge of a tetrahedron that is not an edge of its element -- a diagonal -- which is not drawn
+        std::vector<int32_t> mowner;        // the element each tetrahedron is part of (empty: each is an element); a section keeps or cuts away an element whole
     };
     void setResult(std::vector<FieldChannel> channels, int current,
                    const libfive::Tree& ux, const libfive::Tree& uy, const libfive::Tree& uz,
@@ -774,6 +781,12 @@ public:
     const std::vector<FieldChannel>& channels() const { return m_channels; }
     int channel() const { return m_channel; }
     void setChannel(int c);
+    /*  H191 (the user, 2026-11-13: "Legend bounds should be adjustable in the legend"): the ends of the colour scale of what is shown -- the channel of a result, or a field that colours a
+     *  shape -- typed in its legend instead of the ends the values have.  Kept per channel (a coloured field has one), in the units the program keeps; clearUserRange goes back to the values' own  */
+    bool hasUserRange() const { return m_user_range.count(rangeKey()) != 0; }
+    void setUserRange(float lo, float hi);
+    void setUserRangeOf(int channel, float lo, float hi);       // (a channel that is not the one shown: kept for when it is)
+    void clearUserRange();
     bool hasDeformation() const { return has_deform; }
     const libfive::Tree& deformTree(int axis) const { return deform_tree[axis]; }
     QString channelLabel() const
@@ -1116,6 +1129,12 @@ protected:
     QOpenGLVertexArrayObject vao;
     QOpenGLBuffer vert_vbo;
     QOpenGLBuffer tri_vbo;
+    // The colours of a field on the surface (H199, the user, 2026-11-13: "how it interpolates and smears"): the vertices carry the VALUE (0..1 of the colour map's range) and the fragment shader makes the
+    // colour of the value it has between them from a table of the map (lut_tex), as the legend's bar does.  Until then every vertex was given the map's colour, and the colours were interpolated: between
+    // a red vertex and a blue one the surface went through grey, not through the green and yellow of the values between, and a sharp change of value was a blur of two colours
+    bool lut_in_use=false;
+    GLuint lut_tex=0;
+    QString lut_map;
 
     QElapsedTimer timer;
     std::atomic<double> m_levelMs{0.0};         // (how long the mesher itself took over the last level: not the wait for a thread, nor the GUI's thread being busy)
@@ -1189,6 +1208,9 @@ protected:
     // render in progress uses
     QVector3D run_hint_lo, run_hint_hi;
     float run_hint_side=0;
+    // ...and the box of the body the render in progress is of, when it is known and the script's region follows the models (H189: the key of the render cache says it in the place of the scene's region)
+    QVector3D run_ext_lo, run_ext_hi;
+    bool run_ext_known = false;
     void placeHint();
     // where the part's own-resolution cube is now, without making it the one a render in progress uses
     void placedHint(QVector3D& lo, QVector3D& hi, float& side) const;
@@ -1373,6 +1395,14 @@ private:
     std::unique_ptr<libfive::ArrayEvaluator> probe_channel;              // GUI thread
     int probe_channel_index=-1;
     void applyChannel();
+    // The ends typed in a legend (H191): per channel (-1: the one colouring of a shape that is no result).  They stand over the values' own ends wherever a colour is made from a value
+    // (the vertices, the elements, the legend's numbers), and are put back after every place that sets the range
+    std::map<int, std::pair<float, float>> m_user_range;
+    std::pair<float, float> m_range_before = {0.f, 1.f};          // (a coloured field's range before the first end was typed: what Auto goes back to when the range is not the values' own)
+    int rangeKey() const { return has_result ? m_channel : -1; }
+    void applyUserRange();
+    void autoRangeFromValues();
+    void elementRange(float& lo, float& hi) const;
 
     // Elements
     ElementGrid m_grid;
@@ -1383,6 +1413,9 @@ private:
     QVector4D m_sec_plane;
     bool elem_dirty=true;
     int elem_tris=0, elem_lines=0;
+    float elem_edge=0;                                     // the mean length of an outline segment drawn, and the middle of the outlines: how many pixels the elements are across (see drawElements, H193)
+    QVector3D elem_centre;
+    void measureElementEdges(const std::vector<float>& line);
     std::vector<float> m_elem_lo, m_elem_hi;               // per channel: the range of the elements' values
     struct ElemTri { QVector3D p[3]; float value; };
     std::vector<ElemTri> elem_probe;                       // the triangles drawn, where drawn (for hovering)

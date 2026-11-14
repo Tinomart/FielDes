@@ -22,7 +22,9 @@ The bar along the top of the window has **New** (a plus), **Open** and **Import*
 (`Ctrl+N`, `Ctrl+O` and `Ctrl+I`; hover for the tip; the plus is File → New: a fresh script, asking first when the one you have is
 unsaved). A **small arrow** beside Open and Import opens a list of the files used lately: the scripts
 you opened (the same list as File → Open recent) and the models you imported (a click imports one again, as Import model
-does; *Clear list* empties it; a file that is gone is left out). Then the menus:
+does; *Clear list* empties it; a file that is gone is left out). **Open with FielDes** works for the files FielDes imports too: a STEP, STL, OBJ, PLY, 3MF, GLB or glTF file given to FielDes -- Open with in the file manager, File → Open,
+the command line -- is opened as a **new script with its import statement** (the one Import writes), saved next to the model and named after it (`bracket.step` gives `bracket.py`; a file that is there is never overwritten: `bracket_2.py`), and a `.py` file
+opens as the script it is. The installers put FielDes in the Open with list of these types (Windows: for the user; Linux: the desktop entry); no type has it as its default. Then the menus:
 
 | Menu | Holds |
 |---|---|
@@ -61,7 +63,7 @@ A code editor for the Python script, with:
 - **completion** while you type (`Ctrl+Space` forces it) and call tips for arguments. **A function you pick from the list is written complete,
   the same call a right-click menu entry writes**: each argument it cannot do without is a **placeholder** after its name (`select_surface(shape=..., seed=...,`),
   the first one selected so that typing replaces it and `Tab` going on to the next -- the statement does not run until they are all filled in (nor does what is made from it; the rest of the script does)
-  (see *Placeholders* under the model tree) -- and **every other argument is written with its default**, so that what exists is in front of you, and what
+  (see *Placeholders* under the model tree) -- and **every other argument is written with its default** (one rule for EVERY function of the library, the meshing functions and the fillet as much as `box`: a function has no way to ask to be written short, and a test walks all of them), so that what exists is in front of you, and what
   you do not need can be kept or deleted. A call with two arguments or more is written **one argument to a line**, however short it is (a call or a list inside
   it stays on one line when it fits, 88 columns; `handles(...)` is the one exception: one long line). **Hover an argument's name** and the documentation says what it is, with its default. `Ctrl+Alt+Enter` (Edit > Lines) splits the call
   the cursor is in over lines, `Ctrl+Alt+J` joins it onto one;
@@ -144,9 +146,27 @@ the names of the script that ran last and of the library** (`from fieldes import
 `print(...)`, or a block of several lines -- like a notebook, the value of the last expression is shown. `Enter` runs it, `Shift+Enter` is a new line, `Up` and `Down` go through what was run before.
 Printed text is shown in the text colour, a value in the accent colour, an error as its traceback in red.
 
+**What a command prints is shown as it prints it** -- the lines of `pip install` (collecting, downloading, installing, one after another) and of a loop that prints arrive in the output while the command runs, not in one piece at its end.
+**The console completes Python**, as the script editor does: `import ` and `from ` offer every module that can be imported at that moment (a package you have just installed too), `os.pa` the names inside a module, `j.du` the names of `json` after
+`import json as j`; `Tab` or `Enter` takes the one chosen.
+
 It runs on a thread of its own, so a long computation does not stop the window. The names of the script are a **copy**: what you assign or change in the console is the console's own (it is
 kept between commands) and the script, its model tree and the viewport are not touched -- put it in the script if it is to stay. The console reads the script as of its last run; run it again to
 bring its names up to date.
+
+**The Python environment.** FielDes runs a Python of its own (in its `runtime` folder), and the console reaches it with two kinds of line that are not Python, so no code is changed by them:
+
+| | |
+|---|---|
+| `pip install requests numpy` | installs packages into FielDes's own folder of packages (`python-packages` in your FielDes folder: `%APPDATA%\FielDes` on Windows, `~/.local/share/FielDes` on Linux) -- or into the environment in use. Every script, every block and the console can import them, at once and at every later start |
+| `pip uninstall requests` / `pip list` / `pip show requests` / `pip freeze` | take them out, list them, show one |
+| `env` | which Python, which folder of packages, which environment is in use |
+| `env use C:\envs\analysis` | **switch environments**: the folder of a venv or a conda environment (or of its `python.exe`). Its packages are on the path of every script, and `pip` then installs into it with its own Python. `env use default` goes back to FielDes's own folder |
+| `env new analysis` | makes a venv with FielDes's Python, in your FielDes folder (`environments`), and uses it. `env list` lists them |
+
+The choice is remembered (`python_environment.json` in your FielDes folder). A package with compiled parts has to be built for the Python version of FielDes (3.13): an environment of another version works for its pure-Python packages, and `env`
+says so. The two commands say what they do in the language of the program (what pip itself prints stays English, as Python's own messages do). A copy of FielDes without a pip of its own (it has the pip wheel of the Python it was built with; a copy built where no such wheel was found) says so: `env use` an environment made with a Python that has one,
+and `pip` installs into that.
 
 ## The viewport
 
@@ -255,7 +275,7 @@ input that takes one (*fluid_analysis* takes two parts: the body and its fluid d
 the empty viewport), with only its conditions or only its material selected, it is written with a placeholder for the part and for everything that is missing; the conditions of **New support or load** and the other **New ... condition**
 menus take the surfaces, fields or bodies they act on -- **a condition has no body of its own**: the simulation is given the body. A model that has not run yet has no known kind and fits everything; your own [custom blocks](blocks.md) say nothing about what they take, so they are always offered.
 
-The **Engineering** menu starts with *topology_optimization*, on its own (it designs for an analysis of any domain -- static, modal, thermal or flow -- so it is in no category), and then has a category for each domain -- **Structural**, **Thermal**, **Fluid**, **Manufacturing** (its constraints and *manufacturing_analysis* and *manufacturing_optimization*: see [Manufacturing](manufacturing.md)) and **Mesh** (*mesh_volume* and *mesh_surface*: a body as a mesh of elements for another program's solver, see [Meshing](meshing.md)), each in the colour and with the icon of its domain in the model tree -- and lists in them *static_analysis*, *modal_analysis*, *thermal_analysis* (*topology_optimization* of its result reshapes the part for its temperature),
+The **Engineering** menu starts with *topology_optimization*, on its own (it designs for an analysis of any domain -- static, modal, thermal or flow -- so it is in no category), and then has a category for each domain -- **Structural**, **Thermal**, **Fluid**, **Manufacturing** (its constraints and *manufacturing_analysis* and *manufacturing_optimization*: see [Manufacturing](manufacturing.md)) and **Mesh** (*mesh_tet4* (its `element=` says the method: tetrahedra, the grids of cubes, an extruded or radial sweep, one block of hexahedra) and *mesh_surface_tri*: a body as a mesh of elements for another program's solver, see [Meshing](meshing.md)), each in the colour and with the icon of its domain in the model tree -- and lists in them *static_analysis*, *modal_analysis*, *thermal_analysis* (*topology_optimization* of its result reshapes the part for its temperature),
 *fluid_analysis* (the flow around a body in a domain, as it is; *topology_optimization* of its result reshapes the body); and, in the menu itself, under them, *parametric_optimization* -- it works over an analysis of any domain, so it is in no category -- which is written for the result you right-clicked, with `variables=...` and `constraints=...` to fill in (see [Parametric optimization](analysis.md#parametric-optimization)). Each analysis is written with the model you right-clicked as the part (the first argument of every simulation; the boundary
 conditions have no body in them) -- or, when you right-clicked the empty viewport or selected only conditions, with `shape=...` in its place -- with **`parameter_name=...` for everything the call cannot do without** -- **one input for each kind of boundary condition it takes**, all of them
 required -- and the library's own default for every other argument. A menu never makes up a region, a number, a text
@@ -585,14 +605,14 @@ images already is not given more. The images of a path extrude are drawn the way
 
 Because the symmetry is a model, it is easy to keep track of: it has a row in the tree, it can be hidden, locked or deleted, there can be **several** (select the one to use), and the script says which images belong to which.
 
-**What is in use, exactly.** *In use* is a state of the session, not of the file: a symmetry stays in use when you click away from it (its card and planes stay on the screen), until you stop it (the card's ✕, `Shift+S`) or select another; when a file is opened nothing is in use, the images in it still follow their models, and a symmetry has to be selected again to make more. **A hidden symmetry (its eye off) is not in use**, and neither is one that was deleted: what you make then has no images. **A line that you type in the script yourself is not given images**: they are written when a model is made from the viewport or the menus. Undoing the making of a model removes the model and its images in one step.
+**What is in use, exactly.** *In use* is a state of the session, not of the file: a symmetry stays in use when you click away from it (its card and planes stay on the screen), until you stop it (the card's ✕, `Shift+S`: the card closes) or select another; when a file is opened nothing is in use, the images in it still follow their models, and a symmetry has to be selected again to make more. **A hidden symmetry (its eye off) is not in use**, and neither is one that was deleted: what you make then has no images. **A line that you type in the script yourself is not given images**: they are written when a model is made from the viewport or the menus. Undoing the making of a model removes the model and its images in one step.
 
 **The card** (top right) changes the symmetry that is selected: **Planes** -- *Axis* (planes through one line), *Axis + across* (and the plane across it), *Cube*, or *Turns* (copies turned about the axis, no planes); **Count** -- how many planes round the
 axis (1 to 8), or, for *Turns*, **Copies** (1 to 8, or a number up to 24); **Axis** -- along
 x, y or z, the work plane's normal, up in the view (the first plane then splits the picture into left and right), or across the selected 2D shape; **Turn** -- how far the first plane is turned about the axis (not for *Turns*: copies turned about
 an axis do not care where a first plane is); **Centre** -- where the planes cross (the origin, the middle of what is selected, the work plane's origin). The count and the arrangement are written into the call (`planes=` for planes, `copies=` for
-turns: changing the arrangement moves the number to the argument it belongs to); where it is and how it is turned are the numbers of its gizmo. **In use** switches the images off and on
-(`Shift+S` does the same; while it is off its planes are drawn pale as long as bodies are bound to it -- the images of a model --, as the mark that they are, and not at all when no body is: the planes are those of the symmetry **the bodies are made in**, whichever symmetry is selected, so each symmetry that has bodies shows its own, and the ✕ of the card stops using it).
+turns: changing the arrangement moves the number to the argument it belongs to); where it is and how it is turned are the numbers of its gizmo. **The card is there while the symmetry is in use, and goes when it is stopped**: its ✕ and `Shift+S` stop using it and
+close it (`Shift+S` again starts it again and brings the card back, so does selecting another symmetry; **In use** on the card stops it the same way; with a model that is in the symmetry already selected, `Shift+S` is the symmetry in use or not as well). While it is off its planes are drawn pale as long as bodies are bound to it -- the images of a model --, as the mark that they are, and not at all when no body is: the planes are those of the symmetry **the bodies are made in**, whichever symmetry is selected, so each symmetry that has bodies shows its own.
 
 **A symmetry applied later to a shape made of points.** A profile, a line, a spline, a morph polyhedron or a morph body that was made without the symmetry, or half of one drawn on one side of a plane, can be given it afterwards: select the shape and press `Shift+S`. Every point that already has an exact mirror partner under the symmetry is linked to it -- the later point of a pair becomes the image of the earlier one (`body_p2 = symmetry_image(body_p1, mirror, 1)`), so pulling one pulls the other, no point is put on top of another, a point on the plane stays on it, and a second symmetry on the same points applies as well. A symmetry that was made after the shape is moved up above the first point it is used by. With a shape that has no such pair, or with anything else selected, `Shift+S` is what it was: the symmetry in use or not.
 
@@ -642,6 +662,14 @@ be **dragged anywhere inside it** (by its header, or by any empty place of the c
 **resized from its edges and corners**. A card keeps its place relative to the window when the window changes size, and where you
 left it and how large it was are remembered for the next start. A card you never moved or sized keeps its own place and size.
 
+**Every card moves on its own, and no card goes over another.** A card is dragged and sized alone -- none follows another card, and the colour bars the viewport draws in the bottom-right corner are not tied to the result card; the **key of the
+boundary conditions** is a card of its own, dragged by any empty place, sized from its edges and closed with its × -- and **cards collide**: a card that is dragged, or sized, stops at the edge of the other cards and of those bars, and slides along an edge it meets. Cards that
+meet after one of them grew or was moved are put apart again at once. A card that opens where another is -- the symmetry card over the
+snapping card, say -- opens at the **nearest free place** instead (when there is none it stays where it is).
+
+The **2D view** of the section card and of the field viewer opens with the room for it: the card grows to show the plot when it was sized by hand, too. **A right click on the plot** offers **Save as image...**: the plot, as the card draws it
+(+v up, on the card's dark ground), as a PNG or JPEG file enlarged to a longer side of at least 1000 pixels, with a title (the plane and where it is), the extent of each axis, the colour bar with its numbers and a line saying what the plot shows. The card goes back to the size it had when the plot is closed again.
+
 ## Windows of their own
 
 Any major element of the window can be pulled out of it, to work on more than one screen: the **code editor**, the **console and output**, the **viewport**, the **model tree**, and the cards -- the **section**, the **field viewer**, the **work plane**, the **symmetry**,
@@ -661,6 +689,12 @@ A model coloured by a field (`colored(shape, field)`, the fit-deviation shading 
 value at the surface point under the cursor. Close a legend with its ×: its probing stops with it.
 **View → Show legends** brings them back.
 
+**The ends of every legend can be typed.** The lowest and the highest number of a colour bar -- in the legends at the bottom right, on the result card, on the section card and on the field viewer card -- stand in an outlined box with a pencil.
+**Click a number**, type the value (a decimal comma is read as a point) and press **Return** (Escape gives it up): that is the end of the scale from then on, the colours of the model and of the planes follow. The **Auto** pill under the bar is lit while the ends
+are the values' own and is dim, and clickable, when you typed them: it gives the values' own ends back. On the section card the distance scale is one number, plus and minus about the surface -- either end sets it, and it is the box next to **Colours**.
+The section card's plane shows the colours of a model coloured by a field (an analysis result, a field), and the plane's legend is that model's own: the ends typed there are the ones the model's legend has. The colours of the boundary conditions, of a fit and of the
+supports of a print are categories and not a quantity: they have a key and no scale to type.
+
 ## The result card
 
 Shown at the bottom right when an analysis result is displayed (a result stated on its own, like any shape):
@@ -670,8 +704,9 @@ Shown at the bottom right when an analysis result is displayed (a result stated 
   the value under the cursor;
 - the **key numbers** under it: what the result found that matters (maximum stress and displacement, safety factor, reactions; drag and lift of a flow and their
   coefficients, pressure drop; temperatures; natural frequencies) -- the same numbers `export_results(result, "numbers.txt")` writes;
-- a short note under the bar says what the values are: **Nodal average** (the elements' values averaged at
-  each node: peaks are lower than the elements' own), **Element values**, or **Solver values at nodes**;
+- a short note under the bar says what the values are: **Recovered at nodes** (the elements' values at each node: a plane
+  is fitted through the values of the elements round the node and taken at the node -- not their average, which takes in the deeper, less stressed elements at a surface --; peaks are lower than the elements' own),
+  **Element values**, or **Solver values at nodes**;
   hover it for the explanation;
 - the **step** rows — one step back, play / pause, one step forward, then how it runs and how fast, on one
   row; the step's name on the next; the slider below them across the card's whole width — the same for every analysis: a static result steps the load from 5 % to
@@ -681,9 +716,13 @@ Shown at the bottom right when an analysis result is displayed (a result stated 
   around it). The button beside play sets how it runs — round and round (↻), back and forth (⇄), once to the
   end (→) — and the drop-down its speed: ×⅛, ×¼, ×½, ×1 (ten steps a second), ×2, ×4;
 - the **deformation** slider (`1:1` = true size) — the part is drawn deformed;
-- **Elements**: draw the tetrahedra (or hexahedra) the solver used (a mesh made with `mesh_volume` or `mesh_surface` has no such button: its cells are always drawn), each with its own value (the
-  stress in a tetrahedron is constant in it); hover one to read it. The line below says how many there
-  are. The result line and the safety factor use the elements' peak. The elements carry the result's own
+- **Elements**: the tetrahedra (or hexahedra) the solver used (a mesh made with one of the meshing functions, `mesh_tet4`, `mesh_hex_quanta`, `mesh_surface_tri` and the others, has no such button: its cells are always drawn), each with its own value (the
+  stress in a tetrahedron is constant in it); hover one to read it. **They are shown when an analysis opens**, however many there are (the button switches them off for the smooth colours
+  between them). The line below says how many there
+  are.
+- **The ends of the colour scale**: the lowest and the highest number of the scale beside the result (and of the bars the viewport draws for a coloured field) are underlined with dots.
+  Click one, type the number in the unit shown, press Return: that end of the scale is yours (it is blue; Escape gives it up), the colours of the surface, of the elements and the numbers
+  of the legend follow, and the ends you set stay while the design changes. **Auto** under the scale gives the ends of the values back. Set per field of the result. The result line and the safety factor use the elements' peak. The elements carry the result's own
   values, so the button is there at the result's own step (the full load, the last time);
 - **Flow** (a fluid result): the streamlines from the inlets, coloured by the speed, with particles moving
   along them, drawn over the fluid (which is drawn like every other result, coloured by its field); its

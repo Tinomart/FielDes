@@ -105,6 +105,66 @@ def _dist(v):
     return s
 
 
+_BODY_KINDS = ('solid', 'profile', 'lattice', 'import', 'simulation')
+
+
+def exact_of(v, resolution=None):
+    ''' THE FIELD OF A BODY (H190, the user, 2026-11-12, capitals: "ALL BODIES ARE ALWAYS TRUE DISTANCE FIELDS. THAT IS THE DEFINITION OF THE TYPE ... HAVE IT ENFORCED EVERYWHERE AS A REQUIREMENT as a part
+        of the type itself"; 2026-11-13: "MAKE A BODYS FIELD ALWAYS A TRUE SIGNED DISTANCE FIELD"): the signed distance (mm, negative inside) from every point to the surface of the body -- its value, not a
+        bound of it.  This is `Body.field` (fieldes.shape.Body), and what every reading of a body is.  The tree a body is made as is not always it: the min and max of a boolean are bounds (inside a
+        union, outside an intersection or a difference), the weighted sum of a smoothing, the field of a cylinder outside its rim, a scale that is not the same in all directions, a blend are not -- and
+        that tree is what is meshed (the surface of the two is the same) and what the next body is built from.
+        In order: the distance the body carries (`_distance_of`: an optimized part, an imported one, a part whose faces are pulled, a combination of those), the body itself when it says it is exact
+        (`_exact`), and else the distance to the body's own surface -- the surface of the body meshed finely (200 samples across it, a cell of a half percent of its size: the edges and corners
+        are kept) and the exact distance to those triangles, which the kernel makes (a closest-point search, nothing sampled onto a grid), made once for the body and kept.  A field that is not a body
+        (a ramp, a noise) is itself.  `resolution` samples per mm for that surface, when it is to be finer '''
+    s = _s(v)
+    get = getattr(s, '_distance_of', None)
+    if get is not None and not os.environ.get('FIELDES_NO_EXACT_OFFSETS'):
+        try:
+            return get()
+        except Exception as e:
+            from fieldes.stdlib.result_cache import _log
+            _log("fieldes: the exact distance of this part could not be made (%s); its surface is used\n" % e)
+    if getattr(s, '_exact', False) or getattr(s, '_tessellated_import', False):
+        return s                    # (the distance to its own triangles already)
+    from fieldes.kinds import kind_of
+    if kind_of(s) not in _BODY_KINDS:
+        return s
+    from fieldes.stdlib.importing import _tessellate_field
+    box = getattr(s, '_bounds', None)
+    if not box:
+        box = find_extent(s)
+    if not box:
+        # (a body with no extent -- open on a side, repeated without end: the region of the scene is meshed, as an export of such a body does)
+        try:
+            from fieldes.stdlib.exporting import _host
+            region = _host('__bounds', None)
+            if region is not None:
+                box = (tuple(float(c) for c in region[0]), tuple(float(c) for c in region[1]))
+        except Exception:
+            box = None
+    if not box:
+        return s                    # (no box to mesh it in, and no region of the scene: the body's own tree is all there is)
+    lo, hi = tuple(float(c) for c in box[0]), tuple(float(c) for c in box[1])
+    dims = sorted(max(hi[i] - lo[i], 1e-9) for i in range(3))
+    size = dims[2] or 1.0
+    if resolution:
+        res = float(resolution)
+    else:
+        # (200 samples across the longest side, and for a thin body -- a row of small copies, a plate with a thin rim -- fine enough across the thinnest: 40 samples, as far as eight million cells of its box go)
+        thin = min(40.0 / dims[0], (8.0e6 / (dims[0] * dims[1] * dims[2])) ** (1.0 / 3.0))
+        res = max(200.0 / size, thin)
+    oracle = _tessellate_field(s, lo, hi, res, _vars_key())
+    # (the SIZE of the distance is the surface's, meshed; the SIDE is the body's own tree's, which a mesh that is too coarse for a thin or a small piece cannot lose: a point inside a copy of a row of copies
+    # is inside, whatever the mesh made of the copy)
+    out = abs(oracle) * Shape.compare(s, 0)
+    out._bounds = oracle._bounds
+    out._exact = True
+    out._display_field = s          # (what is drawn is the body's own tree: the same surface, a cheaper evaluation)
+    return out
+
+
 def _script_vars():
     ''' The numbers of the script's var()s, inside the application: (trees, values, count) for the library
         calls that take them, or None (outside it, or when the script has none) '''
@@ -908,6 +968,85 @@ def find_extent(shape, budget=200000, resolution=2.0, half=1.0e6):
     return found
 
 
+def tight_extent(shape):
+    ''' The box round a shape that a MESH is fitted to (H202, the user, 2026-11-13: the element size is adjusted to fit the body, which a lattice or a grid can only do against the true faces of the
+        body).  find_extent's box comes out up to a tenth of a millimetre larger than the body on each side (interval arithmetic stops at a tolerance); here every face of the box that is a flat face
+        of the body, square to an axis -- a box, a plate, a prism, the end of a bar -- is put on the face itself: along a grid of 15 x 15 lines across the face the place where the body begins
+        is found within the margin, and the face is taken only when the lines that find it agree to a hundredth of the margin and no point of the grid just outside it is inside the body.  A face
+        that is curved (the pole of a sphere), tilted, or that the lines do not find stays where find_extent had it: the box never cuts the body.  None when find_extent finds no box '''
+    from fieldes.stdlib.content_cache import cache_for, shape_key, Uncacheable
+    memory = cache_for('tight_extent', 256)
+    try:
+        key = shape_key(shape)
+    except Uncacheable:
+        key = None
+    if key is not None:
+        hit, found = memory.get(key)
+        if hit:
+            return found
+    found = _tightened(shape, find_extent(shape))
+    if key is not None:
+        memory.put(key, found)
+    return found
+
+
+def _tightened(shape, found):
+    if found is None:
+        return None
+    lo = [float(c) for c in found[0]]
+    hi = [float(c) for c in found[1]]
+    ext = [hi[a] - lo[a] for a in range(3)]
+    if not all(e > 0 for e in ext):
+        return found
+    margin = 0.002 * max(ext) + 1e-3
+    n, steps = 15, 16
+    new_lo, new_hi = list(lo), list(hi)
+    for a in range(3):
+        u, v = [i for i in range(3) if i != a]
+        grid = [(lo[u] + (i + 0.5) / n * ext[u], lo[v] + (j + 0.5) / n * ext[v]) for i in range(n) for j in range(n)]
+        for side in (0, 1):
+            bound = lo[a] if side == 0 else hi[a]
+            inward = 1.0 if side == 0 else -1.0
+
+            def at(g, t):
+                p = [0.0, 0.0, 0.0]
+                p[a] = bound + inward * t
+                p[u], p[v] = g
+                return tuple(p)
+
+            values = _eval_many(shape, [at(g, margin * (k + 1) / steps) for g in grid for k in range(steps)])
+            below, above, rays = [], [], []
+            for i in range(len(grid)):
+                row = values[steps * i:steps * i + steps]
+                first = next((k for k, f in enumerate(row) if f <= 0.0), None)
+                if first is not None:
+                    below.append(margin * first / steps)
+                    above.append(margin * (first + 1) / steps)
+                    rays.append(i)
+            if len(rays) < 0.2 * len(grid):
+                continue
+            for _ in range(14):
+                mids = [0.5 * (below[r] + above[r]) for r in range(len(rays))]
+                for r, f in enumerate(_eval_many(shape, [at(grid[i], mids[r]) for r, i in enumerate(rays)])):
+                    if f <= 0.0:
+                        above[r] = mids[r]
+                    else:
+                        below[r] = mids[r]
+            found_at = sorted(0.5 * (below[r] + above[r]) for r in range(len(rays)))
+            if found_at[-1] - found_at[0] > 0.01 * margin:
+                continue
+            e = found_at[len(found_at) // 2]
+            # (nothing of the body just outside the face anywhere on the grid)
+            outside = _eval_many(shape, [at(g, e - 4.0 * margin / steps) for g in grid])
+            if any(f <= 0.0 for f in outside):
+                continue
+            if side == 0:
+                new_lo[a] = bound + e
+            else:
+                new_hi[a] = bound - e
+    return (tuple(new_lo), tuple(new_hi))
+
+
 def _search_extent(shape, budget, resolution, half):
     from fieldes.ffi import libfive_region_t
     search = libfive_region_t()
@@ -1406,61 +1545,59 @@ def chamfer(edge, *more, size=None, bounds=None):
 
 
 _SIX_NEIGHBOURS = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
-_SMOOTH_MAX_STEPS = 4       # (more steps are one of these at a larger radius: the sum has a term for every point reached)
-
-
-def _stencil(steps):
-    ''' The points (in units of the radius) and weights that `steps` averages over the six neighbours make together:
-        the first step's six points weigh 1/6 each, the second's average those again, and so on.  Every step
-        makes the same moves in any order, so the terms add up: 6 points for one step, 19 for two, 44 for three. '''
-    weights = {(0, 0, 0): 1.0}
-    for _ in range(steps):
-        out = {}
-        for (i, j, k), w in weights.items():
-            for a, b, c in _SIX_NEIGHBOURS:
-                key = (i + a, j + b, k + c)
-                out[key] = out.get(key, 0.0) + w / 6.0
-        weights = out
-    return weights
-
-
 def smooth(shape, radius, steps=1):
-    ''' Smooths the surface of a body without thickening it: bumps, dents, ridges and stair-steps smaller than
-        about `radius` mm are smoothed away, edges and corners are eased, and a flat or gently curved face stays
-        where it is (unlike offset() or thicken(), which move or grow the surface).  The field of the body is
-        averaged over the points a `radius` away on all six sides -- the smoothing of a mesh's Laplacian, done on the
-        field -- and `steps` of those make the field of the smoothed body: more steps smooth further (the reach
-        grows as the square root of the number of steps).  The radius is a number or a field (smoothed more where
-        the field is large, not at all where it is 0).  Like any smoothing it eases convex features slightly
-        inwards and concave ones slightly outwards; the body as a whole does not grow.
+    ''' Smooths the surface of a body without taking material off it (H178, the user, 2026-11-12: "the smooth operaitons took off material that made smoothing the topology optimization ... become a
+        disconnected mesh, instead of getting cleanly smoother"): bumps, dents, ridges and stair-steps smaller than about `radius` mm are smoothed away, edges and corners are eased, and a flat or
+        gently curved face stays where it is (unlike offset() or thicken(), which move or grow the surface).  The field of the body is averaged over the points a `radius` away on all six sides --
+        the smoothing of a mesh's Laplacian, done on the field -- and `steps` of those are one smoothing: more steps smooth further (the reach grows as the square root of the number of steps).
+        What took the material off the optimized part was the field the average was taken of -- a density, which rises 0 to 11 times as fast as a distance and saturates a few millimetres from
+        the surface -- and not the average: of the DISTANCE of the part (fields._dist: the primitives and what is made of them are one; a part imported from STEP or an optimized part is replaced by
+        its exact distance, as offset() does) the average keeps the volume (measured on his bowl: +0.1 %, one piece, where the average of the density took 4.5 %).  What is thinner than about the radius
+        is smoothed away.  The radius is a number or a field (smoothed more where the field is large, not at all where it is 0).
 
-        The result is a field like any other, a weighted sum of copies of the body's own field moved by whole
-        radii (6 copies for one step, 19 for two, 44 for three, 85 for four; more steps than four are four at a
-        larger radius, which smooths as far), so nothing is measured or meshed here: the surface is found when it
-        is drawn, and the cost is that of the field times the copies.  The body's field should be about a
-        distance (the primitives and what is made of them are; a part imported from STEP is replaced by its exact
-        distance, as offset() does), because a field that rises faster smooths by as much more. '''
+        The result is a field like any other, the average of SIX copies of the body's distance moved by the radius (H188, the user: "nothing over a marginal performance loss (below 10%) ... it would be better
+        if it ran even faster": the average of two steps took 19 copies, a shrink-free version of it 25 and 12, and a smoothing inside a smoothing multiplies the copies: his bowl nests one in another, 19 times 6
+        copies and then 12 times 12; more steps are one smoothing at a larger radius, which smooths as far -- the reach of n steps of a radius is that of one step of the radius times the square root of n --,
+        so six copies whatever the steps), so nothing is measured or meshed here: the surface is found when it is drawn, and the cost is that of the field times the copies.
+
+        The optimized part of a topology optimization is a SURFACE already, and it is smoothed as one (H178, the user, 2026-11-14: "The smoothing still separated different parts at even small radii like
+        3 mm"): an average of copies of its distance eats what is thinner than the radius (on his bowl at 2 mm smooth(3, 2) kept half of the volume, in four pieces) and only copies the bumps round.  Its
+        surface is smoothed by a balanced pair of steps -- a step towards the average of the neighbours and a step back by the same weight, which does not grow it and shrinks it only slowly --, the vertices on
+        a border are held, and the result is the exact distance of the smoothed surface, moved out by the volume the smoothing took: no copies, so it costs what the part itself costs.  The number of
+        pairs follows the radius as the FOURTH power of (radius over the length of an edge of the surface), because that is how such a pair takes a bump away (H178, the user, 2026-11-14: "I input an extreme radius of 10
+        mm here and I see barely ANY difference to 1 mm": the number of pairs went as the square, and radius 10 got 42 of them on his bowl): on his bowl the angle between neighbouring triangles falls from 6.8 degrees
+        (mean) to 6.1 at radius 1, 5.1 at 3 and 3.9 at 10, in one piece, with 0.4 %, 1 % and 6 % less volume (the surface cannot grow past what the design may fill). '''
     r = number_or_field(radius, 'the radius')
     n = int(steps)
     if not positive(r):
         raise ValueError('smooth: the radius must be positive (mm)')
     if n < 1:
         raise ValueError('smooth: steps is at least 1')
-    if n > _SMOOTH_MAX_STEPS:
-        r *= math.sqrt(n / float(_SMOOTH_MAX_STEPS))
-        n = _SMOOTH_MAX_STEPS
+    # A part that is a SURFACE already -- the optimized part of a topology optimization -- is smoothed as a surface (H178, the user, 2026-11-14: "The smoothing still separated different parts at even small
+    # radii like 3 mm and DID NOT ACTUALLY SMOOTH IT IN GENERAL and made the topology optimizations edges SUPER JAGGED, POINT AND FUCKED UP. But at least it runs very fast now."): an average of copies of
+    # its distance is a diffusion in space that eats what is thinner than the radius (measured on his bowl at 2 mm: smooth(3, 2) kept half of the volume, in four pieces) and, with six copies, only copies
+    # the bumps smaller than the radius round.  The surface is smoothed by Taubin's filter and its exact distance is the result: no copies, so as fast as the part itself
+    hook = getattr(_s(shape), '_smooth_distance', None)
+    if hook is not None and isinstance(r, (int, float)) and not isinstance(r, bool):
+        try:
+            made = hook(float(r), n)
+        except Exception:
+            made = None
+        if made is not None:
+            return made
+    if n > 1:
+        r *= math.sqrt(n)
     field = _dist(shape)
     x, y, z = X(), Y(), Z()
     terms = []
-    for index, ((i, j, k), w) in enumerate(sorted(_stencil(n).items())):
+    for index, (a, b, c) in enumerate(_SIX_NEIGHBOURS, 1):
         # Each lookup sits a ten-thousandth of the radius off its whole-radius point, differently for every one: a field
         # made of max() and min() (a box) ties with itself along its diagonals, and the mesher's grid of sample points
         # lands on those ties -- the very points it takes the slow way round.  (The weights are symmetric: the surface
         # does not move by more than that, a tenth of a micron for a radius of a millimetre.)
-        jitter = [1e-4 * r * (((index + 1) * c) % 1.0 - 0.5) for c in (0.6180339887, 0.7548776662, 0.5698402910)]
+        jitter = [1e-4 * r * ((index * k) % 1.0 - 0.5) for k in (0.6180339887, 0.7548776662, 0.5698402910)]
         # (the body's field asked at the point moved by the offset -- a call: it is one field however many points it is asked at)
-        moved = field(x - (i * r + jitter[0]), y - (j * r + jitter[1]), z - (k * r + jitter[2]))
-        terms.append(moved * w)
+        terms.append(field(x - (a * r + jitter[0]), y - (b * r + jitter[1]), z - (c * r + jitter[2])) * (1.0 / 6.0))
     while len(terms) > 1:           # (a balanced sum: a shallow tree)
         terms = [terms[a] + terms[a + 1] if a + 1 < len(terms) else terms[a] for a in range(0, len(terms), 2)]
     out = terms[0]
@@ -1777,8 +1914,6 @@ for _name in ('smooth', 'round_edges', 'shell_inside', 'shell_outside', 'shell_e
 # (an edge alone is enough -- it knows its body --, and a field selected with it is the radius; a body alone is the fillet of every concave edge)
 globals()['fillet']._takes = _declare(_BODIES | {'curve', 'field'}, [{'curve'}]) + _declare(_BODIES | {'field'}, [_BODIES])
 globals()['chamfer']._takes = _declare(_BODIES | {'curve'}, [{'curve'}])
-globals()['fillet']._short_call = True
-globals()['chamfer']._short_call = True
 # (what the call cannot do without though it has a default: the completion writes it as a placeholder -- `radius=...` -- after however many edges stand before it; the edges are told by what they are, not by their place)
 globals()['fillet']._required = ('radius',)
 globals()['chamfer']._required = ('size',)
@@ -1797,6 +1932,10 @@ for _name in ('offset_exact', 'round_edges', 'shell_centered', 'shell_exact', 's
 globals()['texture']._slots = [_slot('body', _BODIES, needed=True), _slot('region', ('surface', 'field', 'solid', 'profile', 'lattice'), keyword=True)]
 globals()['field_from_body']._takes = _declare(_BODIES)
 globals()['evaluate']._takes = _declare(_BODIES | {'field'}, [{'point'}])               # (a field or a body, and the point its value is read at, selected with it: the entry of Operations > Field math)
+# What READS the field of a body is given the field of the body, its true signed distance (see fieldes.shape.Body and fieldes.stdlib.body_law); a function that makes a field from a body is (it is tagged
+# a field-maker above).  What does not -- a union, an offset, a transform -- is given its tree, which is what a boolean and a drawing need.
+for _name in ('evaluate', 'sample_grid', 'field_range', 'signed_distance'):
+    globals()[_name]._reads_field = True
 globals()['distance_to_point']._takes = _declare({'point'})            # (the distance from a point: a point is what it is made of)
 globals()['radial_field']._takes = _declare({'point'})                 # (the distance from the axis through a point: made of a point as well -- the user, 2026-10-28: "it takes a point, like I said it should")
 globals()['texture']._takes = _declare(_BODIES | {'surface', 'field'}, [_BODIES])      # (a body, and a surface or a field selected with it is where the texture goes)

@@ -33,7 +33,7 @@ view.set_quality(8)
 
 # one eighth: the hole is at the origin, x = 0 .. L/2 (along the pull), y = 0 .. W/2 (across), z = 0 .. T/2
 a, b, h = L / 2, W / 2, T / 2
-part = difference(box((a, b, h), position=(a / 2, b / 2, h / 2)), cylinder(D / 2, h + 2, position=(0, 0, -1)))
+part = difference(box((a, b, h), position=(a / 2, b / 2, h / 2)), cylinder(D / 2, h + 2, position=(0, 0, h / 2)))     # (the hole goes through the plate: a model is placed by its middle, so the cylinder of height h + 2 is centred on the plate's middle h / 2; placed at z = -1 as it was, by its base, it only cut a blind hole of 0.4 mm and the plate had no hole)
 plane_x = box((1.01, (b + 1) - (-1), (h + 1) - (-1)), position=(-0.495, ((-1) + (b + 1)) / 2, ((-1) + (h + 1)) / 2))                                 # the plane of symmetry x = 0: held in x only
 plane_y = box(((a + 1) - (-1), 1.01, (h + 1) - (-1)), position=(((-1) + (a + 1)) / 2, -0.495, ((-1) + (h + 1)) / 2))                                 # the plane of symmetry y = 0: held in y only
 plane_z = box(((a + 1) - (-1), (b + 1) - (-1), 1.01), position=(((-1) + (a + 1)) / 2, ((-1) + (b + 1)) / 2, -0.495))                                 # the middle plane of the thickness, z = 0: held in z only

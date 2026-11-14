@@ -105,6 +105,8 @@ if [ "$PACKAGE" = 1 ]; then
     rsync -a --exclude '__pycache__' --include 'step/PivotBearingSupportBracket.STEP' --exclude 'step/*.s*p' --exclude 'step/*.STEP' --exclude 'step/*.STP' --exclude '*.fieldes-cache.*' \
           --exclude 'meshes' "$SRC/examples/" "$OUT/examples/"
     rsync -a "$SRC/docs" "$SRC/translations" "$OUT/"
+    # (the scripts of the Help page "Validation and accuracy": the checks that a user can run again; the internal tests folder is not packaged)
+    rsync -a --exclude '__pycache__' "$SRC/validation" "$OUT/"
     # (the custom blocks folder is EMPTY in a build: the user's own blocks go there -- the user, 2026-10-28: "A new build should have an empty custom blocks folder".  It is made here and not copied, because
     # the repository does not keep a folder with no file in it)
     mkdir -p "$OUT/blocks"
@@ -131,6 +133,18 @@ if [ "$PACKAGE" = 1 ]; then
               --exclude 'ensurepip' --exclude 'lib2to3' --exclude 'site-packages' --exclude 'config-*' --exclude 'turtle.py' \
               --exclude 'EXTERNALLY-MANAGED' "$d/" "$PYLIB/"
     done
+    # (H200: the Python itself, as the Windows package has it (runtime/python3/python.exe): the program embeds Python and does not need it, but the console does -- `pip install`, `env new` run a Python
+    # (pyenv.runtime_python looks for runtime/python3/bin/python3).  The machine's own executable is copied; its libraries are collected and its rpath is set with the others below)
+    PYEXE=$(readlink -f "$(python3 -c 'import sys; print(sys.executable)')")
+    mkdir -p "$OUT/runtime/python3/bin"
+    cp -L "$PYEXE" "$OUT/runtime/python3/bin/python3"
+    # (H200: the pip of the console. The Python above leaves ensurepip out; the pip WHEEL that ensurepip carries is all the console needs -- it runs a wheel as it is, see pyenv._bundled_pip --, so it is put
+    # where pyenv looks: Debian and Ubuntu keep it in /usr/share/python-wheels and link to it from ensurepip/_bundled, so the file itself is copied)
+    mkdir -p "$PYLIB/ensurepip/_bundled"
+    for w in "$PURE"/ensurepip/_bundled/pip-*.whl /usr/share/python-wheels/pip-*.whl; do
+        if [ -e "$w" ]; then cp -L "$w" "$PYLIB/ensurepip/_bundled/" && break; fi
+    done
+    ls "$PYLIB"/ensurepip/_bundled/pip-*.whl >/dev/null 2>&1 || echo "warning: no pip wheel found: the console's pip install will say that this copy has no pip" >&2
     # (Python looks for its library in <home>/<platlibdir>/python3.x: "lib64" on Fedora, "lib" on Debian -- both lead to the same folder)
     PLATLIB=$(python3 -c 'import sys; print(getattr(sys, "platlibdir", "lib"))')
     [ "$PLATLIB" != lib ] && ln -sfn lib "$OUT/runtime/python3/$PLATLIB"
@@ -177,7 +191,7 @@ if [ "$PACKAGE" = 1 ]; then
     }
     ELFS=("$OUT"/fieldes.so "$OUT"/fieldes-stdlib.so)
     [ "$APP" = ON ] && ELFS+=("$OUT"/FielDes)
-    while IFS= read -r f; do ELFS+=("$f"); done < <(find "$OUT/plugins" "$OUT/runtime" -name '*.so*' -type f 2>/dev/null)
+    while IFS= read -r f; do ELFS+=("$f"); done < <(find "$OUT/plugins" "$OUT/runtime" \( -name '*.so*' -o -path '*/runtime/python3/bin/*' \) -type f 2>/dev/null)
     collect "${ELFS[@]}"
     # (the library Clipper2 built here, and Manifold, are found by ldd through the build's own paths: copied by the same loop)
 
@@ -191,7 +205,7 @@ if [ "$PACKAGE" = 1 ]; then
         depth=$(echo "${f#$OUT/}" | tr -cd '/' | wc -c)               # (how many folders deep it is: the way back to lib)
         up=$(printf '../%.0s' $(seq 1 "$depth"))
         rp "\$ORIGIN/${up}lib" "$f"
-    done < <(find "$OUT/plugins" "$OUT/runtime" -name '*.so*' -type f 2>/dev/null)
+    done < <(find "$OUT/plugins" "$OUT/runtime" \( -name '*.so*' -o -path '*/runtime/python3/bin/*' \) -type f 2>/dev/null)
 
     cat > "$OUT/run.sh" <<'EOF'
 #!/usr/bin/env bash

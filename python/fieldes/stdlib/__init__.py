@@ -59,3 +59,7 @@ _install_placement(globals())
 
 # progress(fraction, text): your own long computations on the progress bar
 from fieldes.run_progress import progress
+
+# The body law: what any function of the library makes that is a body is a Body, whose field is its true signed distance (see fieldes.stdlib.body_law).  Last: the outermost wrapper
+from fieldes.stdlib.body_law import install as _install_body_law
+_install_body_law(globals())

@@ -191,6 +191,77 @@ void TetLocator::buildClasses() const
     m_cellClass = std::move(cls);
 }
 
+void TetLocator::buildBoundary() const
+{
+    const TetMesh& mesh = *m_mesh;
+    const size_t nt = mesh.tets.size(), nv = mesh.pos.size();
+    // (the cautious answer, every face counts, is what a mesh too big for the keys below keeps)
+    m_boundaryFaces.assign(nt, 0x0F);
+    m_boundaryAll = true;
+    if (nt == 0 || nv >= (size_t(1) << 21)) return;
+    struct Face { uint64_t key; uint32_t tet; uint8_t drop; };
+    std::vector<Face> faces;
+    faces.reserve(4 * nt);
+    for (size_t t = 0; t < nt; ++t)
+        for (int drop = 0; drop < 4; ++drop)
+        {
+            uint32_t v[3];
+            int n = 0;
+            for (int q = 0; q < 4; ++q)
+                if (q != drop) v[n++] = uint32_t(mesh.tets[t][size_t(q)]);
+            std::sort(v, v + 3);
+            faces.push_back({(uint64_t(v[0]) << 42) | (uint64_t(v[1]) << 21) | uint64_t(v[2]), uint32_t(t), uint8_t(drop)});
+        }
+    std::sort(faces.begin(), faces.end(), [](const Face& a, const Face& b) { return a.key < b.key; });
+    std::vector<uint8_t> mask(nt, 0);
+    for (size_t i = 0; i < faces.size(); ++i)
+    {
+        const bool sameBefore = i > 0 && faces[i - 1].key == faces[i].key;
+        const bool sameAfter = i + 1 < faces.size() && faces[i + 1].key == faces[i].key;
+        if (sameBefore || sameAfter) continue;       // (a face of two tetrahedra is inside)
+        mask[faces[i].tet] = uint8_t(mask[faces[i].tet] | (1u << faces[i].drop));
+    }
+    // The cells' lists of the tetrahedra that have a boundary face (a tetrahedron is listed in every cell its box overlaps, as in the constructor)
+    const size_t nCells = size_t(m_n[0]) * m_n[1] * m_n[2];
+    std::vector<uint32_t> start(nCells + 1, 0), list;
+    std::vector<int> lo(3 * nt, 0), hi(3 * nt, 0);
+    for (size_t t = 0; t < nt; ++t)
+    {
+        if (!mask[t]) continue;
+        const auto& v = mesh.tets[t];
+        Vec3 bmin = mesh.pos[size_t(v[0])], bmax = bmin;
+        for (int p = 1; p < 4; ++p)
+        {
+            bmin = bmin.cwiseMin(mesh.pos[size_t(v[size_t(p)])]);
+            bmax = bmax.cwiseMax(mesh.pos[size_t(v[size_t(p)])]);
+        }
+        int l[3], h[3];
+        cellRange(bmin, bmax, l, h);
+        for (int a = 0; a < 3; ++a)
+        {
+            lo[3 * t + size_t(a)] = l[a];
+            hi[3 * t + size_t(a)] = h[a];
+        }
+        for (int k = l[2]; k <= h[2]; ++k)
+            for (int j = l[1]; j <= h[1]; ++j)
+                for (int i = l[0]; i <= h[0]; ++i) start[cellIndex(i, j, k) + 1]++;
+    }
+    for (size_t c = 0; c < nCells; ++c) start[c + 1] += start[c];
+    list.resize(start[nCells]);
+    std::vector<uint32_t> cursor(start.begin(), start.end() - 1);
+    for (size_t t = 0; t < nt; ++t)
+    {
+        if (!mask[t]) continue;
+        for (int k = lo[3 * t + 2]; k <= hi[3 * t + 2]; ++k)
+            for (int j = lo[3 * t + 1]; j <= hi[3 * t + 1]; ++j)
+                for (int i = lo[3 * t]; i <= hi[3 * t]; ++i) list[cursor[cellIndex(i, j, k)]++] = uint32_t(t);
+    }
+    m_bStart = std::move(start);
+    m_bList = std::move(list);
+    m_boundaryFaces = std::move(mask);
+    m_boundaryAll = false;
+}
+
 bool TetLocator::boxMayHaveVoid(const Vec3& lower, const Vec3& upper) const
 {
     if (m_list.empty()) return true;
@@ -204,6 +275,49 @@ bool TetLocator::boxMayHaveVoid(const Vec3& lower, const Vec3& upper) const
                 if (m_cellClass[cellIndex(a, j, k)] != 1) return true;
     return false;
 }
+
+namespace {
+
+// The point of the triangle abc nearest to p, as the weights of a, b and c in it (Ericson, Real-Time Collision Detection, 5.1.5)
+Vec3 nearestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c, double w[3])
+{
+    const Vec3 ab = b - a, ac = c - a, ap = p - a;
+    const double d1 = ab.dot(ap), d2 = ac.dot(ap);
+    if (d1 <= 0 && d2 <= 0) { w[0] = 1; w[1] = 0; w[2] = 0; return a; }
+    const Vec3 bp = p - b;
+    const double d3 = ab.dot(bp), d4 = ac.dot(bp);
+    if (d3 >= 0 && d4 <= d3) { w[0] = 0; w[1] = 1; w[2] = 0; return b; }
+    const double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0)
+    {
+        const double v = d1 / (d1 - d3);
+        w[0] = 1 - v; w[1] = v; w[2] = 0;
+        return a + v * ab;
+    }
+    const Vec3 cp = p - c;
+    const double d5 = ab.dot(cp), d6 = ac.dot(cp);
+    if (d6 >= 0 && d5 <= d6) { w[0] = 0; w[1] = 0; w[2] = 1; return c; }
+    const double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0)
+    {
+        const double v = d2 / (d2 - d6);
+        w[0] = 1 - v; w[1] = 0; w[2] = v;
+        return a + v * ac;
+    }
+    const double va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0)
+    {
+        const double v = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        w[0] = 0; w[1] = 1 - v; w[2] = v;
+        return b + v * (c - b);
+    }
+    const double denom = 1.0 / (va + vb + vc);
+    const double v = vb * denom, u = vc * denom;
+    w[0] = 1 - v - u; w[1] = v; w[2] = u;
+    return a + ab * v + ac * u;
+}
+
+}   // anonymous namespace
 
 int TetLocator::locate(const Vec3& p, double lambda[4]) const
 {
@@ -220,64 +334,81 @@ int TetLocator::locate(const Vec3& p, double lambda[4]) const
     int ci[3];
     for (int a = 0; a < 3; ++a)
         ci[a] = std::max(0, std::min(m_n[a] - 1, int(std::floor((p[a] - m_lo[a]) / m_cell))));
-    // The cell's own tetrahedra
+    // H199 (the user, 2026-11-13: "The non element visual rendering is faulty, produces weird regions and smearing"): a point outside every tetrahedron gets the value at the NEAREST POINT OF THE
+    // MESH.  It was given the tetrahedron whose smallest barycentric coordinate was the least negative, with the coordinates cut at 0 and scaled to 1 -- which is not the nearest tetrahedron, nor the
+    // nearest point of the one it takes: the render mesh's vertices that lie a little past the mesh's boundary (every vertex of a curved surface, an edge the tetrahedra cut across) were given
+    // values from tetrahedra that were not the ones next to them, and the colour smeared along the surface
     double best[4] = {0, 0, 0, 0}, l[4];
     int bestTet = -1;
-    double bestMin = -std::numeric_limits<double>::max();
-    {
-        const size_t c = cellIndex(ci[0], ci[1], ci[2]);
-        for (uint32_t e = m_start[c]; e < m_start[c + 1]; ++e)
+    double bestDist = std::numeric_limits<double>::max();
+    // Looks at the tetrahedra of a cell: true when one of them holds the point (then lambda is set); else the nearest one so far is kept.  Only the BOUNDARY faces of the mesh are projected on
+    // (H193): the point is outside the mesh, whose nearest point is on its boundary, and a face between two tetrahedra is never nearer; it saves the work of 60 to 400 us a point
+    bool haveBoundary = false;
+    auto lookIn = [&](const std::vector<uint32_t>& start, const std::vector<uint32_t>& list, size_t cell) {
+        for (uint32_t e = start[cell]; e < start[cell + 1]; ++e)
         {
-            const double mn = barycentric(m_list[e], l);
+            const size_t t = list[e];
+            const double mn = barycentric(t, l);
             if (mn >= -1e-9)
             {
                 std::copy(l, l + 4, lambda);
-                return int(m_list[e]);
+                bestTet = int(t);
+                return true;
             }
-            if (mn > bestMin)
+            if (!haveBoundary)
             {
-                bestMin = mn;
-                bestTet = int(m_list[e]);
-                std::copy(l, l + 4, best);
+                std::call_once(m_boundaryOnce, [this] { buildBoundary(); });
+                haveBoundary = true;
+            }
+            const uint8_t boundary = m_boundaryFaces[t];
+            if (boundary == 0) continue;                         // (a tetrahedron with no face on the boundary)
+            const auto& v = m_mesh->tets[t];
+            const Vec3* corner[4] = {&m_mesh->pos[size_t(v[0])], &m_mesh->pos[size_t(v[1])], &m_mesh->pos[size_t(v[2])], &m_mesh->pos[size_t(v[3])]};
+            for (int skip = 0; skip < 4; ++skip)
+            {
+                if (!(l[skip] < 0.0) || !(boundary & (1u << skip))) continue;   // (the boundary faces the point is beyond: the nearest point of the tetrahedron is on one of them)
+                int idx[3], n = 0;
+                for (int q = 0; q < 4; ++q) if (q != skip) idx[n++] = q;
+                double w[3];
+                const Vec3 q = nearestOnTriangle(p, *corner[idx[0]], *corner[idx[1]], *corner[idx[2]], w);
+                const double d = (q - p).squaredNorm();
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    bestTet = int(t);
+                    best[0] = best[1] = best[2] = best[3] = 0.0;
+                    for (int q2 = 0; q2 < 3; ++q2) best[idx[q2]] = w[q2];
+                }
             }
         }
+        return false;
+    };
+    // The cell's own tetrahedra
+    if (lookIn(m_start, m_list, cellIndex(ci[0], ci[1], ci[2]))) return bestTet;
+    // Not inside any: the point is outside the mesh (or on a face the cell's tetrahedra miss by rounding).  The rings of cells round it, as far out as something nearer than the ring can be; in the rings only
+    // the tetrahedra that have a boundary face are looked at (H193: the others hold no point of the boundary, which is all that is searched for)
+    if (!haveBoundary)
+    {
+        std::call_once(m_boundaryOnce, [this] { buildBoundary(); });
+        haveBoundary = true;
     }
-    // Not inside it: the point is outside the mesh (or on a face the cell's
-    // tetrahedra miss by rounding).  The nearest tetrahedron around, coordinates clamped.
-    for (int r = 1; r <= 3 && (bestTet < 0 || bestMin < -0.5); ++r)
+    const std::vector<uint32_t>& bStart = m_boundaryAll ? m_start : m_bStart;
+    const std::vector<uint32_t>& bList = m_boundaryAll ? m_list : m_bList;
+    for (int r = 1; r <= 3 && (bestTet < 0 || bestDist > double((r - 1) * (r - 1)) * m_cell * m_cell); ++r)
     {
         for (int k = std::max(0, ci[2] - r); k <= std::min(m_n[2] - 1, ci[2] + r); ++k)
             for (int j = std::max(0, ci[1] - r); j <= std::min(m_n[1] - 1, ci[1] + r); ++j)
                 for (int i = std::max(0, ci[0] - r); i <= std::min(m_n[0] - 1, ci[0] + r); ++i)
                 {
                     if (std::max(std::abs(i - ci[0]), std::max(std::abs(j - ci[1]), std::abs(k - ci[2]))) != r) continue;
-                    const size_t c = cellIndex(i, j, k);
-                    for (uint32_t e = m_start[c]; e < m_start[c + 1]; ++e)
-                    {
-                        const double mn = barycentric(m_list[e], l);
-                        if (mn >= -1e-9)
-                        {
-                            std::copy(l, l + 4, lambda);
-                            return int(m_list[e]);
-                        }
-                        if (mn > bestMin)
-                        {
-                            bestMin = mn;
-                            bestTet = int(m_list[e]);
-                            std::copy(l, l + 4, best);
-                        }
-                    }
+                    if (lookIn(bStart, bList, cellIndex(i, j, k))) return bestTet;
                 }
     }
     if (bestTet < 0) return -1;
     double sum = 0;
-    for (int q = 0; q < 4; ++q)
-    {
-        lambda[q] = std::max(0.0, best[q]);
-        sum += lambda[q];
-    }
+    for (int q = 0; q < 4; ++q) sum += best[q];
     if (!(sum > 0)) return -1;
-    for (int q = 0; q < 4; ++q) lambda[q] /= sum;
+    for (int q = 0; q < 4; ++q) lambda[q] = best[q] / sum;
     return bestTet;
 }
 
@@ -532,6 +663,12 @@ void TetProblem::addSupport(const Tree& region, bool x, bool y, bool z, int load
     m_prepared = false;
 }
 
+void TetProblem::addTurn(const Tree& region, bool x, bool y, bool z, Eigen::Vector3d angle)
+{
+    m_turns.push_back(Turn{region, {x, y, z}, angle});
+    m_prepared = false;
+}
+
 void TetProblem::addForce(const Tree& region, Eigen::Vector3d total, int loadCase)
 {
     m_forces.push_back(Force{region, total, std::max(0, loadCase)});
@@ -541,6 +678,15 @@ void TetProblem::addForce(const Tree& region, Eigen::Vector3d total, int loadCas
 void TetProblem::addForceProfile(const Tree& region, Eigen::Vector3d total, int loadCase, const Tree& profile)
 {
     m_forces.push_back(Force{region, total, std::max(0, loadCase), profile});
+    m_prepared = false;
+}
+
+void TetProblem::addPressure(const Tree& region, double value, int loadCase, const Tree& profile)
+{
+    Force f{region, Eigen::Vector3d::Zero(), std::max(0, loadCase), profile};
+    f.pressure = true;
+    f.value = value;
+    m_forces.push_back(f);
     m_prepared = false;
 }
 
@@ -787,6 +933,67 @@ bool TetProblem::prepare(std::string& error)
         }
     }
 
+    // The restraints of turning (H192): the nodes each holds, and the springs on their mean turn about each axis that is held (see TurnConstraint)
+    std::vector<TurnConstraint> turnData;
+    if (!m_turns.empty())
+    {
+        if (m_order == 2)
+        {
+            error = "fixed(..., rotation=...) restrains the turning of a support on linear tetrahedra (element='tet'): the 10-node element is not given it";
+            return false;
+        }
+        const auto pts = positions(*mesh);
+        const std::vector<char> off = offBody(pts);
+        for (const auto& tn : m_turns)
+        {
+            std::vector<float> v;
+            evalTreePoints(tn.region, pts, v);
+            if (!off.empty())
+                for (size_t i = 0; i < v.size(); ++i)
+                    if (off[i]) v[i] = 1e30f;
+            float rch = reach;
+            bool any = false;
+            for (float x : v) any = any || x <= rch;
+            if (!any) rch = 10 * reach;                 // (a region that misses the part by a little still holds it: as a support's)
+            std::vector<uint32_t> ids;
+            for (size_t i = 0; i < pts.size(); ++i)
+                if (v[i] <= rch) ids.push_back(uint32_t(i));
+            if (ids.size() < 3)
+            {
+                error = "the region of a rotation restraint touches too little of the part (fewer than three nodes): it cannot be told how it turns";
+                return false;
+            }
+            Vec3 centre = Vec3::Zero();
+            for (uint32_t id : ids) centre += mesh->pos[id];
+            centre /= double(ids.size());
+            for (int a = 0; a < 3; ++a)
+            {
+                if (!tn.hold[a]) continue;
+                Vec3 axis = Vec3::Zero();
+                axis[a] = 1.0;
+                std::vector<Vec3> across(ids.size());
+                double S = 0;
+                for (size_t q = 0; q < ids.size(); ++q)
+                {
+                    across[q] = axis.cross(mesh->pos[ids[q]] - centre);
+                    S += across[q].squaredNorm();
+                }
+                if (!(S > 1e-6 * m_h * m_h * double(ids.size())))
+                {
+                    error = std::string("the region of a rotation restraint lies along the ") + "xyz"[a] + " axis: it has no turn about it to restrain";
+                    return false;
+                }
+                TurnConstraint tc;
+                tc.node = ids;
+                tc.coef.resize(ids.size());
+                for (size_t q = 0; q < ids.size(); ++q) tc.coef[q] = across[q] / S;
+                tc.stiffness = 1000.0 * m_E * m_h * S;      // (a thousand times the stiffness the nodes have against turning: see TurnConstraint)
+                tc.target = tn.angle[a];
+                turnData.push_back(std::move(tc));
+            }
+        }
+    }
+
     // Loads
     const std::vector<Force> noForces;
     const std::vector<Force>& forces = m_noLoads ? noForces : m_forces;
@@ -833,6 +1040,7 @@ bool TetProblem::prepare(std::string& error)
         }
     };
     m_totalLoad = Vec3::Zero();
+    Vec3 pressureLoad = Vec3::Zero();           // (the resultant of the pressures: they have no total of their own, see addPressure)
     std::vector<char> loaded(nv, 0);
     {
         // boundary triangles: centres and areas (of the linear mesh the 10-node elements were made on)
@@ -909,7 +1117,22 @@ bool TetProblem::prepare(std::string& error)
                     for (size_t f = 0; f < take.size(); ++f)
                     {
                         if (!take[f]) continue;
-                        const Vec3 share = fo.total * (weightOfFace(f) / sel) / 3.0;
+                        Vec3 share;
+                        if (fo.pressure)
+                        {
+                            // A PRESSURE (the user, 2026-11-14: "Implement pressure then as a boundary condition ... It takes a surface always"): this face takes `value` x its area (x the profile) along its own
+                            // normal.  The faces of the mesh are the surface with the normals OUT of the part, so a positive value (pushing in) is the force against that normal
+                            const auto& ptri = lf[f];
+                            const Vec3 &pa = mesh->pos[size_t(ptri[0])], &pb = mesh->pos[size_t(ptri[1])], &pc = mesh->pos[size_t(ptri[2])];
+                            Vec3 nrm = (pb - pa).cross(pc - pa);
+                            const double len = nrm.norm();
+                            if (!(len > 0)) continue;
+                            const Vec3 faceForce = (nrm / len) * (-fo.value * weightOfFace(f));
+                            pressureLoad += faceForce;
+                            share = faceForce / 3.0;
+                        }
+                        else
+                            share = fo.total * (weightOfFace(f) / sel) / 3.0;
                         for (int p = 0; p < 3; ++p)
                         {
                             // (a 10-node face takes its load on the nodes in the middle of its edges)
@@ -922,6 +1145,7 @@ bool TetProblem::prepare(std::string& error)
                     placed = true;
                     continue;
                 }
+                if (fo.pressure) continue;          // (a pressure takes a SURFACE always: a region with none is an error below, "doesn't touch the part")
                 // a region holding no surface: over the nodes inside it
                 size_t count = 0;
                 double nodeWeight = 0;
@@ -1075,6 +1299,7 @@ bool TetProblem::prepare(std::string& error)
     m_loadedNodes = 0;
     for (char l : loaded) m_loadedNodes += l != 0;
     for (const auto& fo : forces) m_totalLoad += fo.total;
+    m_totalLoad += pressureLoad;
 
     // What the loads and the supports leave: something must push, and every
     // direction that is pushed must be held somewhere
@@ -1170,6 +1395,12 @@ bool TetProblem::prepare(std::string& error)
     hsh = fnv(hsh, mesh->tets.data(), mesh->tets.size() * sizeof(std::array<int, 4>));
     hsh = fnv(hsh, fixedDof.data(), fixedDof.size());
     if (!prescribed.empty()) hsh = fnv(hsh, prescribed.data(), prescribed.size() * sizeof(double));
+    for (const auto& tc : turnData)
+    {
+        hsh = fnv(hsh, tc.node.data(), tc.node.size() * sizeof(uint32_t));
+        hsh = fnv(hsh, &tc.stiffness, sizeof(double));
+        hsh = fnv(hsh, &tc.target, sizeof(double));
+    }
     for (const auto& cx : caseFixed) hsh = fnv(hsh, cx.data(), cx.size());
     hsh = fnv(hsh, force.data(), force.size() * sizeof(double));
     for (const auto& cf : caseForce) hsh = fnv(hsh, cf.data(), cf.size() * sizeof(double));
@@ -1183,6 +1414,7 @@ bool TetProblem::prepare(std::string& error)
     m_quad = quad;
     m_fixedDof.swap(fixedDof);
     m_prescribed.swap(prescribed);
+    m_turnData.swap(turnData);
     m_force.swap(force);
     m_caseForce.swap(caseForce);
     m_caseFixed.swap(caseFixed);
@@ -1208,7 +1440,12 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
     Assembly A;
     buildPattern(mesh, A);
     assemble(mesh, D, m_scale.empty() ? nullptr : &m_scale, A);
+    A.turns = m_turnData;               // (H192: the springs on the turns of the supports that restrain them -- part of the operator, and of the preconditioner)
     buildPreconditioner(m_fixedDof, A);
+    // (the nodes' positions: the multigrid that a solve that stalls goes on with takes the rigid-body modes from them -- plates of tetrahedra, H193)
+    A.coords.resize(3 * nv);
+    for (size_t i = 0; i < nv; ++i)
+        for (size_t a = 0; a < 3; ++a) A.coords[3 * i + a] = mesh.pos[i][int(a)];
     task.set(0.05, "preparing the solver");
 
     const std::vector<unsigned char>& fixed = m_fixedDof;
@@ -1221,13 +1458,30 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
     {
         std::vector<double> Kp(n);
         A.K.matvec(m_prescribed.data(), Kp.data());
+        if (!A.turns.empty()) addTurnOperator(A, m_prescribed.data(), Kp.data());
         rhsImposed = m_force;
         for (size_t i = 0; i < n; ++i) if (!fixed[i]) rhsImposed[i] -= Kp[i];
         rhs = &rhsImposed;
     }
+    // A turn a support holds at an angle other than 0 (H192): the spring's pull at that angle is a load on the free directions
+    std::vector<double> rhsTurned;
+    {
+        bool aimed = false;
+        for (const auto& tc : A.turns) aimed = aimed || tc.target != 0.0;
+        if (aimed)
+        {
+            rhsTurned = *rhs;
+            for (const auto& tc : A.turns)
+                for (size_t q = 0; q < tc.node.size(); ++q)
+                    for (int a = 0; a < 3; ++a)
+                        if (!fixed[3 * size_t(tc.node[q]) + size_t(a)])
+                            rhsTurned[3 * size_t(tc.node[q]) + size_t(a)] += tc.stiffness * tc.target * tc.coef[q][a];
+            rhs = &rhsTurned;
+        }
+    }
     CgResult cg;
     if (!cgSolve(A, fixed, *rhs, u, tolerance, maxIterations, cancel,
-                 [&](double frac, const std::string& text) { task.set(0.05 + 0.9 * frac, text); }, cg, error))
+                 [&](double frac, const std::string& text) { task.set(0.05 + 0.9 * frac, text); }, cg, error, true))
         return false;
     if (!m_prescribed.empty())
         for (size_t i = 0; i < n; ++i) if (fixed[i]) u[i] = m_prescribed[i];
@@ -1293,19 +1547,23 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
         }
     }, 256);
 
+    // The values at the nodes: the plane through the stresses of the elements round each node, taken at the node (patch recovery), not their average -- an average at a node of a surface takes in the
+    // deeper, less stressed elements and every node does it by its own mix of them, so the colours of a result were low and smeared (H199, the user, 2026-11-13: a beam's top face, whose stress is
+    // the same across its width, was a pattern of diamonds 20 % up and down)
+    std::vector<double> elementValues(nt * 7), nodalValues;
+    for (size_t t = 0; t < nt; ++t)
+        for (size_t q = 0; q < 7; ++q) elementValues[t * 7 + q] = double(res->elementStress[t][q]);
+    patchRecovery(mesh, A, elementValues, 7, nodalValues);
+
     for (auto& f : res->fields) f.assign(nv, 0.0f);
     parallelRange(nv, [&](size_t b0, size_t b1) {
         for (size_t i = b0; i < b1; ++i)
         {
-            double w = 0, acc[7] = {0, 0, 0, 0, 0, 0, 0};
-            for (uint32_t e = A.vtStart[i]; e < A.vtStart[i + 1]; ++e)
-            {
-                const size_t t = A.vtList[e];
-                const double vol = A.geom[t].vol;
-                w += vol;
-                for (int q = 0; q < 7; ++q) acc[q] += vol * double(res->elementStress[t][size_t(q)]);
-            }
-            if (!(w > 0)) continue;
+            if (!(A.vtStart[i + 1] > A.vtStart[i])) continue;
+            double acc[7];
+            for (size_t q = 0; q < 7; ++q) acc[q] = nodalValues[i * 7 + q];
+            acc[6] = std::max(acc[6], 0.0);                          // (an energy is not negative)
+            const double w = 1.0;
             const double sxx = acc[0] / w, syy = acc[1] / w, szz = acc[2] / w, sxy = acc[3] / w, syz = acc[4] / w,
                          szx = acc[5] / w;
             const double vm = std::sqrt(0.5 * ((sxx - syy) * (sxx - syy) + (syy - szz) * (syy - szz) +
@@ -1365,6 +1623,11 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
 
 bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic<bool>* cancel)
 {
+    if (!m_turns.empty())
+    {
+        error = "a rotation restraint (fixed(..., rotation=...)) is for a static analysis on linear tetrahedra: a topology optimization holds the part node by node (displacement=...)";
+        return false;
+    }
     if (m_order == 2)
     {
         error = "topology optimization designs one density to each linear tetrahedron: it has no 10-node element (use element='tet')";
@@ -2219,6 +2482,11 @@ int TetProblem::pieces(double threshold, double margin) const
 bool TetProblem::modal(int count, double density, int maxIterations, double tolerance, std::string& error,
                        const std::atomic<bool>* cancel)
 {
+    if (!m_turns.empty())
+    {
+        error = "a rotation restraint (fixed(..., rotation=...)) is for a static analysis on linear tetrahedra: a modal analysis holds the part node by node (displacement=...)";
+        return false;
+    }
     if (count < 1)
     {
         error = "ask for at least one mode";
@@ -2257,6 +2525,10 @@ bool TetProblem::modal(int count, double density, int maxIterations, double tole
         buildPatternQuad(q, A);
         assembleQuad(q, D, m_scale.empty() ? nullptr : &m_scale, A);
         buildPreconditioner(m_fixedDof, A);
+        // (the nodes' positions: the multigrid that preconditions the eigensolver takes the rigid-body modes from them -- plates of tetrahedra, H193)
+        A.coords.resize(3 * q.pos.size());
+        for (size_t i = 0; i < q.pos.size(); ++i)
+            for (size_t a = 0; a < 3; ++a) A.coords[3 * i + a] = q.pos[i][int(a)];
         std::vector<double> volume;
         quadVolumes(q, volume);
         for (size_t t = 0; t < q.elem.size(); ++t)
@@ -2272,6 +2544,9 @@ bool TetProblem::modal(int count, double density, int maxIterations, double tole
         buildPattern(mesh, A);
         assemble(mesh, D, m_scale.empty() ? nullptr : &m_scale, A);
         buildPreconditioner(m_fixedDof, A);
+        A.coords.resize(n);
+        for (size_t i = 0; i < nv; ++i)
+            for (size_t a = 0; a < 3; ++a) A.coords[3 * i + a] = mesh.pos[i][int(a)];
         // The lumped mass: a quarter of each element's mass at each of its nodes
         for (size_t t = 0; t < mesh.tets.size(); ++t)
         {
@@ -2382,6 +2657,10 @@ bool TetProblem::solveQuad(int maxIterations, double tolerance, std::string& err
     buildPatternQuad(q, A);
     assembleQuad(q, D, m_scale.empty() ? nullptr : &m_scale, A);
     buildPreconditioner(m_fixedDof, A);
+    // (the nodes' positions for the multigrid of a solve that stalls: see solve)
+    A.coords.resize(3 * nn);
+    for (size_t i = 0; i < nn; ++i)
+        for (size_t a = 0; a < 3; ++a) A.coords[3 * i + a] = q.pos[i][int(a)];
     task.set(0.05, "preparing the solver");
 
     const std::vector<unsigned char>& fixed = m_fixedDof;
@@ -2399,7 +2678,7 @@ bool TetProblem::solveQuad(int maxIterations, double tolerance, std::string& err
     }
     CgResult cg;
     if (!cgSolve(A, fixed, *rhs, u, tolerance, maxIterations, cancel,
-                 [&](double frac, const std::string& text) { task.set(0.05 + 0.9 * frac, text); }, cg, error))
+                 [&](double frac, const std::string& text) { task.set(0.05 + 0.9 * frac, text); }, cg, error, true))
         return false;
     if (!m_prescribed.empty())
         for (size_t i = 0; i < n; ++i) if (fixed[i]) u[i] = m_prescribed[i];

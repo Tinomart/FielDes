@@ -293,6 +293,15 @@ lib.libfive_mesh_from_arrays.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.
 lib.libfive_mesh_from_arrays.restype = libfive_tree
 
 try:
+    # (H178: the surface of a mesh smoothed in place, Taubin's two steps `pairs` times: see libfive.h)
+    lib.libfive_mesh_smooth.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_uint32,
+                                        ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
+                                        ctypes.c_int32, ctypes.c_float, ctypes.c_float]
+    lib.libfive_mesh_smooth.restype = ctypes.c_int
+except AttributeError:
+    pass            # (a kernel older than this file)
+
+try:
     lib.libfive_mesh_patch.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_uint32,
                                        ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
                                        ctypes.POINTER(ctypes.c_uint8),
@@ -454,6 +463,12 @@ libfive_tetmesh_p = ctypes.c_void_p
 try:
     lib.libfive_tetmesh_new.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float]
     lib.libfive_tetmesh_new.restype = libfive_tetmesh_p
+    if hasattr(lib, 'libfive_tetmesh_new_plain'):       # (the lattice mesh without the clean-up of its edges and rims: for a mesh that is refined after it, meshing.py _kernel_tets, H223)
+        lib.libfive_tetmesh_new_plain.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float]
+        lib.libfive_tetmesh_new_plain.restype = libfive_tetmesh_p
+    if hasattr(lib, 'libfive_tetmesh_set_limits'):      # (H225: the choice between fewer odd elements and more surface conformity, sim_mesh.py surface_fit_scope)
+        lib.libfive_tetmesh_set_limits.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+        lib.libfive_tetmesh_set_limits.restype = None
     lib.libfive_tetmesh_last_message.argtypes = []
     lib.libfive_tetmesh_last_message.restype = ctypes.c_char_p
     lib.libfive_tetmesh_counts.argtypes = [libfive_tetmesh_p, ctypes.POINTER(ctypes.c_int64)]
@@ -468,6 +483,24 @@ try:
     lib.libfive_tetmesh_quality.restype = None
     lib.libfive_tetmesh_delete.argtypes = [libfive_tetmesh_p]
     lib.libfive_tetmesh_delete.restype = None
+    if hasattr(lib, 'libfive_tetmesh_mend'):        # (the mender of the tetrahedra, kernel/src/fea/tetmender.cpp: meshing.py _mend)
+        lib.libfive_tetmesh_mend.argtypes = [libfive_tree, ctypes.c_int64, ctypes.POINTER(ctypes.c_double), ctypes.c_int64, ctypes.POINTER(ctypes.c_int32),
+                                             ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_int, ctypes.POINTER(ctypes.c_int64)]
+        lib.libfive_tetmesh_mend.restype = libfive_tetmesh_p
+    if hasattr(lib, 'libfive_tetmesh_snap'):        # (the clean-up of the surface, kernel/src/fea/tetmesh.cpp snapSurface: meshing.py _snap, H223)
+        lib.libfive_tetmesh_snap.argtypes = [libfive_tree, ctypes.c_int64, ctypes.POINTER(ctypes.c_double), ctypes.c_int64, ctypes.POINTER(ctypes.c_int32), ctypes.c_double, ctypes.POINTER(ctypes.c_int64)]
+        lib.libfive_tetmesh_snap.restype = libfive_tetmesh_p
+    if hasattr(lib, 'libfive_tetmesh_probe'):       # (the lattice vertices near the surface, kernel/src/fea/tetmesh.cpp probeSurface: meshing.py thin_size)
+        lib.libfive_tetmesh_probe.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float, ctypes.c_double, ctypes.c_int64]
+        lib.libfive_tetmesh_probe.restype = ctypes.c_void_p
+        lib.libfive_probe_counts.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int64)]
+        lib.libfive_probe_counts.restype = None
+        lib.libfive_probe_spacing.argtypes = [ctypes.c_void_p]
+        lib.libfive_probe_spacing.restype = ctypes.c_double
+        lib.libfive_probe_samples.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double)]
+        lib.libfive_probe_samples.restype = None
+        lib.libfive_probe_delete.argtypes = [ctypes.c_void_p]
+        lib.libfive_probe_delete.restype = None
     libfive_tetfea_p = ctypes.c_void_p
     lib.libfive_tetfea_new.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float, ctypes.c_float, ctypes.c_float]
     lib.libfive_tetfea_new.restype = libfive_tetfea_p
@@ -479,6 +512,9 @@ try:
             _set_mesh.restype = ctypes.c_int
     lib.libfive_tetfea_add_support.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double]
     lib.libfive_tetfea_add_support.restype = None
+    if hasattr(lib, 'libfive_tetfea_add_turn'):         # (H192: a rotation restraint of a support)
+        lib.libfive_tetfea_add_turn.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double]
+        lib.libfive_tetfea_add_turn.restype = None
     lib.libfive_tetfea_add_force.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_float, ctypes.c_float,
                                              ctypes.c_float]
     lib.libfive_tetfea_add_force.restype = None
@@ -499,6 +535,11 @@ try:
         lib.libfive_tetfea_add_force_profile.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_float, ctypes.c_float,
                                                         ctypes.c_float, ctypes.c_int, libfive_tree]
         lib.libfive_tetfea_add_force_profile.restype = None
+    if getattr(lib, 'libfive_tetfea_add_pressure', None) is not None:
+        lib.libfive_tetfea_add_pressure.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_float, ctypes.c_int]
+        lib.libfive_tetfea_add_pressure.restype = None
+        lib.libfive_tetfea_add_pressure_profile.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_float, ctypes.c_int, libfive_tree]
+        lib.libfive_tetfea_add_pressure_profile.restype = None
     lib.libfive_tetfea_prepare.argtypes = [libfive_tetfea_p]
     lib.libfive_tetfea_prepare.restype = ctypes.c_int
     lib.libfive_tetfea_hash.argtypes = [libfive_tetfea_p]

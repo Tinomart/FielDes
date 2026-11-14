@@ -60,7 +60,7 @@ _NOT_MODELS = {
 # patterns are for the rest
 _MAKES = (
     ('simulation', ('*_analysis', '*_optimization', 'analyse', 'analyze')),
-    ('conditions', ('fixed', 'force', 'gravity', 'thermal_expansion', 'fixed_temperature', 'heat_input',
+    ('conditions', ('fixed', 'force', 'pressure', 'gravity', 'thermal_expansion', 'fixed_temperature', 'heat_input',
                     'heat_generation', 'convection', 'inlet', 'outlet', 'wall', 'slip')),
     ('material', ('Material', 'Fluid')),
     ('surface', ('select_surface', 'surface_from_bodies', 'surface_*')),
@@ -100,7 +100,7 @@ def _function_kinds():
     return _FUNCTION_KINDS
 
 
-_ROLE_OF = {'fixed': 'supports', 'force': 'loads', 'gravity': 'loads', 'thermal_expansion': 'loads',
+_ROLE_OF = {'fixed': 'supports', 'force': 'loads', 'pressure': 'loads', 'gravity': 'loads', 'thermal_expansion': 'loads',
             'fixed_temperature': 'fixed_temperatures', 'heat_input': 'heat_inputs', 'heat_generation': 'heat_generations',
             'convection': 'convections', 'inlet': 'inlets', 'outlet': 'outlets', 'wall': 'boundaries', 'slip': 'boundaries', 'symmetry': 'boundaries',
             'manufacturing_constraint': 'constraints', 'fff_constraint': 'constraints', 'cnc_constraint': 'constraints', 'molding_constraint': 'constraints'}
@@ -278,10 +278,11 @@ def facts_of(v):
         f['shown'] = False
         f['model'] = False
     f['surface_selection'] = bool(mkind == 'surface' and type(v).__name__ == 'SurfaceSelection')
-    f['linked'] = bool(getattr(v, '_linked', False))          # (a linked copy, instance(x): moved and turned only -- its gizmo has no scale)
+    f['linked'] = bool(getattr(v, '_linked', False))          # (a linked copy, instance(x): it has a place of its own -- position, rotation and scale; the copy of a profile or a line is moved and turned only)
     f['symmetry_image'] = getattr(v, '_symmetry_of', None) is not None        # (the image of a model, symmetry_image(x, ...): it has no numbers of its own -- x is dragged)
     f['colored'] = hasattr(v, '_color_field')       # (a shape coloured by a field: it cannot be given a name to be edited by dragging)
-    b = getattr(v, '_bounds', None) if shape else None
+    # (a result is drawn on its part, and its box is the part's: FieldResult._bounds -- H195, an analysis shown alone made no box, so the render region did not follow it and its part was cut off)
+    b = getattr(v, '_bounds', None) if (shape or result) else None
     if b:
         f['bounds'] = A._bounds_list(b)
         # (the shape knows its extent: the region of interest can be made from it; an estimate is not that, nor is the box of a part whose
@@ -342,7 +343,7 @@ def exports_of(value):
     try:
         from fieldes.stdlib import meshing
         if isinstance(value, meshing.Mesh):
-            out.append('meshfile')              # (a mesh made by mesh_volume or mesh_surface: Gmsh, VTK, Abaqus, Nastran, I-DEAS, STL and OBJ files)
+            out.append('meshfile')              # (a mesh made by mesh_tet4 or mesh_surface_tri: Gmsh, VTK, Abaqus, Nastran, I-DEAS, STL and OBJ files)
     except Exception:
         pass
     return out

@@ -1,19 +1,20 @@
 # One plate with a hole, pulled; the same simulation on three meshes you control -- and how much the mesh changes the answer.
 #
 # A simulation does not solve the shape, it solves the mesh made of it, so a number such as the peak stress belongs to the mesh as much as to the part.  Here the plate has a hole, which makes the
-# stress pile up at its edge, and the plate is meshed three ways with mesh_volume, which the analyses take in place of the body (static_analysis(mesh, ...)):
+# stress pile up at its edge, and the plate is meshed three ways with mesh_tet4, which the analyses take in place of the body (static_analysis(mesh, ...)):
 #
-#   coarse   tetrahedra 6 mm everywhere                                 few elements; the plate is 6 mm thick, so one of them fits across it
+#   coarse   tetrahedra 6 mm everywhere                                 few elements; the plate is 6 mm thick, so the mesh is fitted to it with two layers of 3 mm across
 #   uniform  tetrahedra 2 mm everywhere                                 resolved everywhere, and the whole plate pays for it
 #   graded   1 mm at the hole growing to 3 mm away from it             the elements are where the stress is: about half as many as the uniform one
 #
 # The output prints, for each mesh, its elements, the peak von Mises stress and the peak displacement, and the peak stress a textbook gives for a plate with a hole (Peterson's stress
-# concentration factor, from the width of the plate and the diameter of the hole).  Look at the displacement first: the coarse mesh has a peak stress that is far off (about 150 % of the textbook's), and a plate
-# that bends several times too much -- the mistake a coarse mesh makes without saying so.  The other two agree on the displacement and are close to the textbook on the stress (the peak of
+# concentration factor, from the width of the plate and the diameter of the hole).  Look at the peak stress first: the coarse mesh reads about seven tenths of the textbook's (71 %) -- a hole only a few
+# elements round loses its stress concentration -- while the plate bends the same as in the other two meshes: the mistake a coarse mesh makes without saying so.  The other two agree on the displacement and are close to the textbook on the stress (the peak of
 # a mesh of tetrahedra is the stress of one element, which is why the graded mesh, with the smallest elements at the hole, is a little higher than the uniform one).  The result card's
 # Elements button shows the tetrahedra that were solved (small at the hole in the graded one).
 #
-# Try: element_size=3 in `coarse` (the displacement comes right), or element_size=4 (the displacement is right and the peak stress 17 % low), or wall_size=0.6 in `graded` (more elements at the hole, the peak settles), or growth_rate=1.3 (the mesh stays fine
+# Try: element_size=4 in `coarse` (5,676 elements, the peak stress 84 % of the textbook's) or element_size=3 (9,678 elements, 92 %: the peak climbs toward the textbook's as the elements get smaller, and
+# only the finer meshes settle it), or wall_size=0.6 in `graded` (more elements at the hole, the peak settles), or growth_rate=1.3 (the mesh stays fine
 # for longer away from the hole).  Docs: docs/analysis.md ("A mesh of your own", "How far the numbers can be trusted is the mesh's"), docs/meshing.md.
 from fieldes import *
 
@@ -27,9 +28,9 @@ hole = cylinder(hole_radius, thickness * 3, position=(0, 0, 0))      # (through 
 plate = difference(box((width, height, thickness), position=(0, 0, 0)), hole)
 
 # the three meshes: the same plate, the same material, the same supports and loads -- only the mesh differs
-coarse = mesh_volume(plate, element_size=6.0)
-uniform = mesh_volume(plate, element_size=2.0)
-graded = mesh_volume(plate, element_size=graded_size(hole, wall_size=1.0, growth_rate=1.5, max_size=3.0))
+coarse = mesh_tet4(plate, element_size=6.0)
+uniform = mesh_tet4(plate, element_size=2.0)
+graded = mesh_tet4(plate, element_size=graded_size(hole, wall_size=1.0, growth_rate=1.5, max_size=3.0))
 
 held = box((2, height + 2, thickness + 2), position=(-width / 2, 0, 0))           # the end that is held
 pulled = box((2, height + 2, thickness + 2), position=(width / 2, 0, 0))          # the end that is pulled, along the plate

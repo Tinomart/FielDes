@@ -24,7 +24,7 @@ view.set_quality(8)
 
 ledge = union(box((10, 40, 40), position=(5, 20, 20)), box((20, 40, 5), position=(20, 20, 22.5)))
 block = box((40, 20, 30), position=(70, 10, 15))
-hole = rotate_x(cylinder(5, 30, position=(70, 15, -25)), math.pi / 2)
+hole = rotate_x(cylinder(5, 30, position=(70, 15, -10)), math.pi / 2)
 part = union(ledge, difference(block, hole))
 
 print('BY HAND: gusset +5083 mm^3 (a straight prism would be 8000), teardrop -%.1f mm^3' % ((1 - math.pi / 4) * 25 * 20))

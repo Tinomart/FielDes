@@ -204,19 +204,35 @@ def _union_box(shapes, pad=0.0):
     return (tuple(min(float(b[0][k]) for b in boxes) - pad for k in range(3)), tuple(max(float(b[1][k]) for b in boxes) + pad for k in range(3)))
 
 
+def _distance_follows(out, combine, shapes):
+    """ What a shape that was made of others carries of THEIR exact distances (an optimized part, an imported part, a part with its faces dragged: see fields._dist): the same combination of them,
+        made when a blend, a smoothing or an offset asks for the distance.  Nothing is made here """
+    held = [s for s in shapes if isinstance(s, Shape)]
+    if out is not None and any(getattr(s, '_distance_of', None) is not None for s in held):
+        from fieldes.stdlib.transforms import _lazy_once
+        from fieldes.stdlib.fields import _dist
+        out._distance_of = _lazy_once(lambda: combine(*[_dist(s) for s in shapes]))
+    return out
+
+
 def union(a, *args, radius=0):
     """ The union of any number of shapes.  radius (mm, default 0: a sharp union) blends the surfaces where they meet
         with a smooth transition of that radius, so parts that do not quite fit together are joined by a fillet --
-        a lattice and the body it is added to, a rib and a plate.  It works on any field, lattices included.
+        a lattice and the body it is added to, a rib and a plate.  It works on any field, lattices included, and it
+        blends their DISTANCES: a part whose field is not a distance (an optimized part: a density) is blended by its
+        exact distance, so the radius is the radius.
         (A radius that is a field makes a blend that varies.) """
+    shapes = (a,) + args
     if radius is not None and not (isinstance(radius, (int, float)) and radius == 0):
+        from fieldes.stdlib.fields import _dist
         a = Shape.wrap(a)
-        out = a
+        out = _dist(a)
         for b in args:
-            out = _round_union(out, Shape.wrap(b), radius)
+            out = _round_union(out, _dist(Shape.wrap(b)), radius)
         pad = abs(float(radius)) if isinstance(radius, (int, float)) else None
         return _boxed(out, _union_box((a,) + args, pad) if pad is not None else None, (a,) + args)
-    return _boxed(functools.reduce(_prev_union, args, a), _union_box((a,) + args), (a,) + args)
+    out = _boxed(functools.reduce(_prev_union, args, a), _union_box((a,) + args), (a,) + args)
+    return _distance_follows(out, lambda first, *rest: functools.reduce(_prev_union, rest, first), tuple(Shape.wrap(s) for s in shapes))
 
 _prev_intersection = intersection
 def intersection(a, *args):
@@ -228,13 +244,15 @@ def intersection(a, *args):
         hi = tuple(min(float(b[1][k]) for b in boxes) for k in range(3))
         if all(lo[k] <= hi[k] for k in range(3)):
             _boxed(out, (lo, hi), (a,) + args)
-    return out
+    return _distance_follows(out, lambda first, *others: functools.reduce(_prev_intersection, others, first), tuple(Shape.wrap(s) for s in (a,) + args))
 intersection.__doc__ = _prev_intersection.__doc__
 
 def difference(a, b, *rest):
     """ Subtracts any number of shapes from the first argument
     """
-    return intersection(a, inverse(union(b, *rest)))
+    out = intersection(a, inverse(union(b, *rest)))
+    wrapped = tuple(Shape.wrap(s) for s in (a, b) + rest)
+    return _distance_follows(out, lambda first, *others: _prev_intersection(first, inverse(functools.reduce(_prev_union, others[1:], others[0]))), wrapped)
 
 
 # What goes into each input of these, for the menus that write the call from the models selected (see fieldes.kinds.slot): the body is the first model selected, whatever it is, and a field selected

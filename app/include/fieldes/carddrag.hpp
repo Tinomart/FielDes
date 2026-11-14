@@ -41,6 +41,13 @@ public:
     /*  The card, put back where the user left it (and kept inside the viewport)  */
     void restore();
 
+    /*  Cards do not overlap (H184, the user, 2026-11-12: "Every card should have collision ... if there is no space, where it would spawn, then it should spawn in the closest area"):
+     *  the cards of one viewport -- the others that are shown there, and the rectangles in the parent's property `fixedCardRects` (the legends the viewport draws itself) -- are
+     *  obstacles.  A card that is dragged or sized stops at them; `settle` puts a card that lies over one at the nearest place that is free (when there is none it stays); `settleAll`
+     *  does it for every card of `parent` (a legend came or went)  */
+    static void settle(QWidget* card);
+    static void settleAll(QWidget* parent);
+
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
 
@@ -53,6 +60,7 @@ private:
     void layoutInParent();
     void remember();
     void tameLabels();
+    void scheduleSettle();
 
     QWidget* m_card;
     QWidget* m_handle;
@@ -65,6 +73,8 @@ private:
     bool m_handlePressed = false;
     bool m_dragged = false;
     bool m_restored = false;
+    bool m_settleQueued = false;
+    QRect m_validRect;              // (where the card last was while it did not lie over another one: a drag that would go over one slides along its edge from there)
     double m_fx = 0, m_fy = 0;      // where the card is, along the free space of the viewport (0: left / top, 1: right / bottom)
 };
 

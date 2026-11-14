@@ -14,7 +14,7 @@ def worst(vs, fn):
     return max(abs(fn(v)) for v in vs)
 
 try:
-    diff = difference(cylinder(5, 10), sphere(6, position=(3, 0, 8)))
+    diff = difference(cylinder(5, 10, position=(0, 0, 5)), sphere(6, position=(3, 0, 8)))          # (a model stands by its position, its middle: the cylinder is from z = 0 to z = 10)
     t = time.time()
     e = edge_at(diff, (5, 0, 2.34))
     dt = time.time() - t
@@ -31,8 +31,8 @@ except Exception:
     traceback.print_exc(); bad.append('cyl - sphere raised')
 
 try:
-    c1 = cylinder(4, 20)
-    c2 = cylinder(3, 30, position=(0, 0, -5), rotation=(0, 90, 0))
+    c1 = cylinder(4, 20, position=(0, 0, 10))
+    c2 = cylinder(3, 30, position=(0, 0, 10), rotation=(0, 90, 0))
     cross = union(c1, c2)
     t = time.time()
     e = edge_at(cross, (4, 0, 13.0))
@@ -50,7 +50,7 @@ except Exception:
 
 try:
     base = box((20, 20, 5), position=(0, 0, -2.5))
-    u = union(base, cylinder(4, 10))
+    u = union(base, cylinder(4, 10, position=(0, 0, 5)))
     e = edge_at(u, (4, 0, 0))
     check('union bottom rim is still the exact circle', getattr(e, '_edge_circle', None) is not None)
 except Exception:

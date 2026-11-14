@@ -46,7 +46,9 @@ for k, (az, ay) in enumerate(turns):
     behind, ahead = run_length(res, (cx, cy, cz), n, 3.0, 6000)
     t.near('%s: the wall at its middle, measured along its normal (0.8 asked)' % name, behind + ahead, 0.8, 0.04, ' mm')
     added, removed, _ = changed_volumes(turned, res, lo, hi, n_coarse=80000, n_dense=80000)
-    t.near('%s: the material added (0.2 x 16 x 24 = 76.8)' % name, added, 76.8, 9.0, ' mm3')
+    # (by hand: docs/manufacturing.md says min_wall offsets the surface by what the wall lacks to the limit AND A MARGIN OF 4 % of it, so that the check passes it: the wall is raised from 0.6 to 0.8 x 1.04 = 0.832 mm over
+    # 16 x 24 mm, 0.232 x 16 x 24 = 89.1 mm3 (the sums without the margin, 0.2 x 16 x 24 = 76.8, is the bottom of what is measured; the turned walls measured 83.8 to 89.9))
+    t.near('%s: the material added (0.8 x 1.04 - 0.6 = 0.232 x 16 x 24 = 89.1)' % name, added, 89.1, 9.0, ' mm3')
     cmp_ = compare(turned, res, lo, hi, n=80000)
     t.check('%s: no piece of added material floats beside the wall' % name, not floating_clusters(cmp_), '', 0)
     after = manufacturing_analysis(res, constraints=[rule], samples=3000)

@@ -191,6 +191,12 @@ def _prepare_imports():
         loaded again at every run, so that what was edited in another editor tab applies '''
     import os
     import sys
+    # (the packages the user installed with `pip install` in the console, and the environment chosen with `env use`: see pyenv.py)
+    try:
+        from fieldes import pyenv
+        pyenv.activate()
+    except Exception:
+        pass
     here = os.path.normcase(os.path.abspath(os.getcwd()))
     if here not in [os.path.normcase(os.path.abspath(p)) for p in sys.path if p]:
         sys.path.append(os.getcwd())

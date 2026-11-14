@@ -22,7 +22,7 @@ t = Table("h8_colours_of_added_and_cut: one part that needs a gusset under a led
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 ledge = union(box((10, 30, 30), position=(5, 15, 15)), box((16, 30, 4), position=(18, 15, 17)))
-block = difference(box((40, 30, 30), position=(66, 15, 15)), rotate_x(cylinder(5.0, 40, position=(66, 15, -35)), math.pi / 2))
+block = difference(box((40, 30, 30), position=(66, 15, 15)), rotate_x(cylinder(5.0, 40, position=(66, 15, -15)), math.pi / 2))
 part = union(ledge, block)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 fill = manufacturing_constraint(overhang=45, overhang_fix='fill', region=box((41, 40, 41), position=(15.5, 15, 15.5)))
@@ -37,7 +37,7 @@ print(res)
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them
 t.check('both kinds of change were made: material added (%.0f mm3) and cut (%.0f mm3)' % (res.added, res.removed), res.added > 800 and res.removed > 80, '+%.0f -%.0f' % (res.added, res.removed), '+ > 800, - > 80')
 cm = res.change_map
-gusset = (18.0, 15.0, 7.0)                                                            # (on the face of the gusset: 8 mm from the tip of the ledge, 8 mm down)
+gusset = (18.0, 15.0, 9.0)                                                            # (inside the gusset: its face is at z = 7 there, 8 mm from the tip of the ledge and 8 mm down; a point on the face itself is on the edge of what was added)
 apex = (66.0, 15.0, 15.0 + 5.0 * math.sqrt(2.0) - 0.02)                               # (just under the apex of the teardrop, inside what was the block)
 wall = (66.0, 15.0, 30.0)                                                             # (the top of the block: the part's own surface, nothing changed there)
 face = (0.0, 15.0, 22.0)

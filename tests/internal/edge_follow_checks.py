@@ -45,7 +45,7 @@ def check(label, ok, extra=''):
 # ---- a cylinder whose radius is a number of the script: its rim, a circle
 r = number(5.0)
 h = number(10.0)
-cyl = cylinder(r, h)
+cyl = cylinder(r, h, position=(0, 0, h / 2))          # (a model stands by its position, its middle: from z = 0 to z = h)
 t = time.time()
 e = edge_at(cyl, (5, 0, 10))
 print('edge_at of the rim: %.2f s, %d points, circle %s' % (time.time() - t, len(e.points), getattr(e, '_edge_circle', None) is not None))
@@ -73,7 +73,7 @@ retune(w, 10.0)
 
 # ---- an edge that is neither a line nor a circle: a cylinder minus a sphere, the sphere's radius a number
 s = number(6.0)
-diff = difference(cylinder(5, 10), sphere(s, position=(3, 0, 8)))
+diff = difference(cylinder(5, 10, position=(0, 0, 5)), sphere(s, position=(3, 0, 8)))
 t = time.time()
 curve = edge_at(diff, (5, 0, 2.34))
 print('edge_at of the curve of a cylinder and a sphere: %.2f s, %d points' % (time.time() - t, len(curve.points)))

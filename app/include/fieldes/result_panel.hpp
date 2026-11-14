@@ -22,6 +22,7 @@ of the License, or (at your option) any later version.
 
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QSlider;
 class QToolButton;
 
@@ -36,12 +37,33 @@ public:
     void setRange(float lo, float hi, const QString& map);
     // The geometry change of a shell has the supports of a print as one more class (amber), when the scene has them
     void setSupports(bool on);
+    // H191 (the user, 2026-11-13: "Legend bounds should be adjustable in the legend"): the lowest and the highest number of the scale are typed over by a click on them; `manual` says the
+    // ends are the ones typed (an "Auto" is drawn that gives the values' own ends back)
+    void setManual(bool manual);
+    /*  The rectangle of the lowest or the highest number, in the bar's own coordinates (for the scripted tests)  */
+    QRect endLabel(bool high) const { return tickLabel(high ? 4 : 0); }
     QSize sizeHint() const override { return QSize(150, 150); }
+signals:
+    void rangeEdited(float lo, float hi);       // (the ends typed, in the unit the numbers are shown in)
+    void rangeAuto();                           // (back to the ends the values have)
 protected:
     void paintEvent(QPaintEvent* e) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void leaveEvent(QEvent* e) override;
+    bool eventFilter(QObject* o, QEvent* e) override;
+    bool scaleShown() const { return m_map != "change" && m_map != "violation"; }
+    QRect barRect() const;
+    QRect tickLabel(int k) const;               // (the rectangle of the number at tick k: 0 the lowest, 4 the highest)
+    QRect autoPill() const;
+    void startEdit(bool high);
+    void commitEdit();
     float m_lo = 0, m_hi = 1;
     QString m_map = "turbo";
     bool m_supports = false;
+    bool m_manual = false;
+    bool m_editHigh = false;
+    QLineEdit* m_edit = nullptr;
 };
 
 /*  The residual of a solve after every iteration, relative to the load, on a log scale: the curve of the convergence (the tester of version 1.2.0: "residual plot missing")  */
@@ -70,6 +92,7 @@ public:
         QStringList labels;          // one per field
         int current = 0;
         float lo = 0, hi = 1;        // the current field's colour range
+        bool rangeManual = false;    // the ends were typed in the legend (H191)
         QString map = "turbo";
         bool hasDeform = false;
         float scale = 0, autoScale = 1;
@@ -91,6 +114,8 @@ public:
         bool supports = false;           // the scene has the supports of a print (a body of its own, amber): one more class of the legend, and no card of its own
     };
     void setState(const State& s);
+    // The lowest or the highest number of the colour scale, as a rectangle of the screen (for the scripted tests)
+    QRect endLabelGlobal(bool high) const;
     // The width the name of the field shown needs, so that a long one (in another language) is not cut off at the card's usual width
     int labelsWidth() const;
 
@@ -101,6 +126,8 @@ public:
 
 signals:
     void channelChanged(int index);
+    void rangeEdited(float lo, float hi);       // (H191: the ends typed in the legend, in the unit shown)
+    void rangeAuto();
     void deformChanged(float scale);
     void elementsToggled(bool on);
     void stepChanged(int index);

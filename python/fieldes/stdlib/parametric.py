@@ -661,7 +661,7 @@ def parametric_optimization(analysis, variables, conditions=(), max_evaluations=
                       (keep_below, keep_above, keep_between, or one comparison written whole, optimization_condition(max_von_mises_1 <= 90)) and at most one goal,
                       minimize(x) or maximize(x), x a result of the analysis or a formula of them (mass_1 + 0.01 * compliance_1).  Without a goal the search stops at the first
                       design that keeps the conditions
-        max_evaluations  how many designs it tries at most (default 20 + 10 for each variable)
+        max_evaluations  how many designs it tries at most (default 20; with more than 18 variables, the number of variables and 2)
         tolerance     it stops when the designs it is looking at are this close, of the ranges (default 0.2 %)
         apply         True writes the best numbers into the var()s of the text when the run is over (otherwise they hold for this run only)
 
@@ -688,7 +688,7 @@ def parametric_optimization(analysis, variables, conditions=(), max_evaluations=
         raise ParametricError("parametric_optimization: say what the design is for -- conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), ...]")
     vars_ = _variables(variables, host)
     d = len(vars_)
-    budget = int(max_evaluations) if max_evaluations else 20 + 10 * d
+    budget = int(max_evaluations) if max_evaluations else max(20, d + 2)       # (H185, the user, 2026-11-12: "The default iteration count of any optimization (topology and parametric) should be 20, not 100": it was 20 + 10 for each variable)
     if budget < d + 2:
         raise ParametricError('parametric_optimization: max_evaluations must be at least %d for %d variable(s)' % (d + 2, d))
     original = [v.start for v in vars_]
