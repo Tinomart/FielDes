@@ -49,13 +49,18 @@ intersection of Cartesian cells with the geometrical boundary"), made on the bod
    of the surface, inside it or just outside, is on it, and the crossing of a link that ends in it is that node, so that no cell has an edge shorter than a tenth of a cube.
 3. **The cut cubes**: a cube the surface cuts is the **polyhedron of what is inside it**: the part of each of its six faces that is inside (a polygon of the corners that are inside and the crossings of its sides; when
    two opposite corners are inside the field at the middle of the face says whether they are joined), and the polygon of the surface between the crossings. Its nodes are the corners that are inside and the crossings, so every
-   node of the boundary lies on the surface (to a tenth of a cube). It is named by what it is made of: 8 nodes and six quadrilaterals a hexahedron, 4 nodes a tetrahedron, 6 nodes with two triangles a prism, 5 nodes with a quadrilateral
+   node of the boundary lies on the surface (step 6 puts the nodes the snap took onto it). It is named by what it is made of: 8 nodes and six quadrilaterals a hexahedron, 4 nodes a tetrahedron, 6 nodes with two triangles a prism, 5 nodes with a quadrilateral
    a pyramid, anything else a polyhedron (a cube cut at two places that do not meet is two cells).
 4. **The edges** (Salome's "Implement Edges", on): where the cut across a face of the grid joins two crossings whose surface normals differ by more than 40 degrees and the middle of the straight line between them is far
    from the surface -- a corner, not a curve -- a node is put on the edge of the body, where the two sides of the cut meet in the plane of the face, and the polygon of the surface in the cell is cut in two along the line between the
    two such nodes. An edge that lies on the planes of the grid needs none; one that does not (a rim of a tilted cylinder, a turned box) is followed.
-5. **The threshold**: a cut cube is made only when what is inside holds more than 1 / `threshold` of it. The default is 10 (Salome's is 4: with the nodes within a tenth of a cube of the surface on it the cut cells are well shaped,
-   and a quarter leaves the corners of the staircase round a hole open). `threshold=1e9` makes every one, slivers included.
+5. **The threshold**: a cut cell that holds no more than 1 / `threshold` of a cube is **joined** to the cell it shares the most face with (a whole cube or another cut cell, not past two cubes when there is another),
+   so that no cell is smaller. The default is 10, a tenth (Salome's is 4). Salome leaves such a cell out and the faces of its neighbours become the boundary there: a staircase that lay up to 0.65 of a cube off the surface
+   on the real bracket (4 mm), in faces that lean up to 45 degrees from it; joining keeps the polygon of the surface the small cell had. `threshold=4` makes no cell smaller than a quarter of a cube and the volume
+   ratio of neighbouring cells at most 5, at the price of more joined cells, which are polyhedra that are not convex (the worst orthogonal quality of a plate with a hole 0.50, where 10 gives 0.89). `threshold=1e9`
+   keeps every cut cell as a cell of its own, slivers included. A cut cell that is a wedge (scaled Jacobian under 0.2) is joined too, whatever it holds.
+6. **The nodes on the surface**: the nodes of the grid that step 2 took for on the surface (within a tenth of a cube of it) are put on it, along the field (a node whose move would bend a whole cube, scaled Jacobian under 0.3,
+   stays), so that every node of the boundary is on the surface; a face of no area (three nodes on one straight line) is taken out, its middle node going into the faces that have its long edge.
 
 The polyhedra are in **VTK** (cell type 42), **Fluent** and **OpenFOAM** (face-based formats), and the surface formats write the boundary; Gmsh, Abaqus, Nastran and I-DEAS have no polyhedron and refuse such a mesh with the
 way out (a threshold that makes none, or `mesh_tet4`). Pyramids are in Gmsh, VTK, Abaqus, Nastran and Fluent. The quality report gives the polyhedra their skewness (by the angles of their faces), aspect ratio and orthogonal

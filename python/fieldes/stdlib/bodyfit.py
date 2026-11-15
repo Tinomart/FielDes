@@ -10,12 +10,15 @@ A Cartesian grid fitted to the body (H193: the user, 2026-11-13, "For orientatio
                   inside and the crossings of its sides -- when two opposite corners are inside the field at the middle of the face says whether they are joined) and the polygon of the surface between the
                   crossings (the loops that the cuts across the faces make).  The cell is named by what it is made of: 8 nodes and six quadrilaterals a hexahedron, 4 nodes a tetrahedron, 6 nodes with two
                   triangles a prism, 5 nodes with a quadrilateral a pyramid, and anything else a polyhedron
-  4. the threshold a cut cell that holds no more than a tenth of a cube is not made (Salome's "Size Threshold", whose default is 4: with the nodes within a tenth of a cube of the surface on it the cut cells
-                  are well shaped, and a quarter would leave the corners of the staircase round a hole open); its neighbours' faces are the boundary there.  threshold=1e9 keeps every cut cell
+  4. the threshold a cut cell that holds no more than 1 / threshold of a cube (a tenth by default; Salome's "Size Threshold" has a quarter) is JOINED to the cell it shares the most face with (the cell that Salome leaves out
+                  opens the surface there: the faces of its neighbours become the boundary, a staircase up to a third of a cube off it, in faces that lean up to 45 degrees from it); the faces the two cells shared are
+                  inside the joined cell, the polygon of the surface that the small cell had stays the boundary, and no cell holds less than the threshold.  threshold=1e9 keeps every cut cell as it is
+  4b. the nodes  a node of the grid that the snap took for ON the surface (a tenth of a cube from it, inside or outside) is put on it (_settle): the nodes of the boundary are exactly on the surface, and the cells that
+                  hold the node follow (a cube with a corner moved by a tenth of its side keeps a scaled Jacobian of about 0.8)
 
   5. quanta      (element='hex', Salome's Quanta) no cut cell is made at all: a cube that the surface cuts is a whole cube of the grid when what is inside it holds at least `quanta` of it, else left out
 
-The nodes of the boundary are on the surface (to a tenth of a cube: the nodes the snap took onto it, and no farther than the cut cells that the threshold leaves out), the inside is a grid of perfect cubes.  A sharp edge that runs through the cut cells is followed (Salome's "Implement Edges", on by default here): where the cut
+The nodes of the boundary are ON the surface (the nodes the snap took for on it are put there, step 4b), the inside is a grid of cubes.  A sharp edge that runs through the cut cells is followed (Salome's "Implement Edges", on by default here): where the cut
 across a face of the grid joins two crossings whose surface normals differ by more than `edge_angle`, a node is put on the edge -- where the tangents of the two sides, in the plane of the face, meet --
 and the polygon of the surface in the cell is cut in two along the line between the two such nodes of the cell.
 
@@ -48,7 +51,7 @@ def _dot(a, b):
 class Fit(object):
     ''' The grid, the field at its nodes, the crossings, and the cells '''
 
-    def __init__(self, body, lo, hi, size, threshold=10.0, edges=True, edge_angle=40.0, quanta=None):
+    def __init__(self, body, lo, hi, size, threshold=10.0, edges=True, edge_angle=40.0, quanta=None, merge=True):
         from fieldes.stdlib import meshing as M
         self.M = M
         self.body = body
@@ -68,6 +71,7 @@ class Fit(object):
         self.n = [n[a] + 2 for a in range(3)]                  # (one cube more all round: the surface may lie on the box)
         self.o = [float(lo[a]) - self.d[a] for a in range(3)]
         self.threshold = float(threshold)
+        self.merge = bool(merge)                                # (a cut cell that is small is joined to a neighbour; False leaves it out, as Salome does)
         self.edges = bool(edges)
         self.cos_edge = math.cos(math.radians(float(edge_angle)))
         self.pos = []
@@ -77,6 +81,7 @@ class Fit(object):
         self.gradient_length = {}
         self.edge_node = {}                                   # (a node on an edge of the body that a cut across a face of the grid was bent at)
         self.edge_ids = set()
+        self.edge_axis = {}                                   # (the axis the face of the grid that holds an edge node is perpendicular to)
 
     def gid(self, i, j, k):
         return (i * (self.n[1] + 1) + j) * (self.n[2] + 1) + k
@@ -153,10 +158,18 @@ class Fit(object):
             self._normals()
         out = []
         self.dropped = 0
+        self.merged = 0                                       # (the small cut cells that were joined to the cell they share their largest face with)
+        self.flat = 0                                         # (the pieces of a cut cube that have no thickness: the surface lies on a face of the cube)
+        self.settled = 0                                      # (the nodes of the grid that were put on the surface)
         self.whole = 0                                        # (the cubes that lie wholly in the body)
+        hexes = []
+        pieces = []                                           # (the faces and the volume of every piece the surface leaves in a cut cube, when cut cells are made)
         for ids, s in cells:
             if s == 8:
-                out.append(('hex8', ids))
+                if self.quanta is None and self.merge:
+                    hexes.append(ids)
+                else:
+                    out.append(('hex8', ids))
                 self.whole += 1
                 continue
             if self.quanta is not None:
@@ -171,11 +184,284 @@ class Fit(object):
                 continue
             for faces in self._cut_cell(ids):
                 volume = self.volume(faces)
-                if not volume > cube / self.threshold or not volume > 1e-9 * cube:
-                    self.dropped += 1
+                if not volume > 1e-9 * cube:
+                    self.flat += 1                            # (a flat piece: the surface lies on a face of the cube and leaves no thickness)
                     continue
-                out.append(self._named(faces))
+                if self.merge:
+                    pieces.append((faces, volume))
+                elif volume > cube / self.threshold:
+                    out.append(self._named(faces))
+                else:
+                    self.dropped += 1
+        if self.quanta is None and self.merge:
+            self._settle(values, eps, hexes, pieces)
+            self._settle_edges(pieces)
+            out.extend(self._join(hexes, pieces, cube))
         self.cells = out
+        return out
+
+    def _area(self, face):
+        """ The area of a face (the nodes in order): half the length of the sum of the cross products of the fan """
+        pos = self.pos
+        p0 = pos[face[0]]
+        sx = sy = sz = 0.0
+        for m in range(1, len(face) - 1):
+            p1, p2 = pos[face[m]], pos[face[m + 1]]
+            ux, uy, uz = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+            vx, vy, vz = p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]
+            sx += uy * vz - uz * vy
+            sy += uz * vx - ux * vz
+            sz += ux * vy - uy * vx
+        return 0.5 * math.sqrt(sx * sx + sy * sy + sz * sz)
+
+    def _settle(self, values, eps, hexes, pieces):
+        """ The nodes of the grid that the snap took for ON the surface (within a tenth of a cube of it, inside or outside) are put ON it: each goes along the direction of the field by its value, three steps, never farther
+            than the snap (a tenth of a cube) from where it was.  The cells round it follow (a cube with a corner moved by a tenth of its side is a hexahedron whose scaled Jacobian is still about 0.8); a node whose
+            move leaves a whole cube with a scaled Jacobian under 0.3 stays where it was.  Without this the nodes of the skin stood up to a tenth of a cube off the surface (0.37 mm of 4 mm on the bracket) while the
+            nodes of the tetrahedra are within a fiftieth of an element of it.  It is done before the small and the wedge-shaped cut cells are joined, which then see the cells as they are """
+        grid_nodes = (self.n[0] + 1) * (self.n[1] + 1) * (self.n[2] + 1)
+        used = set()
+        for ids in hexes:
+            used.update(ids)
+        for faces, _ in pieces:
+            for fc in faces:
+                used.update(fc)
+        todo = [g for g in used if g < grid_nodes and self.noise < abs(values[g]) <= eps]
+        if not todo:
+            return
+        h = 0.01 * self.size
+        start = {g: self.pos[g] for g in todo}
+        cur = dict(start)
+        for _ in range(3):
+            pts = []
+            for g in todo:
+                p = cur[g]
+                pts.append(p)
+                for axis in range(3):
+                    for sign in (-h, h):
+                        q = list(p)
+                        q[axis] += sign
+                        pts.append(tuple(q))
+            vals = self.M._eval(self.body, pts)
+            for m, g in enumerate(todo):
+                v = vals[7 * m:7 * m + 7]
+                gx, gy, gz = [(v[2 + 2 * c] - v[1 + 2 * c]) / (2.0 * h) for c in range(3)]
+                ln2 = gx * gx + gy * gy + gz * gz
+                if ln2 < 1e-12:
+                    continue
+                p = cur[g]
+                step = v[0] / ln2
+                q = (p[0] - step * gx, p[1] - step * gy, p[2] - step * gz)
+                if math.dist(q, start[g]) <= eps * 1.5:
+                    cur[g] = q
+        moved = set(g for g in todo if cur[g] != start[g])
+        flat = array('d')
+        for p in self.pos:
+            flat.extend(p)
+        for g in moved:
+            flat[3 * g:3 * g + 3] = array('d', cur[g])
+        incident = {}
+        for hid, ids in enumerate(hexes):
+            for g in ids:
+                if g in moved:
+                    incident.setdefault(g, []).append(hid)
+        for _ in range(3):
+            bad = set()
+            seen = set()
+            for g in moved:
+                for hid in incident.get(g, ()):
+                    if hid in seen:
+                        continue
+                    seen.add(hid)
+                    if self.M._cell_jacobian(flat, 'hex8', hexes[hid]) < 0.3:
+                        bad.update(x for x in hexes[hid] if x in moved)
+            if not bad:
+                break
+            for x in bad:                                     # (a node whose move leaves a whole cube bent stays where it was)
+                flat[3 * x:3 * x + 3] = array('d', start[x])
+                moved.discard(x)
+        for g in moved:
+            self.pos[g] = cur[g]
+        self.settled = len(moved)
+
+    def _settle_edges(self, pieces):
+        """ The nodes on an edge of the body (made by _edge_node in the plane of a face of the grid, where the tangent lines of the two sides of the cut meet) are put ON the surface: each goes along the field's direction
+            in that plane (the grid face stays flat) by its value, three steps, never more than a tenth of a cube.  The tangent lines meet a little off a curved edge (0.03 of a cube on a tilted cylinder) """
+        used = set()
+        for faces, _ in pieces:
+            for fc in faces:
+                used.update(fc)
+        todo = [g for g in used if g in self.edge_axis]
+        if not todo:
+            return
+        h = 0.01 * self.size
+        limit = 0.1 * self.size
+        start = {g: self.pos[g] for g in todo}
+        cur = dict(start)
+        for _ in range(3):
+            pts = []
+            for g in todo:
+                p = cur[g]
+                pts.append(p)
+                for axis in range(3):
+                    for sign in (-h, h):
+                        q = list(p)
+                        q[axis] += sign
+                        pts.append(tuple(q))
+            vals = self.M._eval(self.body, pts)
+            for m, g in enumerate(todo):
+                v = vals[7 * m:7 * m + 7]
+                grad = [(v[2 + 2 * c] - v[1 + 2 * c]) / (2.0 * h) for c in range(3)]
+                grad[self.edge_axis[g]] = 0.0
+                ln2 = grad[0] * grad[0] + grad[1] * grad[1] + grad[2] * grad[2]
+                if ln2 < 1e-12:
+                    continue
+                p = cur[g]
+                step = v[0] / ln2
+                q = (p[0] - step * grad[0], p[1] - step * grad[1], p[2] - step * grad[2])
+                if math.dist(q, start[g]) <= limit:
+                    cur[g] = q
+        for g in todo:
+            self.pos[g] = cur[g]
+
+    def _join(self, hexes, pieces, cube):
+        """ The cells when the small cut cells are JOINED to a neighbour instead of being left out.  A cut cell that holds no more than 1 / threshold of a cube is made one cell with the cell it shares its largest face
+            with (a whole cube, or another cut cell: the one with the larger volume; again, while the joined cell is still that small): the faces they share are inside the new cell and go, the others stay, so the
+            polygon of the surface that the small cell had stays on the boundary and the surface is not opened up where the small cell was (Salome's threshold leaves such a cell out and the faces of its neighbours
+            become the boundary: a staircase that lies up to a third of a cube off the surface, in faces that lean up to 45 degrees from it).  A cut cell with no neighbour at all is left out.  Returns the (kind, nodes) of all the cells """
+        limit = cube / self.threshold
+        count = len(hexes)
+        faces_of = []
+        volume = []
+        for ids in hexes:
+            faces_of.append([tuple(ids[c] for c in quad) for quad in FACE])
+            volume.append(cube)
+        for faces, v in pieces:
+            faces_of.append([tuple(f) for f in faces])
+            volume.append(self.volume(faces))                 # (again: the nodes that were put on the surface have moved)
+        # (a face of no area: three nodes on one straight line, which is what a triangle of the surface becomes when a node of the grid is put on the straight crease between two crossings.  It goes, and its middle
+        # node is added to the faces that have its long edge, in this cell and in the one next to it, so that the cells stay closed and no face has no area)
+        pos = self.pos
+        changed = set()
+        for _ in range(4):
+            wanted = {}
+            for i, fl in enumerate(faces_of):
+                for fi, f in enumerate(fl):
+                    if len(f) == 3:
+                        lens = [(math.dist(pos[f[k]], pos[f[(k + 1) % 3]]), k) for k in range(3)]
+                        longest, k = max(lens)
+                        if longest > 0.0 and self._area(f) < 1e-3 * longest * longest:
+                            p, q = f[k], f[(k + 1) % 3]
+                            wanted[(p, q) if p < q else (q, p)] = (f[(k + 2) % 3], i, fi)
+            if not wanted:
+                break
+            users = {}
+            for i, fl in enumerate(faces_of):
+                for fi, f in enumerate(fl):
+                    m = len(f)
+                    for k in range(m):
+                        a, b = f[k], f[(k + 1) % m]
+                        key = (a, b) if a < b else (b, a)
+                        if key in wanted:
+                            users.setdefault(key, []).append((i, fi, k))
+            inserts = {}
+            kill = set()
+            for key, (mid, i0, fi0) in wanted.items():
+                others = [u for u in users.get(key, ()) if not (u[0] == i0 and u[1] == fi0)]
+                if not others:
+                    continue
+                kill.add((i0, fi0))
+                for i, fi, k in others:
+                    f = faces_of[i][fi]
+                    if mid in f:
+                        if set(f) <= set(key) | {mid}:
+                            kill.add((i, fi))                 # (the same triangle of no area again, turned the other way: the two go)
+                        continue
+                    inserts.setdefault((i, fi), []).append((k, mid))
+            if not kill:
+                break
+            for (i, fi), lst in inserts.items():
+                f = list(faces_of[i][fi])
+                for k, mid in sorted(lst, reverse=True):
+                    f.insert(k + 1, mid)
+                faces_of[i][fi] = tuple(f)
+                changed.add(i)
+            for i in set(i for i, _ in kill):
+                faces_of[i] = [f for fi, f in enumerate(faces_of[i]) if (i, fi) not in kill]
+                changed.add(i)
+        keys = [[tuple(sorted(f)) for f in fl] for fl in faces_of]
+        holders = {}
+        for i, ks in enumerate(keys):
+            for k in ks:
+                holders.setdefault(k, []).append(i)
+        parent = list(range(len(faces_of)))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        group = {}                                            # (the faces, key -> nodes, of a cell that has been joined to another or looked at)
+        gone = set()
+
+        def faces_dict(r):
+            if r not in group:
+                group[r] = dict(zip(keys[r], faces_of[r]))
+            return group[r]
+
+        # (a cut cell that is a wedge -- a hexahedron, prism or pyramid with an edge that has all but gone, scaled Jacobian under 0.2 -- is joined as well, whatever it holds: a row of them stood along a ridge of the bracket
+        # at 2 mm, scaled Jacobian 0.05, each of a half cube)
+        flat = array('d')
+        for p in self.pos:
+            flat.extend(p)
+        poor = set()
+        for i in range(count, len(faces_of)):
+            if volume[i] > limit:
+                kind, nodes = self._named(faces_of[i])
+                if kind != 'poly' and self.M._cell_jacobian(flat, kind, nodes) < 0.2:
+                    poor.add(i)
+        for i in sorted((i for i in range(count, len(faces_of)) if volume[i] <= limit or i in poor), key=lambda i: volume[i]):
+            r = find(i)
+            force = i in poor
+            for _ in range(8):
+                if volume[r] > limit and not force:
+                    break
+                force = False
+                # (the neighbour it shares the most face with, one that does not grow past two cubes by it when there is such a neighbour: the neighbour with the larger volume let one cell take every small one
+                # along a ridge, a cell of ten cubes)
+                shared = {}
+                for k, f in faces_dict(r).items():
+                    for j in holders.get(k, ()):
+                        rj = find(j)
+                        if rj != r:
+                            shared[rj] = shared.get(rj, 0.0) + self._area(f)
+                if not shared:
+                    if volume[r] <= limit:
+                        gone.add(r)                           # (no cell next to it: it is left out)
+                    break
+                best = max(shared, key=lambda x: (volume[x] + volume[r] <= 2.2 * cube, shared[x], -volume[x]))
+                target = faces_dict(best)
+                for k, f in group.pop(r).items():
+                    if k in target:
+                        del target[k]                         # (a face the two cells shared: it is inside the joined cell now)
+                    else:
+                        target[k] = f
+                parent[r] = best
+                volume[best] += volume[r]
+                self.merged += 1
+                r = best
+        out = []
+        for i in range(len(faces_of)):
+            if find(i) != i:
+                continue
+            if i in gone:
+                self.dropped += 1
+                continue
+            if i < count and i not in group and i not in changed:
+                out.append(('hex8', hexes[i]))
+            else:
+                out.append(self._named(list(group[i].values()) if i in group else faces_of[i]))
         return out
 
     def _normals(self):
@@ -257,6 +543,7 @@ class Fit(object):
                             self.pos.append(tuple(point))
                             found = len(self.pos) - 1
                             self.edge_ids.add(found)
+                            self.edge_axis[found] = axis
         self.edge_node[ck] = found
         return found
 

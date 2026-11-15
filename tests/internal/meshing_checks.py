@@ -777,6 +777,21 @@ if mc is not None:
         qt = mt.quality()
         check('cartesian: a tilted cylinder (edges off the grid): volume within 3 %, no cell inside out, scaled Jacobian above 0.3', abs(mt.volume() - exact_t) / exact_t < 0.03 and qt.negative == 0
               and qt.metrics['scaled_jacobian'][0] > 0.3, '{:+.2f} %, {} negative, {:.3f}'.format(100 * (mt.volume() - exact_t) / exact_t, qt.negative, qt.metrics['scaled_jacobian'][0]))
+        # (H223, 2026-11-15, "MILES worse than the tet mesher": a small cut cell is JOINED to a neighbour and not left out, which opened the surface up to 0.65 of a cube; the nodes the snap took for on the surface are put ON it)
+        Pt = mt.nodes
+        skin_t = set()
+        for kind in list(mt.faces):
+            for ids in meshing._faces_of_kind(mt, kind):
+                skin_t.update(ids)
+        vt = meshing._eval(tilt, [(Pt[3 * v], Pt[3 * v + 1], Pt[3 * v + 2]) for v in sorted(skin_t)])
+        check('cartesian: a tilted cylinder: every node of the boundary is within 0.01 mm of the surface (the nodes the snap took for on it are put on it)', max(abs(v) for v in vt) < 0.01, '{:.4f} mm'.format(max(abs(v) for v in vt)))
+        vols_t = [meshing._cell_volume(Pt, kind, mt.corners(kind, i)) for kind in meshing.SOLIDS for i in range(mt.cell_count(kind))] + [meshing._poly_volume(Pt, fcs) for fcs in mt.polyhedra()]
+        check('cartesian: a tilted cylinder: no cell holds less than a tenth of a cube (the small cut cells are joined to a neighbour, not left out)', min(vols_t) >= 0.095 * mt.element_size ** 3, '{:.3f} of a cube'.format(min(vols_t) / mt.element_size ** 3))
+        mj = run('cartesian tilted cylinder, joined and left out', lambda: mesh_cartesian(tilt, 1.0, bounds=((-5.0, -9.0, -9.0), (5.0, 9.0, 9.0)), threshold=4.0))
+        if mj is not None:
+            vols_j = [meshing._cell_volume(mj.nodes, kind, mj.corners(kind, i)) for kind in meshing.SOLIDS for i in range(mj.cell_count(kind))] + [meshing._poly_volume(mj.nodes, fcs) for fcs in mj.polyhedra()]
+            check('cartesian: threshold=4 makes no cell smaller than a quarter of a cube (a tilted cylinder), the volume stays within 3 %', min(vols_j) >= 0.24 * mj.element_size ** 3 and abs(mj.volume() - exact_t) / exact_t < 0.03,
+                  '{:.3f} of a cube, {:+.2f} %'.format(min(vols_j) / mj.element_size ** 3, 100 * (mj.volume() - exact_t) / exact_t))
     # a body is meshed the same wherever it stands (found by the element types walkthrough, 2026-11-14): the volume of a cut cell was taken from the origin of the coordinates, which is the same for a closed cell and not for
     # the flat piece of two quadrilaterals that a face lying on the grid leaves in a cube -- its volume was its distance from the origin: the plate 120 mm along y got 50 such cells (13,388 mm3 for 4,498) and, with mesh_hex_quanta,
     # 50 cubes too many (+4.1 %)

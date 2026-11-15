@@ -2168,7 +2168,8 @@ def _mesh_cartesian_cells(body, core, box, sizer, threshold, layers, zones, defa
     _assign_zones(mesh, zones, default_zone, feature_angle, tolerance)
     _assign_cell_zones(mesh, cell_zones, tolerance)
     shares = ', '.join('{:,} {}'.format(mesh.cell_count(k), k) for k in SOLIDS + (POLY,) if mesh.cell_count(k))
-    notes.append('a grid of cubes of {:.4g} mm cut by the body: {}; {:,} cut cells with less than 1/{:.4g} of a cube inside are not made'.format(fit.d[0], shares, fit.dropped, threshold))
+    notes.append('a grid of cubes of {:.4g} mm cut by the body: {}; {:,} cut cells with at most 1/{:.4g} of a cube inside were joined to the cell they share the most face with{}'.format(
+        fit.d[0], shares, fit.merged, threshold, '' if not fit.dropped else ' ({:,} without a neighbour or flat were left out)'.format(fit.dropped)))
     mesh.notes = notes
     mesh.seconds = time.time() - t0
     return mesh
@@ -2259,8 +2260,11 @@ def mesh_cartesian(body, element_size=None, threshold=10.0, axes=None, zones=Non
             mesh = mesh_cartesian(part, 2.0)
 
         element_size    the edge of the cubes in mm; default: about fifteen thousand cubes
-        threshold       a cube that the surface cuts is made only when what is inside holds more than 1 / threshold of it (10 by default: a tenth of a cube; Salome's default is 4, a quarter, which leaves
-                        the corners of the staircase round a concave edge open); 1e9 makes every one
+        threshold       a cut cell that holds no more than 1 / threshold of a cube (10 by default, a tenth; Salome's default is 4, a quarter) is JOINED to the cell it shares the most face with, a whole cube or another
+                        cut cell, so that no cell is smaller; its polygon of the surface stays the boundary.  (Salome leaves such a cell out and the faces of its neighbours become the boundary: a staircase up to 0.65 of a
+                        cube off the surface, with faces that lean up to 45 degrees from it.)  4 makes no cell smaller than a quarter of a cube and the volume ratio of neighbours at most 5, at the price of more joined cells,
+                        which are polyhedra that are not convex (the worst orthogonal quality of a plate with a hole 0.50 where 10 gives 0.89); 1e9 keeps every cut cell as a cell of its own.  A cut cell that is a wedge
+                        (scaled Jacobian under 0.2) is joined whatever it holds.  The nodes the snap took for on the surface (within a tenth of a cube of it) are put on it
         axes            the grid turned, as for mesh_hex_quanta
         zones, default_zone, feature_angle, cell_zones, bounds, name   as for mesh_tet4
 
@@ -3344,7 +3348,17 @@ def _poly_metrics(P, faces):
         for k in range(n):
             a, b = fc[k], fc[(k + 1) % n]
             edges.add((a, b) if a < b else (b, a))
-        angles = _angles(P, fc)
+        corners = list(fc)
+        angles = _angles(P, corners)
+        # (a node that lies on the straight line between its two neighbours -- the cut of a cell follows a straight crease of the body through the nodes on it -- is no corner of the face: its angle of 180 degrees
+        # made a cell of a sound shape "degenerate", skewness 1, in the report of a mesh whose nodes are on a crease)
+        while len(corners) > 3:
+            k = min(range(len(corners)), key=lambda m: abs(angles[m] - 180.0))
+            if abs(angles[k] - 180.0) > 1.0:
+                break
+            del corners[k]
+            angles = _angles(P, corners)
+        n = len(corners)
         ideal = (n - 2) * 180.0 / n
         s = max((max(angles) - ideal) / (180.0 - ideal), (ideal - min(angles)) / ideal)
         worst = max(worst, s)

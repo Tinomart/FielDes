@@ -31,7 +31,7 @@ Solvers are compared by a few agreed kinds of check, and this page uses those an
 3. **A mesh convergence study**, the way the verification guides ask for it: ASME V&V 20 and the grid convergence index of Roache as set out by Celik et al., *Journal of Fluids Engineering* 130 (2008).
 4. **Closed-form solutions of the textbooks** (Timoshenko's beam, Peterson's stress concentration, Poiseuille's flow, Fourier's conduction).
 
-Every number below was printed by the script named beside it on 2026-11-15, by the program of the build of 05:53 that day (the build date is in the status bar of the window), after the mesher of the program had been reworked: the numbers of 2026-11-14 were run again, and where they changed the text says so.  A result is only as good as its mesh: each table says which element size or element type it was read with.
+Every number below was printed by the script named beside it on 2026-11-15, by the program of the build of 05:53 that day (the build date is in the status bar of the window), after the mesher of the program had been reworked: the numbers of 2026-11-14 were run again, and where they changed the text says so.  The two fluid scripts that were added later that day (the cylinder in a channel and the creeping-flow optimizer) and the rows of `mesh_cartesian` in the meshing table were run at midday on the same build with the changes to the Cartesian mesher of that day (the kernel is the one of 05:53).  A result is only as good as its mesh: each table says which element size or element type it was read with.
 
 ## Patch tests: exact answers
 
@@ -149,8 +149,26 @@ A steel bar 100 x 10 x 10 mm heated evenly by 60 K, solved with `thermal_expansi
 
 ## Fluid flow
 
-The flow solver is laminar and incompressible (linear tetrahedra with stabilisation).  Its channel flow against the exact solution of Poiseuille is in the table of the closed-form solutions ([v3_channel_flow.py](../validation/v3_channel_flow.py)).
-The standard problem of the field is the **lid-driven square cavity** of Ghia, Ghia and Shin (1982), set up in the verification manual of the open-source program MFiX ("FLD03", [mfix.netl.doe.gov/doc/vvuq-manual/main/html/fluid/fld-03.html](https://mfix.netl.doe.gov/doc/vvuq-manual/main/html/fluid/fld-03.html)).
+The flow solver is laminar and incompressible (linear tetrahedra with stabilisation).  Three standard problems cover the three ways a flow is used: **inside a channel** (Poiseuille's exact solution, in the table of the closed-form solutions: [v3_channel_flow.py](../validation/v3_channel_flow.py)), **around a body**, which is what the program is built for (the cylinder of the DFG benchmark, next), and **in a closed cavity** (below).
+
+**The flow around a body: the cylinder of the DFG benchmark 2D-1** (Schaefer and Turek, 1996; steady, laminar, Reynolds number 20): a circular cylinder 0.1 across, not quite in the middle of a channel 2.2 long and 0.41 wide, a parabolic inflow, no-slip walls and a "do-nothing" outlet.  The set-up and the reference values, computed with spectral methods (Nabh, 1998),
+are on the page of the CFD benchmarking project of the Featflow group of TU Dortmund ([the page](https://wwwold.mathematik.tu-dortmund.de/~featflow/en/benchmarks/cfdbenchmarking/flow/dfg_benchmark1_re20.html)).  Every length is scaled by 0.1 here (the cylinder is 10 mm, the channel 220 x 41 mm) and the fluid is water, so the mean speed that gives Re = 20 is 2 mm/s; the coefficients are dimensionless and compared as such.
+The flow is two-dimensional (a slab two elements thick with a frictionless face on each side), the inflow is `profile='developed'` (checked: parabolic to 0.5 % across the channel and the same across the slab), and the force is read from a wall item that is the cylinder's own surface.  The script [dfg_2d1_cylinder_in_a_channel.py](../validation/dfg_2d1_cylinder_in_a_channel.py)
+solves it at four element sizes, each three quarters of the one before.  Measured 2026-11-15:
+
+| Element size mm | Elements | Drag coefficient C_D (reference 5.5795) | Pressure difference p_diff (reference 0.11752) | Lift coefficient C_L (reference 0.01062) | Momentum balance |
+|---|---|---|---|---|---|
+| 1.78 | 80,325 | 6.067, **+8.7 %** | 0.1118, **-4.9 %** | -0.046 | 1.021 |
+| 1.33 | 143,546 | 5.833, **+4.5 %** | 0.1131, **-3.8 %** | +0.012 | 1.015 |
+| 1.00 | 252,386 | 5.740, **+2.9 %** | 0.1144, **-2.7 %** | +0.005 | 1.011 |
+| 0.75 | 449,972 | 5.675, **+1.7 %** | 0.1149, **-2.2 %** | +0.019 | 1.007 |
+
+**What it says.**  The drag converges to the benchmark's value from above and monotonically over the four sizes (+8.7, +4.5, +2.9, +1.7 %), with an observed order of 1.18 (read from the three finest meshes), a value at zero element size of 5.51 (1.2 % below the reference) and a grid convergence index of 3.6 % at the finest mesh, a band that contains the reference.
+The pressure difference between the two points on the axis in front of and behind the cylinder is 2.2 % low at the finest mesh and converges too.  The lift is a number near zero (the reference is 0.0106) that the mesh scatters by a few hundredths from one size to the next (-0.046 to +0.019), and is read as a noise level, not as a converging series.
+The momentum balance (the pressure drop over the channel times its section, against the force on all its walls) reads 1.021 to 1.007: the force the program reports is the force the flow needs.  In the runs that chose the sizes 2.0, 1.5 and 0.6 mm (not in the script) the drag read +10.4, +5.9 and +2.3 %: the 0.6 mm mesh is a little farther than the 0.75 mm one, the place of the lattice against the cylinder scatters the result by a few tenths of a percent.
+*A fault of mine that this check caught:* the first version of the script took a wall region a little bigger than the cylinder; a wall region takes every triangle of the fluid's surface inside it, the frictionless faces round the cylinder too, and the drag read 16 to 24 % too high and rose as the mesh got finer.  The script cuts a thin shell now, and `docs/analysis.md` says so beside `wall`.
+
+A second standard problem is the **lid-driven square cavity** of Ghia, Ghia and Shin (1982), set up in the verification manual of the open-source program MFiX ("FLD03", [mfix.netl.doe.gov/doc/vvuq-manual/main/html/fluid/fld-03.html](https://mfix.netl.doe.gov/doc/vvuq-manual/main/html/fluid/fld-03.html)).
 The script [mfix_fld03_lid_driven_cavity.py](../validation/mfix_fld03_lid_driven_cavity.py) solves it at a Reynolds number of 100 and compares the speed along the two centre lines at the 17 points of Ghia's table, as it is printed on a page that transcribes it
 ([sites.google.com/view/sidrg/...](https://sites.google.com/view/sidrg/research-projects/mechanical-engineering/lid-driven-cavity-flow); the original paper was not opened for this script).  Measured 2026-11-15 with 65,408 linear tetrahedra (28 across the cavity):
 
@@ -176,7 +194,23 @@ scripts compare the number the layout reaches and not its shape.  The bound used
 | The same bar held at 20 C across one end with 10 W entering across the other, the coolest layout of 50 % of it (80 iterations) | the whole bar's rise over the share kept, 48.52 K (the formula Q L / (k A f) gives 49.91 K) | the whole bar: a rise of 23.29 K against the formula's 23.95 K (**-2.8 %**; tolerance 5 %); the part keeps **48.0 %** and has a rise of 52.17 K, **+7.5 %** above the bound; tolerance -3 % and +30 % | [v15_thermal_topology_optimization_bar.py](../validation/v15_thermal_topology_optimization_bar.py) |
 
 **What it says.**  On the two problems whose best answer is known, the optimizer lands within 15 % (stiffness) and 8 % (heat) of the best layout that exists for the volume it keeps, and never beats it.  The share kept is a little under the 50 % asked for (48 %): the part is cut from the density at the level that gives the design's own volume and the
-mesh counts what is left.  The thermal optimizer needs more iterations than its default of 20 on this problem: a run of 40 left the bar in two pieces (the output says so and the part has no analysis), 80 gave one piece.  The flow topology optimization has no problem with a known best answer in this validation and is **not covered**.
+mesh counts what is left.  The thermal optimizer needs more iterations than its default of 20 on this problem: a run of 40 left the bar in two pieces (the output says so and the part has no analysis), 80 gave one piece.
+
+**The flow topology optimization, in creeping flow.**  No value of the lowest drag is known for a body in a channel, but something about the best body is: in Stokes flow the equations are reversible, so in a domain that is a mirror image of itself, with the place the body may be in a mirror image of itself, the best body is the same in front and behind.
+Pironneau (*J. Fluid Mech.* 59, 1973, "On optimum profiles in Stokes flow") showed that the body of the lowest drag for a given volume in Stokes flow is front-back symmetric, with pointed ends (cones of 120 degrees included angle for a body of revolution; read in the abstract of Montenegro-Johnson and Lauga, arXiv 1411.4783).
+The script [pironneau_stokes_drag_minimal_body.py](../validation/pironneau_stokes_drag_minimal_body.py) runs the slab of the flow example (`stokes=True`: 80 x 40 x 4 mm of water, a post of 10 mm that may be reshaped inside a box of 44 x 24 mm) with the post and the box in the middle of the slab and the optimizer told not to keep the design symmetric (`symmetry=None`:
+its default would impose the symmetry across the flow), minimizes the drag at the post's volume, and measures the final body in its middle plane.  Measured 2026-11-15, 1.5 mm elements:
+
+| Check | Required | FielDes |
+|---|---|---|
+| The final body is the same in front and behind (overlap with its own mirror image, front to back, over the union) | at least 0.95 | **0.988** (up to down 0.939) |
+| It is longer than it is wide | at least 1.4 | **1.80**: 13.5 mm long, 7.5 mm wide (the post is 10 x 10) |
+| It keeps the post's volume | within 3 % | **79.5 mm^2** in the plane against the post's 78.5 (+1.3 %) |
+| The force of the real flow around it (the body a wall) is lower than the post's | lower | **2.16e-7 N** against **2.271e-7 N** (**-4.9 %**) |
+
+**What it says.**  An optimizer that was wrong would not give a body that is the same in front and behind in a flow where nothing tells the front from the back but the design; this one does (0.988), and the lens it finds is longer than wide, as Pironneau's body is.  **The value of the gain is not checked** (the 120 degree tips are the result for a body of revolution in unbounded flow, not for this slab), and the numbers say two things
+that are worth knowing: the optimizer's own model of the drag (the body a friction in the flow) reads **-78 %** over its 20 iterations where the real flow around the final body reads **-4.9 %** (the model is the porous-friction model that the optimization is made on: take the change it reports as the direction of the design, not as the gain, and read the gain from `design.flow`),
+and the optimizer ended after 20 iterations (its limit is 80; it stops when the design stops improving).  The flow optimization **with inertia** (the example's Reynolds number of 40, where the best body is not symmetric) has no such known property to check and is **not covered**.
 
 ## Parametric optimization
 
@@ -213,11 +247,11 @@ Measured 2026-11-15, element size 2 mm (1 mm for the surface meshes); no cell is
 |---|---|---|
 | `mesh_tet4`, `mesh_tet10` (7,856 and 6,768 cells) | **+0.14 %**, **+0.08 %** | **-1.01 %**, **-0.54 %** |
 | `mesh_hex_quanta`, `mesh_hex20_quanta` (564 and 504 cells) | **+0.30 %** | **-3.74 %** |
-| `mesh_cartesian` (588 and 672 cells) | **+0.30 %** | **-0.56 %** |
+| `mesh_cartesian` (588 and 644 cells) | **+0.30 %** | **-2.17 %** (-0.56 % before the nodes of the skin were put on the surface: the nodes that the snap had left up to a tenth of a cell outside it made up for part of what the flat faces cut off) |
 | `mesh_hex_extrusion` (14,004 cells; refuses a ball) | **+0.18 %** | |
 | `mesh_surface_tri`, `mesh_surface_quad` (9,168 triangles or 27,504 quadrilaterals; 3,716 or 11,148) | area **+0.02 %** | area **-0.17 %** |
 
-**What it says.**  The cells add up to the body: to a fraction of a percent on the plate, and to 1 % (tetrahedra) and 4 % (a staircase of whole cubes) on the ball, whose curved surface the flat faces of a mesh of 2 mm always cut a little small.  This checks the volume and the area; it does **not** say that the cells are the right shape for a solver:
+**What it says.**  The cells add up to the body: to a fraction of a percent on the plate, and to 1 % (tetrahedra), 2 % (cut cells) and 4 % (a staircase of whole cubes) on the ball, whose curved surface the flat faces of a mesh of 2 mm always cut a little small.  This checks the volume and the area; it does **not** say that the cells are the right shape for a solver:
 the quality of the elements (scaled Jacobian, skewness) is in the report of every mesh (`mesh.quality().report()`, see [Meshing](meshing.md)), and a result is only as good as its mesh.
 
 ## CAD operations
@@ -254,9 +288,9 @@ the formula is written beside each case in the script [v9_cad_volumes_and_areas.
 
 Everything not listed above has no published check, and no claim is made for it:
 
-- **Flow topology optimization**: no problem with a known best answer is in the `validation` folder, so nothing is claimed.  Of the **manufacturing rules** only the wall and the draft have an exact answer there (overhang, bridging, undercuts, radii and tool reach do not).  Of **meshing** only the volume and the area the cells add up to are checked, not whether the cells are the right shape for a solver (see the quality report of each mesh).
+- **Flow topology optimization**: only in creeping flow, and only what is known of the best body there (it is the same in front and behind); the value of the gain is not checked, and with inertia nothing is.  Of the **manufacturing rules** only the wall and the draft have an exact answer there (overhang, bridging, undercuts, radii and tool reach do not).  Of **meshing** only the volume and the area the cells add up to are checked, not whether the cells are the right shape for a solver (see the quality report of each mesh).
   The **mesh of a part with thin features** is not validated either: a wire two elements across lost 7 % of its volume (see Modal analysis), and the NAFEMS LE1 case shows three element sizes of nine where a sliver of a tetrahedron spoils the stress at a point (see NAFEMS benchmarks): both are open issues of the mesher.
-- Fluid flow beyond the channel and the cavity above (turbulence, compressibility, free surfaces, heat carried by a flow).
+- Fluid flow beyond the channel, the cylinder and the cavity above (turbulence, compressibility, free surfaces, heat carried by a flow; a flow that sheds vortices, which the program solves in time, has no check here; a sphere or any three-dimensional body has none either).
 - The **export** of a mesh or an analysis to another program (the files are written; a solver of another program has not been run on them in this validation).
 - Contact, plasticity, buckling, large strains, dynamics beyond natural frequencies (not offered).
 - Anything on a mesh that has not been refined once to see whether the answer moves.
