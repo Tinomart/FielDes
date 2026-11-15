@@ -2168,8 +2168,9 @@ def _mesh_cartesian_cells(body, core, box, sizer, threshold, layers, zones, defa
     _assign_zones(mesh, zones, default_zone, feature_angle, tolerance)
     _assign_cell_zones(mesh, cell_zones, tolerance)
     shares = ', '.join('{:,} {}'.format(mesh.cell_count(k), k) for k in SOLIDS + (POLY,) if mesh.cell_count(k))
-    notes.append('a grid of cubes of {:.4g} mm cut by the body: {}; {:,} cut cells with at most 1/{:.4g} of a cube inside were joined to the cell they share the most face with{}'.format(
-        fit.d[0], shares, fit.merged, threshold, '' if not fit.dropped else ' ({:,} without a neighbour or flat were left out)'.format(fit.dropped)))
+    notes.append('a grid of cubes of {:.4g} mm cut by the body: {}; {:,} cut cells with at most 1/{:.4g} of a cube inside were joined to the cell they share the most face with{}{}'.format(
+        fit.d[0], shares, fit.merged, threshold, '' if not fit.dropped else ' ({:,} without a neighbour or flat were left out)'.format(fit.dropped),
+        '' if not (fit.edge_moved or fit.collapsed) else '; {:,} nodes were put on an edge of the body and {:,} taken into a node beside them'.format(fit.edge_moved, fit.collapsed)))
     mesh.notes = notes
     mesh.seconds = time.time() - t0
     return mesh

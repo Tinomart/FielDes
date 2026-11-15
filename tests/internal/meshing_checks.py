@@ -787,6 +787,17 @@ if mc is not None:
         check('cartesian: a tilted cylinder: every node of the boundary is within 0.01 mm of the surface (the nodes the snap took for on it are put on it)', max(abs(v) for v in vt) < 0.01, '{:.4f} mm'.format(max(abs(v) for v in vt)))
         vols_t = [meshing._cell_volume(Pt, kind, mt.corners(kind, i)) for kind in meshing.SOLIDS for i in range(mt.cell_count(kind))] + [meshing._poly_volume(Pt, fcs) for fcs in mt.polyhedra()]
         check('cartesian: a tilted cylinder: no cell holds less than a tenth of a cube (the small cut cells are joined to a neighbour, not left out)', min(vols_t) >= 0.095 * mt.element_size ** 3, '{:.3f} of a cube'.format(min(vols_t) / mt.element_size ** 3))
+        # (H223, 2026-11-15: the tetrahedra's collapse for the cut cells -- two nodes that stand beside each other are one node --, and no node on a side of a face of the grid, which left faces whose outline doubles back on itself)
+        short_t = []
+        for kind in meshing.SOLIDS:
+            for i in range(mt.cell_count(kind)):
+                ids = mt.corners(kind, i)
+                short_t.append(min(math.dist(Pt[3 * ids[a]:3 * ids[a] + 3], Pt[3 * ids[b]:3 * ids[b] + 3]) for a, b in meshing.EDGES[kind]))
+        for fcs in mt.polyhedra():
+            short_t.append(min(math.dist(Pt[3 * fc[k]:3 * fc[k] + 3], Pt[3 * fc[(k + 1) % len(fc)]:3 * fc[(k + 1) % len(fc)] + 3]) for fc in fcs for k in range(len(fc))))
+        check('cartesian: a tilted cylinder: no edge of a cell is shorter than a twentieth of a cube side (nodes that stand beside each other are collapsed)', min(short_t) >= 0.05 * mt.element_size, '{:.3f} of a cube side'.format(min(short_t) / mt.element_size))
+        doubled = sum(1 for fcs in mt.polyhedra() for fc in fcs if min(meshing._angles(Pt, list(fc))) < 1.0)
+        check('cartesian: a tilted cylinder: no face of a polyhedron doubles back on itself (an angle of 0 degrees: a spike of no width)', doubled == 0, '{} faces'.format(doubled))
         mj = run('cartesian tilted cylinder, joined and left out', lambda: mesh_cartesian(tilt, 1.0, bounds=((-5.0, -9.0, -9.0), (5.0, 9.0, 9.0)), threshold=4.0))
         if mj is not None:
             vols_j = [meshing._cell_volume(mj.nodes, kind, mj.corners(kind, i)) for kind in meshing.SOLIDS for i in range(mj.cell_count(kind))] + [meshing._poly_volume(mj.nodes, fcs) for fcs in mj.polyhedra()]

@@ -53,7 +53,9 @@ intersection of Cartesian cells with the geometrical boundary"), made on the bod
    a pyramid, anything else a polyhedron (a cube cut at two places that do not meet is two cells).
 4. **The edges** (Salome's "Implement Edges", on): where the cut across a face of the grid joins two crossings whose surface normals differ by more than 40 degrees and the middle of the straight line between them is far
    from the surface -- a corner, not a curve -- a node is put on the edge of the body, where the two sides of the cut meet in the plane of the face, and the polygon of the surface in the cell is cut in two along the line between the
-   two such nodes. An edge that lies on the planes of the grid needs none; one that does not (a rim of a tilted cylinder, a turned box) is followed.
+   two such nodes. An edge that lies on the planes of the grid needs none; one that does not (a rim of a tilted cylinder, a turned box) is followed. A node is never put on a side of the face (an edge of the grid, which the
+   cells on the other side of it share and would not have the node on): that made faces that did not match across a cell, a spike of no width in the outline of 164 faces of the real bracket at 2 mm, and 479 faces
+   counted as boundary that were not.
 5. **The threshold**: a cut cell that holds no more than 1 / `threshold` of a cube is **joined** to the cell it shares the most face with (a whole cube or another cut cell, not past two cubes when there is another),
    so that no cell is smaller. The default is 10, a tenth (Salome's is 4). Salome leaves such a cell out and the faces of its neighbours become the boundary there: a staircase that lay up to 0.65 of a cube off the surface
    on the real bracket (4 mm), in faces that lean up to 45 degrees from it; joining keeps the polygon of the surface the small cell had. `threshold=4` makes no cell smaller than a quarter of a cube and the volume
@@ -61,6 +63,22 @@ intersection of Cartesian cells with the geometrical boundary"), made on the bod
    keeps every cut cell as a cell of its own, slivers included. A cut cell that is a wedge (scaled Jacobian under 0.2) is joined too, whatever it holds.
 6. **The nodes on the surface**: the nodes of the grid that step 2 took for on the surface (within a tenth of a cube of it) are put on it, along the field (a node whose move would bend a whole cube, scaled Jacobian under 0.3,
    stays), so that every node of the boundary is on the surface; a face of no area (three nodes on one straight line) is taken out, its middle node going into the faces that have its long edge.
+7. **The edge pass** (the tetrahedra's `snapFeatures`, for the cut cells): a face of the skin whose normal differs from the direction of the field at its middle by more than 12 degrees names the nodes to look at. The
+   faces round such a node that do not lean say which planes meet there (their normals, grouped within 40 degrees); the node goes to the point of the line where two of them meet, nearest to it, is put back on the surface
+   along the field, and stays where it was when that point is not on the surface or is farther than 0.6 of a cube. The moves are made one node at a time against the cells as they are: a move that leaves a cell with less
+   than 0.7 of its volume, or under a tenth of a cube when it had more, or a hexahedron, prism, pyramid or tetrahedron with a scaled Jacobian under 0.3 (or under 0.9 of what it was), or turns a face over, or squeezes it
+   to a quarter of its area, is tried at half the way and then not made. `FIELDES_CART_EDGES=0` turns the pass and the collapse off.
+8. **The collapse** (the tetrahedra's `collapseBites`): two nodes of a cell that stand closer than a tenth of a cube -- an edge node and a grid node beside it, or a node that the edge pass has put on the place of another --
+   become one: the grid node goes into the node on the crease, the faces round it are written again, a cell that has both becomes the polyhedron that is left (a hexahedron that lost an edge is a prism), and the move is
+   refused under the same floors as the edge pass. Without it an edge of no length stood in 63 cells of the bracket at 2 mm (an aspect ratio of 1.8e5); with it the largest aspect ratio is 31.5.
+
+What this did on the real bracket of example 05 (library probe, the skin faces whose normal differs from the field's direction at their middle by more than 12 degrees; the same part meshed with tetrahedra: 3.7 % at 4 mm and
+0.3 % at 2 mm): at 4 mm 7.5 % (22.5 % when small cells were left out and nothing was snapped), at 2 mm 2.2 % (14.1 %); the farthest skin node from the surface 0.0004 mm (2.58 and 1.01 mm); no skin node more than a hundredth of
+a cube off it (284 and 702 nodes more than a tenth of an element off); the smallest scaled Jacobian 0.23 and 0.19 (0.12 and 0.10). What got worse: the cells are less regular than a mesh that leaves the skin where the grid put it --
+the skewness by the angles of the faces is over 0.85 in 2.3 % and 0.71 % of the cells (0.8 % and 0.13 %), over 0.95 in 2 and 60 cells (none), where the polygon of a face has a node at 177 to 180 degrees that is not quite
+on the line of its neighbours; the mean orthogonal quality is 0.90 and 0.96 (0.94 and 0.98); the longest edge over the shortest of a cell 22 and 32 (10 and 13). The faces that still lean lie where three surfaces meet within a
+cube or two (the ring-neck junction, the inside corner of the foot) and on fillets smaller than the element, where there is no crease to put a node on; two things that were tried and taken out again because they made the faces
+lean more, not less (measured on the mesh before the nodes were kept off the sides of the faces, at 2 mm): moving a node along the plane of a flat face onto the wall of a bore (the kernel's `snapRims`: 245 -> 343 leaning faces), and spacing the nodes of a straight crease evenly (the kernel's `smoothChains`: 245 -> 283).
 
 The polyhedra are in **VTK** (cell type 42), **Fluent** and **OpenFOAM** (face-based formats), and the surface formats write the boundary; Gmsh, Abaqus, Nastran and I-DEAS have no polyhedron and refuse such a mesh with the
 way out (a threshold that makes none, or `mesh_tet4`). Pyramids are in Gmsh, VTK, Abaqus, Nastran and Fluent. The quality report gives the polyhedra their skewness (by the angles of their faces), aspect ratio and orthogonal

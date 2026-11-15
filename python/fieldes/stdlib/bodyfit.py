@@ -27,6 +27,7 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import math
+import os
 from array import array
 
 # The corners of a hexahedron as the lattice offsets of the cell, its edges and its faces (the corners in the order that has the normal out)
@@ -82,6 +83,10 @@ class Fit(object):
         self.edge_node = {}                                   # (a node on an edge of the body that a cut across a face of the grid was bent at)
         self.edge_ids = set()
         self.edge_axis = {}                                   # (the axis the face of the grid that holds an edge node is perpendicular to)
+        self.on_edge = set()                                  # (the nodes that the edge pass put on an edge of the body)
+        self.edge_moved = 0                                   # (how many moves of that kind the edge pass made, all rounds)
+        self.edge_stats = {}                                  # (what the edge pass did and why it refused: counted, for the probes)
+        self.collapsed = 0                                    # (the nodes that were taken into a node beside them, _weld)
 
     def gid(self, i, j, k):
         return (i * (self.n[1] + 1) + j) * (self.n[2] + 1) + k
@@ -161,6 +166,7 @@ class Fit(object):
         self.merged = 0                                       # (the small cut cells that were joined to the cell they share their largest face with)
         self.flat = 0                                         # (the pieces of a cut cube that have no thickness: the surface lies on a face of the cube)
         self.settled = 0                                      # (the nodes of the grid that were put on the surface)
+        self.welded = 0                                       # (the edge nodes that were one node with another at the same place)
         self.whole = 0                                        # (the cubes that lie wholly in the body)
         hexes = []
         pieces = []                                           # (the faces and the volume of every piece the surface leaves in a cut cube, when cut cells are made)
@@ -197,8 +203,364 @@ class Fit(object):
             self._settle(values, eps, hexes, pieces)
             self._settle_edges(pieces)
             out.extend(self._join(hexes, pieces, cube))
+            if self.edges and os.environ.get('FIELDES_CART_EDGES') != '0':
+                self._weld(out)
+                self._edge_pass(out)
+                self._weld(out)
         self.cells = out
         return out
+
+    def _edge_pass(self, cells, rounds=4):
+        """ THE EDGE PASS OF THE TETRAHEDRA, for the cut cells (H223, his order of 2026-11-15: "YOU OBVIOUSLY KONW WHAT YOU DID TO MAKE TET MESHING AS GOOD AS IT IS. OBEY MY ORDER AND IMPLEMENT THAT"; the kernel's
+            snapFeatures): the faces of the skin that lean away from the field (their normal against the field's direction in their middle more than 12 degrees) name the nodes to look at.  The faces round such a node that do
+            NOT lean say which planes meet there (their normals, in clusters of 40 degrees, one plane each: the planes of the two sides of an edge); the node is moved to the point of the line where two of them meet that is
+            nearest to it, and put back on the surface along the field's own direction; it stays where it is when that point is not on the surface or is farther than 0.6 of a cube.  (The rim of a flat face, the kernel's
+            snapRims -- the node moved along the plane of the flat face onto the wall, the field read a quarter, an eighth, a sixteenth of a cube inside the body -- was tried here and made the leaning faces MORE
+            numerous, 245 -> 343 of 16,500 on the bracket at 2 mm: it is not in.)  The moves are made ONE NODE AT A TIME against the cells as they are: a move that leaves a cell with a volume under 0.7 of what it had, or under the smallest cell that the join leaves (a tenth of a cube) when it had more, or a
+            hexahedron, prism, pyramid or tetrahedron with a scaled Jacobian that is worse than 0.3 (or than 0.9 of what it was), or a face of a cell that turns over or is squeezed under a quarter of its area, is tried again at half the way (put back on the surface) and then taken back.  Up to
+            `rounds` rounds.  The pass is wrapped in _weld (the collapse of nodes that stand within a tenth of a cube of each other).  FIELDES_CART_EDGES=0 turns it off """
+        M = self.M
+        pos = self.pos
+        size = self.size
+        cos_crease = math.cos(math.radians(40.0))
+        cos_lean = math.cos(math.radians(12.0))               # (4 degrees was tried: it put a few more nodes of the neck edge on the crease and made 6 faces turn the wrong way and the leaning faces more)
+        cfaces = []
+        for kind, data in cells:
+            cfaces.append([tuple(f) for f in data] if kind == 'poly' else [tuple(data[j] for j in face) for face in M.FACES[kind]])
+        node_cells = {}
+        for ci, fl in enumerate(cfaces):
+            for x in {x for f in fl for x in f}:
+                node_cells.setdefault(x, []).append(ci)
+        flat = array('d')
+        for p in pos:
+            flat.extend(p)
+
+        def volume_of(ci):
+            kind, data = cells[ci]
+            return self.volume(data) if kind == 'poly' else M._cell_volume(flat, kind, data)
+        vol0 = [volume_of(ci) for ci in range(len(cells))]
+        jac0 = {ci: M._cell_jacobian(flat, kind, data) for ci, (kind, data) in enumerate(cells) if kind != 'poly'}
+
+        floor = self.d[0] * self.d[1] * self.d[2] / self.threshold          # (the smallest cell that the join of the small ones leaves: a move does not push a cell under it)
+
+        stats = self.edge_stats = {}
+
+        def tally(key, n=1):
+            stats[key] = stats.get(key, 0) + n
+
+        def cell_why(ci):
+            """ None when the cell is sound, else what is wrong with it """
+            kind, data = cells[ci]
+            v = volume_of(ci)
+            if not v > 0.7 * vol0[ci]:
+                return 'cell under 0.7 of its volume'
+            if v < min(vol0[ci], floor):
+                return 'cell under a tenth of a cube'
+            if kind != 'poly' and M._cell_jacobian(flat, kind, data) < min(0.3, 0.9 * jac0[ci]):
+                return 'scaled Jacobian'
+            return None
+
+        def avec(face):
+            p0 = pos[face[0]]
+            sx = sy = sz = 0.0
+            for m in range(1, len(face) - 1):
+                p1, p2 = pos[face[m]], pos[face[m + 1]]
+                ux, uy, uz = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+                vx, vy, vz = p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]
+                sx += uy * vz - uz * vy
+                sy += uz * vx - ux * vz
+                sz += ux * vy - uy * vx
+            return (0.5 * sx, 0.5 * sy, 0.5 * sz)
+
+        h = 0.01 * size
+        def layout(q):
+            """ The points where the field is read for a Newton step of the node q: q and its six neighbours along the axes """
+            return [q] + [tuple(q[c] + (sg if c == axis else 0.0) for c in range(3)) for axis in range(3) for sg in (-h, h)]
+
+        def advance(q, v):
+            """ One Newton step of q onto the surface from the values v at layout(q): along the gradient of the field """
+            g = [(v[2 + 2 * c] - v[1 + 2 * c]) / (2.0 * h) for c in range(3)]
+            ln2 = g[0] * g[0] + g[1] * g[1] + g[2] * g[2]
+            if ln2 < 1e-12:
+                return q
+            return (q[0] - v[0] / ln2 * g[0], q[1] - v[0] / ln2 * g[1], q[2] - v[0] / ln2 * g[2])
+        def compact(face, a):
+            """ How compact a face is: its area over the square of its longest edge (a square 1, an equilateral triangle 0.43, a sliver of three nodes nearly on a line 0.01) """
+            longest = 0.0
+            for k in range(len(face)):
+                p, q = pos[face[k]], pos[face[(k + 1) % len(face)]]
+                longest = max(longest, (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2)
+            return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) / longest if longest > 0.0 else 0.0
+
+        def put(nd, new):
+            """ The node nd to `new` when every cell round it stays sound (cell_ok) and no face of those cells turns over or is squeezed to under a quarter of its area (a node put onto the line between its neighbours makes
+                a triangle of no area); otherwise it stays where it was.  True when it moved """
+            old = pos[nd]
+            fa = [f for ci in node_cells.get(nd, ()) for f in cfaces[ci] if nd in f]
+            old_av = [avec(f) for f in fa]
+            old_shape = [compact(f, a) for f, a in zip(fa, old_av)]
+            pos[nd] = new
+            flat[3 * nd:3 * nd + 3] = array('d', new)
+            why = None
+            for ci in node_cells.get(nd, ()):
+                why = cell_why(ci)
+                if why:
+                    break
+            if not why:
+                for f, a, q in zip(fa, old_av, old_shape):
+                    b = avec(f)
+                    la = math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+                    lb = math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2])
+                    if lb < 0.25 * la or a[0] * b[0] + a[1] * b[1] + a[2] * b[2] < 0.25 * la * lb:
+                        why = 'a face turned over or squeezed'
+                        break
+                    shape = compact(f, b)
+                    if shape < 0.03 and shape < q:
+                        why = 'a face made a sliver (three nodes nearly on a line)'
+                        break
+            sound = not why
+            if not sound:
+                tally('refused: ' + why)
+                pos[nd] = old
+                flat[3 * nd:3 * nd + 3] = array('d', old)
+            return sound
+        self.edge_moved = 0
+        for rnd in range(rounds):
+            count = {}
+            for fl in cfaces:
+                for f in fl:
+                    e = count.setdefault(tuple(sorted(f)), [0, f])
+                    e[0] += 1
+            skin = [e[1] for e in count.values() if e[0] == 1]
+            mids, norms, areas = [], [], []
+            for f in skin:
+                a = avec(f)
+                ln = math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+                areas.append(ln)
+                norms.append((a[0] / ln, a[1] / ln, a[2] / ln) if ln > 0.0 else None)
+                mids.append(tuple(sum(pos[x][c] for x in f) / len(f) for c in range(3)))
+            pts = []
+            for (x, y, z) in mids:
+                pts.extend(((x + h, y, z), (x - h, y, z), (x, y + h, z), (x, y - h, z), (x, y, z + h), (x, y, z - h)))
+            vals = M._eval(self.body, pts)
+            lean = []
+            for i, n in enumerate(norms):
+                v = vals[6 * i:6 * i + 6]
+                g = ((v[0] - v[1]) / (2 * h), (v[2] - v[3]) / (2 * h), (v[4] - v[5]) / (2 * h))
+                gl = math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
+                lean.append(n is not None and gl > 1e-9 and abs(n[0] * g[0] + n[1] * g[1] + n[2] * g[2]) / gl < cos_lean)
+            skin_of = {}
+            for i, f in enumerate(skin):
+                for x in f:
+                    skin_of.setdefault(x, []).append(i)
+            candidates = sorted({x for i, f in enumerate(skin) if lean[i] for x in f})
+            if not candidates:
+                break
+            tally('round %d: nodes of leaning faces' % rnd, len(candidates))
+            targets = []
+            for nd in candidates:
+                near = set()
+                for i in skin_of[nd]:
+                    near.update(skin[i])
+                faces_here = {i for x in near for i in skin_of[x] if not lean[i] and norms[i] is not None}
+                clusters = []
+                for i in sorted(faces_here, key=lambda i: -areas[i]):
+                    n = norms[i]
+                    for cl in clusters:
+                        m = cl[0]
+                        ml = math.sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2])
+                        if (m[0] * n[0] + m[1] * n[1] + m[2] * n[2]) / ml > cos_crease:
+                            cl[0] = (m[0] + areas[i] * n[0], m[1] + areas[i] * n[1], m[2] + areas[i] * n[2])
+                            cl[1] += areas[i]
+                            cl[2] = tuple(cl[2][c] + areas[i] * mids[i][c] for c in range(3))
+                            break
+                    else:
+                        clusters.append([(areas[i] * n[0], areas[i] * n[1], areas[i] * n[2]), areas[i], tuple(areas[i] * mids[i][c] for c in range(3))])
+                if len(clusters) < 2:
+                    if rnd == 0:
+                        tally('first round: no second plane beside the node (%d)' % len(clusters))
+                    continue
+                clusters.sort(key=lambda cl: -cl[1])
+                planes = []
+                for m, a_, c_ in clusters:
+                    ml = math.sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2])
+                    planes.append(((m[0] / ml, m[1] / ml, m[2] / ml), tuple(c / a_ for c in c_)))
+                n1, c1 = planes[0]
+                other = None
+                for n2, c2 in planes[1:]:
+                    if n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2] < cos_crease:
+                        other = (n2, c2)
+                        break
+                if other is None:
+                    if rnd == 0:
+                        tally('first round: the planes beside the node do not differ by 40 degrees')
+                    continue
+                n2, c2 = other
+                p = pos[nd]
+                d12 = n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]
+                det = 1.0 - d12 * d12
+                if det < 1e-3:
+                    continue
+                r1 = n1[0] * (p[0] - c1[0]) + n1[1] * (p[1] - c1[1]) + n1[2] * (p[2] - c1[2])
+                r2 = n2[0] * (p[0] - c2[0]) + n2[1] * (p[1] - c2[1]) + n2[2] * (p[2] - c2[2])
+                s1 = (r1 - d12 * r2) / det
+                s2 = (r2 - d12 * r1) / det
+                x = tuple(p[c] - s1 * n1[c] - s2 * n2[c] for c in range(3))
+                if math.dist(x, p) <= 0.6 * size:
+                    targets.append([nd, x])
+                elif rnd == 0:
+                    tally('first round: the edge is farther than 0.6 of a cube')
+            if not targets:
+                break
+            if rnd == 0:
+                tally('first round: nodes with a place on an edge', len(targets))
+            # (put back on the surface along the field's own direction: a few Newton steps, all the nodes together, a call of the field for each)
+            for _ in range(3):
+                pts = []
+                for t in targets:
+                    pts.extend(layout(t[1]))
+                vals = M._eval(self.body, pts)
+                for m, t in enumerate(targets):
+                    t[1] = advance(t[1], vals[7 * m:7 * m + 7])
+            final = M._eval(self.body, [t[1] for t in targets])
+            moved = 0
+            for (nd, x), f in zip(targets, final):
+                if abs(f) > 2e-3 * size or math.dist(x, pos[nd]) > 0.6 * size or math.dist(x, pos[nd]) < 1e-4 * size:
+                    if rnd == 0:
+                        tally('first round: the place is not on the surface (or is where the node is)')
+                    continue
+                old = pos[nd]
+                for step in (1.0, 0.5):
+                    new = tuple(old[c] + step * (x[c] - old[c]) for c in range(3))
+                    if step < 1.0:
+                        # (half the way along the line is off the surface by up to half the way: it is put back on the surface, and when it does not get there the node stays)
+                        for _ in range(3):
+                            new = advance(new, M._eval(self.body, layout(new)))
+                        if abs(M._eval(self.body, [new])[0]) > 2e-3 * size:
+                            continue
+                    if put(nd, new):
+                        moved += 1
+                        self.on_edge.add(nd)
+                        break
+            self.edge_moved += moved
+            if not moved:
+                break
+
+    def _weld(self, cells, tol=0.1):
+        """ THE COLLAPSE OF THE TETRAHEDRA, for the cut cells (the kernel's collapseBites / collapseCorners: a node that has come to stand beside another is taken INTO it, not left as an edge of no length): every edge of
+            a cell shorter than `tol` of the cube side, shortest first, is collapsed: the node that is not on a crease (a grid node) goes into the one that is (an edge node, or a node that the edge pass put on a crease), else
+            the higher number into the lower; the kept node stays where it is.  The faces round the removed node are written again with the kept one (a face that has fewer than three nodes left is gone, a face that
+            repeats a node away from its neighbour refuses the collapse); a cell that holds both nodes becomes the polyhedron that is left (named again: a hexahedron that lost an edge is a prism).  Refused when a cell round the
+            node would be left with less than 0.4 of its volume or under the smallest cell that the join leaves (a tenth of a cube) when it had more (a cell that has under a tenth of a cube may vanish), or a
+            hexahedron, prism or pyramid with a scaled Jacobian worse than 0.3 (or than 0.9 of what it was); two nodes under a fiftieth of a cube apart are collapsed whatever the cell looks like then (it stays a polyhedron) """
+        M = self.M
+        pos = self.pos
+        size = self.size
+        limit = tol * size
+        cube = self.d[0] * self.d[1] * self.d[2]
+        cf = []
+        for kind, data in cells:
+            cf.append([tuple(f) for f in data] if kind == 'poly' else [tuple(data[j] for j in face) for face in M.FACES[kind]])
+        node_cells = {}
+        for ci, fl in enumerate(cf):
+            for x in {x for f in fl for x in f}:
+                node_cells.setdefault(x, set()).add(ci)
+        pairs = {}
+        for fl in cf:
+            for f in fl:
+                n = len(f)
+                for k in range(n):
+                    a, b = f[k], f[(k + 1) % n]
+                    if a != b:
+                        key = (a, b) if a < b else (b, a)
+                        if key not in pairs:
+                            d = math.dist(pos[a], pos[b])
+                            if d < limit:
+                                pairs[key] = d
+        if not pairs:
+            return 0
+        flat = array('d')
+        for p in pos:
+            flat.extend(p)
+        on_edge = self.edge_ids | self.on_edge
+        rep = {}
+
+        def find(x):
+            while x in rep:
+                x = rep[x]
+            return x
+        done = 0
+        for a0, b0 in sorted(pairs, key=pairs.get):
+            a, b = find(a0), find(b0)
+            if a == b or math.dist(pos[a], pos[b]) >= limit:
+                continue
+            ea, eb = a in on_edge, b in on_edge
+            keep, gone = (a, b) if (ea and not eb) else ((b, a) if (eb and not ea) else ((a, b) if a < b else (b, a)))
+            plan = []
+            ok = True
+            for ci in node_cells.get(gone, ()):
+                if cells[ci] is None:
+                    continue
+                kind, data = cells[ci]
+                old_volume = self.volume(cf[ci]) if kind == 'poly' else M._cell_volume(flat, kind, data)
+                holds_both = keep in node_cells and ci in node_cells[keep]
+                new_faces = []
+                for f in cf[ci]:
+                    g = [keep if x == gone else x for x in f]
+                    h = [x for k, x in enumerate(g) if x != g[k - 1]]
+                    if len(set(h)) < 3:
+                        continue
+                    if len(h) != len(set(h)):
+                        ok = False
+                        break
+                    new_faces.append(tuple(h))
+                if not ok:
+                    break
+                if len(new_faces) < 4:
+                    if old_volume > 0.1 * cube:
+                        ok = False
+                        break
+                    plan.append((ci, None, None))
+                    continue
+                if not holds_both and kind != 'poly':
+                    new_data = [keep if x == gone else x for x in data]
+                    new_kind = kind
+                    new_volume = M._cell_volume(flat, kind, new_data)
+                    jac_new = M._cell_jacobian(flat, kind, new_data)
+                    jac_old = M._cell_jacobian(flat, kind, data)
+                    if jac_new < min(0.3, 0.9 * jac_old):
+                        ok = False
+                        break
+                else:
+                    new_kind, new_data = self._named(new_faces)
+                    new_volume = self.volume(new_faces)
+                    if new_kind != 'poly' and M._cell_jacobian(flat, new_kind, new_data) < 0.3:
+                        if math.dist(pos[keep], pos[gone]) >= 0.02 * size:
+                            ok = False
+                            break
+                        # (two nodes at one place -- under a fiftieth of a cube apart -- are one node whatever the cell that is left looks like: the edge of no length is the worse fault, and the cell stays the polyhedron it is)
+                        new_kind, new_data = 'poly', new_faces
+                if not new_volume > 0.4 * old_volume or new_volume < min(old_volume, cube / self.threshold):
+                    ok = False
+                    break
+                plan.append((ci, (new_kind, new_data), new_faces))
+            if not ok:
+                continue
+            for ci, cell, new_faces in plan:
+                if cell is None:
+                    cells[ci] = None
+                    cf[ci] = []
+                    continue
+                cells[ci] = cell
+                cf[ci] = new_faces
+                node_cells.setdefault(keep, set()).add(ci)
+            node_cells[gone] = set()
+            rep[gone] = keep
+            done += 1
+        if done:
+            cells[:] = [c for c in cells if c is not None]
+        self.collapsed += done
+        return done
 
     def _area(self, face):
         """ The area of a face (the nodes in order): half the length of the sum of the cross products of the fan """
@@ -291,7 +653,41 @@ class Fit(object):
         for faces, _ in pieces:
             for fc in faces:
                 used.update(fc)
-        todo = [g for g in used if g in self.edge_axis]
+        # (two edge nodes at one place: a crease that runs along an edge of a cube of the grid is met by the cuts across both faces of the grid that share the edge, and each made a node there; they are one node, and a
+        # face that is left with fewer than three nodes goes)
+        tol = 0.005 * self.size
+        bucket = {}
+        canon = {}
+        for g in sorted(g for g in used if g in self.edge_axis):
+            p = self.pos[g]
+            key = tuple(int(math.floor(c / (2.0 * tol))) for c in p)
+            found = None
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        for other in bucket.get((key[0] + dx, key[1] + dy, key[2] + dz), ()):
+                            if found is None and math.dist(p, self.pos[other]) <= tol:
+                                found = other
+            if found is None:
+                bucket.setdefault(key, []).append(g)
+            else:
+                canon[g] = found
+        if canon:
+            for i, (faces, v) in enumerate(pieces):
+                new_faces = []
+                for f in faces:
+                    nf = []
+                    for x in f:
+                        x = canon.get(x, x)
+                        if not nf or nf[-1] != x:
+                            nf.append(x)
+                    while len(nf) > 1 and nf[0] == nf[-1]:
+                        nf.pop()
+                    if len(set(nf)) >= 3:
+                        new_faces.append(nf)
+                pieces[i] = (new_faces, v)
+            self.welded = len(canon)
+        todo = [g for g in used if g in self.edge_axis and g not in canon]
         if not todo:
             return
         h = 0.01 * self.size
@@ -498,9 +894,9 @@ class Fit(object):
             return self.edge_node[ck]
         found = None
         na, nb = self.normal.get(a), self.normal.get(b)
-        grid_nodes = (self.n[0] + 1) * (self.n[1] + 1) * (self.n[2] + 1)
-        # (a crossing at a node of the grid is where the surface runs through the node: the direction of the surface there is not the direction of one side of an edge it may lie on)
-        if a >= grid_nodes and b >= grid_nodes and na is not None and nb is not None and na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2] < self.cos_edge:
+        # (an end of the cut that is a node of the grid, one the snap took for on the surface, has a normal of its own and counts as well: it was left out as "the direction of the surface there is not the direction of
+        # one side of an edge it may lie on", and 886 of the cuts across the creases of the real bracket at 2 mm ended in one, which got no edge node: the faces that lean more than 12 degrees fell from 6.1 % to 2.8 %)
+        if na is not None and nb is not None and na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2] < self.cos_edge:
             # (a surface that curves fast enough turns by that much between the crossings too: a crease is where the cut between them goes round a corner, so that the middle of the straight line between
             # them is far from the surface -- more than a seventh of its length; for a hole of radius 2 in cubes of 1.5 it is a ninth)
             A0, B0 = self.pos[a], self.pos[b]
@@ -537,13 +933,17 @@ class Fit(object):
                             lo_u, hi_u = min(q[u] for q in corners), max(q[u] for q in corners)
                             lo_v, hi_v = min(q[v] for q in corners), max(q[v] for q in corners)
                             c2 = (min(max(c2[0], lo_u), hi_u), min(max(c2[1], lo_v), hi_v))
-                            point = [0.0, 0.0, 0.0]
-                            point[axis] = A[axis]
-                            point[u], point[v] = c2
-                            self.pos.append(tuple(point))
-                            found = len(self.pos) - 1
-                            self.edge_ids.add(found)
-                            self.edge_axis[found] = axis
+                            # (a point on a SIDE of the face is on an edge of the grid, which the cells on the other side of it share and do not have the node on: the polygon of this face would run out along the side to the
+                            # corner and back to the new node, a spike of no width -- 164 faces of the real bracket at 2 mm, skewness 1 -- and the node would hang on that edge.  The crease that runs along a grid edge needs no node)
+                            side = 0.02 * self.size
+                            if min(c2[0] - lo_u, hi_u - c2[0], c2[1] - lo_v, hi_v - c2[1]) > side:
+                                point = [0.0, 0.0, 0.0]
+                                point[axis] = A[axis]
+                                point[u], point[v] = c2
+                                self.pos.append(tuple(point))
+                                found = len(self.pos) - 1
+                                self.edge_ids.add(found)
+                                self.edge_axis[found] = axis
         self.edge_node[ck] = found
         return found
 
