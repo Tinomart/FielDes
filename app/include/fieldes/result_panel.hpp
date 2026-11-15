@@ -80,6 +80,21 @@ private:
     std::vector<float> m_history;
 };
 
+/*  What an optimisation made best, at every iteration, on a linear scale from the lowest to the highest value: the curve of the optimisation, kept on the card after the run has ended
+ *  (the user, 2026-11-15: "Once the optimization is over the optimization curve disappears. That should be shows in the legend, just like the convergence is shown for the static analysis")  */
+class ObjectiveGraph : public QWidget
+{
+public:
+    ObjectiveGraph(QWidget* parent=nullptr);
+    void setHistory(const std::vector<float>& history);
+    QSize sizeHint() const override { return QSize(200, 88); }
+    QSize minimumSizeHint() const override { return QSize(120, 64); }
+protected:
+    void paintEvent(QPaintEvent* e) override;
+private:
+    std::vector<float> m_history;
+};
+
 class ResultPanel : public QFrame
 {
     Q_OBJECT
@@ -111,6 +126,8 @@ public:
         float opacity = 1;           // how opaque the flow is drawn (a lower one shows the body in it)
         QList<QStringList> keyResults;   // the key numbers of the result: label, text, unit of each
         std::vector<float> residuals;    // a static analysis: the residual of its solve after every iteration (a curve under the key numbers); none: no curve
+        std::vector<float> objective;    // an optimisation: what it made best at every iteration (a curve under the key numbers, kept after the run has ended); none: no curve
+        QString objectiveLabel;          // ... and what that is ("drag", "compliance")
         bool supports = false;           // the scene has the supports of a print (a body of its own, amber): one more class of the legend, and no card of its own
     };
     void setState(const State& s);
@@ -164,6 +181,9 @@ protected:
     QLabel* m_keys = nullptr;
     QWidget* m_residualRow = nullptr;
     ResidualGraph* m_residualGraph = nullptr;
+    QWidget* m_objectiveRow = nullptr;
+    QLabel* m_objectiveTitle = nullptr;
+    ObjectiveGraph* m_objectiveGraph = nullptr;
     State m_state;
     bool m_updating = false;
 };

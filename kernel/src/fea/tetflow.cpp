@@ -449,9 +449,16 @@ bool TetFlowProblem::prepare(std::string& error)
     task.set(0.0, "meshing the fluid");
     auto mesh = std::make_shared<TetMesh>();
     // (a shape that is symmetric about a plane through the middle of its region is meshed on one side of the plane and mirrored: the mesh of a symmetric problem
-    // is then exactly symmetric, and so are the flow and the design on it -- a lattice cut by the shape cannot be, see meshShapeMirrored)
+    // is then exactly symmetric, and so are the flow and the design on it -- a lattice cut by the shape cannot be, see meshShapeMirrored; meshShape does it itself since H226.  The planes may be GIVEN (the optimizer
+    // decided them once, and the real flows round its final body are meshed about the same ones, or about none: setMeshMirrors))
     if (m_given) *mesh = *m_given;      // (a mesh the user made: the elements are theirs, see setMesh)
-    else if (!meshShapeMirrored(m_shape, m_lo, m_hi, m_h, findMeshMirrors(m_shape, m_lo, m_hi, m_h), *mesh, error)) return false;
+    else if (m_mirrorsGiven)
+    {
+        MeshOptions given;
+        given.mirrorAxes = 0;           // (the planes are the ones given, no others are looked for)
+        if (!meshShapeMirrored(m_shape, m_lo, m_hi, m_h, m_givenMirrors, *mesh, error, given)) return false;
+    }
+    else if (!meshShape(m_shape, m_lo, m_hi, m_h, *mesh, error)) return false;
     m_meshMirrors = int(mesh->mirrored);
     if (mesh->faces.empty())
     {

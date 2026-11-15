@@ -1186,19 +1186,31 @@ void Interpreter::evaluate(QString script, bool resuming)
         {
             const QVector3D ext = out.settings.max - out.settings.min;
             const double span = std::max(ext.x(), std::max(ext.y(), ext.z()));
-            const double cells = out.settings.res * span;
+            // (H217, the user, 2026-11-15: "Res of 12 takes very long and even gives a warning"; "12 does not mean 12 per mm"): with auto_scale on -- the default -- the resolution is NORMED by the size of
+            // each model: ten samples across its longest side for every unit, whatever the region is, so 12 is 120 across a model and not 12 samples per mm of the region.  The warning counted per mm of the
+            // region for every script and told a script at 12 that it meant 42,000 across.  It counts what the mesher will do: samples across a model when the scene is normed, voxels across the region when
+            // auto_scale is off (every model is then meshed at the scene's number as samples per mm)
+            const bool normed = out.settings.autoScale;
+            const double cells = normed ? out.settings.res * 10.0 : out.settings.res * span;
             // (roi_resolution(...) picks the resolution itself, within a
             // vertex budget: a fine one is what it means)
-            if (span > 0 && cells > 5000 && !script.contains("roi_resolution(")) {
-                const double good = 1000.0 / span;
+            if (span > 0 && cells > (normed ? 1000.0 : 5000.0) && !script.contains("roi_resolution(")) {
+                const double good = normed ? 10.0 : 1000.0 / span;
                 out.warnings.append({
-                    QString("<b>Warning:</b> <code>resolution %1</code> means %2 voxels across the "
-                            "render region (%3 wide): meshing will take very long.<br>"
-                            "&nbsp;&nbsp;&nbsp;&nbsp;About 1000 across is plenty, e.g. "
-                            "<code>view.set_resolution(%4)</code>, or "
-                            "<code>roi_resolution(...)</code> for imports.")
-                        .arg(out.settings.res).arg(qlonglong(cells)).arg(span, 0, 'g', 4)
-                        .arg(good, 0, 'g', 2),
+                    normed
+                        ? QString("<b>Warning:</b> <code>resolution %1</code> means %2 samples across each "
+                                  "model (ten for every unit): meshing will take very long.<br>"
+                                  "&nbsp;&nbsp;&nbsp;&nbsp;About 100 across is plenty, e.g. "
+                                  "<code>view.set_resolution(%3)</code>, or "
+                                  "<code>roi_resolution(...)</code> for imports.")
+                              .arg(out.settings.res).arg(qlonglong(cells)).arg(good, 0, 'g', 2)
+                        : QString("<b>Warning:</b> <code>resolution %1</code> means %2 voxels across the "
+                                  "render region (%3 wide): meshing will take very long.<br>"
+                                  "&nbsp;&nbsp;&nbsp;&nbsp;About 1000 across is plenty, e.g. "
+                                  "<code>view.set_resolution(%4)</code>, or "
+                                  "<code>roi_resolution(...)</code> for imports.")
+                              .arg(out.settings.res).arg(qlonglong(cells)).arg(span, 0, 'g', 4)
+                              .arg(good, 0, 'g', 2),
                     QString()});
             }
         }
@@ -3037,6 +3049,24 @@ void Interpreter::recordShape(
                             if (item && PyFloat_Check(item)) values.push_back(float(PyFloat_AsDouble(item)));
                         }
                         shape->setResidualHistory(std::move(values));
+                    }
+                    Py_XDECREF(history);
+                    PyErr_Clear();
+                }
+                // What an optimisation made best at every iteration (`_objective_history`, a list of numbers) and what that is (`_objective_label`): the card keeps the curve after the run has ended
+                {
+                    PyObject* history = PyObject_GetAttrString(obj, "_objective_history");
+                    if (history && PyList_Check(history))
+                    {
+                        std::vector<float> values;
+                        for (Py_ssize_t k = 0; k < PyList_Size(history); k++)
+                        {
+                            PyObject* item = PyList_GetItem(history, k);
+                            if (item && PyFloat_Check(item)) values.push_back(float(PyFloat_AsDouble(item)));
+                        }
+                        PyObject* label = PyObject_GetAttrString(obj, "_objective_label");
+                        shape->setObjectiveHistory(std::move(values), label && PyUnicode_Check(label) ? QString::fromUtf8(PyUnicode_AsUTF8(label)) : QString());
+                        Py_XDECREF(label);
                     }
                     Py_XDECREF(history);
                     PyErr_Clear();

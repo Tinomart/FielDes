@@ -13,8 +13,11 @@
 # 270 degree corner), so the PEAK stress of any mesh is the stress of its smallest element and grows as the mesh is refined, while the strain energy (the compliance), the displacements and the stress at a FIXED
 # distance from the corner converge.  A point at a fixed distance from a singularity is not singular: it is the number to quote.
 #
-# Open it in FielDes (from the links of Help > Validation and accuracy, or File > Open) and it runs: about 6 minutes with the linear elements; SIZES and ELEMENT are at the top ('tet10' for the ten-node element).
-# Measured 2026-11-14 on the build of 15:58, linear tetrahedra: see docs/validation.md, "Mesh convergence study".
+# Open it in FielDes (from the links of Help > Validation and accuracy, or File > Open) and it runs: about 6 minutes with the linear elements.  The five meshes are the five calls of solve() below (element sizes 2.0, 1.43,
+# 1.02, 0.73, 0.52 mm: each 1/1.4 of the one before); ELEMENT at the top is 'tet' (linear) or 'tet10' (ten-node).
+# WHAT YOU SEE when you open it: the L-shaped plate of the finest mesh coloured by its stress (the stress rises towards the re-entrant corner), with the held end and the pull drawn on it, at the end of the file.  Each of the five
+# results is a row of the model tree (`result_1` the coarsest ... `result_5` the finest): its eye shows it.
+# Measured on linear tetrahedra: see docs/validation.md, "Mesh convergence study".
 # THIS IS A CHECK OF THE PROGRAM, NOT A VALIDATION OF YOUR DESIGN: see the note at the end of docs/analysis.md.
 #
 import math
@@ -23,14 +26,13 @@ from fieldes import *
 
 ELEMENT = 'tet'                         # 'tet' linear, 'tet10' ten-node
 R = 1.4                                 # the refinement ratio between two meshes (element sizes 2.0, 1.43, 1.02, 0.73, 0.52)
-SIZES = [2.0 / R ** k for k in range(5)]
 T = 2.0                                 # mm, the thickness
 A, W = 40.0, 20.0                       # mm, the sides of the L and the width of its arms
 FORCE = 1000.0                          # N, the pull on the end of the vertical arm
 DISTANCES = [1.5, 3.0]                  # mm, the fixed distances from the corner at which the stress is read
 
 view.set_bounds((-5, -5, -5), (A + 5, A + 5, T + 5), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)                 # ten samples across the longest side of a model for every unit: 100 across the L-plate of 40 mm, cells of 0.4 mm for the 2 mm thickness
 view.set_quality(8)
 
 part = union(box((A, W, T), position=(A / 2, W / 2, T / 2)), box((W, A, T), position=(W / 2, A / 2, T / 2)))
@@ -38,8 +40,10 @@ held = box((1.0, W + 2, T + 2), position=(A + 0.5 - 0.01, W / 2, T / 2))        
 pulled = box((W + 2, 1.0, T + 2), position=(W / 2, A + 0.5 - 0.01, T / 2))             # the end of the vertical arm, y = 40
 plane_bottom = box((A + 2, A + 2, 1.0), position=(A / 2, A / 2, -0.5 + 0.01))          # z = 0: held from moving through the thickness
 plane_top = box((A + 2, A + 2, 1.0), position=(A / 2, A / 2, T + 0.5 - 0.01))          # z = T
-supports = [fixed(held), fixed(plane_bottom, displacement=(inf, inf, 0)), fixed(plane_top, displacement=(inf, inf, 0))]
-loads = [force(pulled, (FORCE, 0, 0))]
+hold_end = fixed(held)                                                 # the end of the horizontal arm, held in every direction
+hold_bottom = fixed(plane_bottom, displacement=(inf, inf, 0))          # the plane z = 0, held in z
+hold_top = fixed(plane_top, displacement=(inf, inf, 0))                # the plane z = T, held in z
+pull = force(pulled, (FORCE, 0, 0))                                    # 1000 N pulling the end of the vertical arm sideways
 corner = (W, W)
 
 
@@ -58,14 +62,29 @@ def peak_near(result):
     return best
 
 
-rows = []
+def row_of(result, h):
+    ''' one row of the table for the analysis `result` of the element size h (mm): the size, the elements, the compliance, the largest displacement, the stress at the two distances, the peak '''
+    return dict(h=h, elements=result.elements, compliance=float(result.compliance), displacement=float(result.max_displacement), s1=at_distance(result, DISTANCES[0]), s2=at_distance(result, DISTANCES[1]), peak=peak_near(result))
+
+
+# the five meshes, element sizes 2.0, 1.43, 1.02, 0.73, 0.52 mm (each 1/1.4 of the one before): five analyses, each a row of the model tree
+result_1 = static_analysis(part, supports=[hold_end, hold_bottom, hold_top], loads=[pull], material=steel, element_size=2.0, element=ELEMENT, cache=False)
+result_2 = static_analysis(part, supports=[hold_end, hold_bottom, hold_top], loads=[pull], material=steel, element_size=2.0 / R, element=ELEMENT, cache=False)
+result_3 = static_analysis(part, supports=[hold_end, hold_bottom, hold_top], loads=[pull], material=steel, element_size=2.0 / R ** 2, element=ELEMENT, cache=False)
+result_4 = static_analysis(part, supports=[hold_end, hold_bottom, hold_top], loads=[pull], material=steel, element_size=2.0 / R ** 3, element=ELEMENT, cache=False)
+result_5 = static_analysis(part, supports=[hold_end, hold_bottom, hold_top], loads=[pull], material=steel, element_size=2.0 / R ** 4, element=ELEMENT, cache=False)
+
+# SHOWN IN THE VIEWPORT, directly after the models and before any check: the analysis of the finest mesh and the conditions it was solved with (the eye of each row in the model tree shows or hides it; `result_1` ... `result_4` are the coarser meshes)
+result_5                                  # the L-shaped plate, coloured by the stress, which rises towards the re-entrant corner
+hold_end                                  # the end of the horizontal arm, held
+hold_bottom                               # the plane z = 0, held in z (plane strain)
+hold_top                                  # the plane z = 2, held in z
+pull                                      # the 1000 N on the end of the vertical arm
+
 print('L-shaped plate, 270 degree re-entrant corner, elements %s, refinement ratio %.2f' % (ELEMENT, R))
 print('%8s %9s %12s %14s %14s %14s %16s' % ('size mm', 'elements', 'compliance', 'max displ. mm', 'stress at %.1f' % DISTANCES[0], 'stress at %.1f' % DISTANCES[1], 'peak (0.05 mm)'))
-for h in SIZES:
-    r = static_analysis(part, supports=supports, loads=loads, material=steel, element_size=h, element=ELEMENT, cache=False)
-    row = dict(h=h, elements=r.elements, compliance=float(r.compliance), displacement=float(r.max_displacement), s1=at_distance(r, DISTANCES[0]), s2=at_distance(r, DISTANCES[1]), peak=peak_near(r))
-    rows.append(row)
-    print('%8.3f %9d %12.6g %14.6g %14.4g %14.4g %16.4g' % (h, row['elements'], row['compliance'], row['displacement'], row['s1'], row['s2'], row['peak']), flush=True)
+rows = [row_of(result_1, 2.0), row_of(result_2, 2.0 / R), row_of(result_3, 2.0 / R ** 2), row_of(result_4, 2.0 / R ** 3), row_of(result_5, 2.0 / R ** 4)]
+print('\n'.join('%8.3f %9d %12.6g %14.6g %14.4g %14.4g %16.4g' % (row['h'], row['elements'], row['compliance'], row['displacement'], row['s1'], row['s2'], row['peak']) for row in rows))
 
 
 def study(name, key):
@@ -94,7 +113,6 @@ study('stress %.1f mm from the corner' % DISTANCES[0], 's1')
 study('stress %.1f mm from the corner' % DISTANCES[1], 's2')
 study('peak stress at the corner (0.05 mm)', 'peak')
 # the peak of a singularity grows as the element shrinks: sigma ~ h^(-(1 - lambda)), the exponent from the last two meshes
-if len(rows) >= 2 and rows[-1]['peak'] > 0 and rows[-2]['peak'] > 0:
+if rows[-1]['peak'] > 0 and rows[-2]['peak'] > 0:
     slope = math.log(rows[-1]['peak'] / rows[-2]['peak']) / math.log(rows[-2]['h'] / rows[-1]['h'])
     print('the peak stress grows like h^-%.2f with the refinement (the theory for a 270 degree corner: h^-0.4555 while the elements are within the singular field)' % slope)
-rows

@@ -611,8 +611,8 @@ where it is), what the body has excluded (`exclude()`) is kept by itself; `extru
 flow); `filter_radius` (mm, default 1.5 elements) is the smallest feature; `sharpness` how crisp the design is. **`symmetry='auto'`** (default), `None`, `'x'` /
 `'y'` / `'z'` or several (`'xz'`), or `{'y': 20.0}` with the plane's position: a symmetric problem gets a symmetric body -- when the domain, the body, the regions and the
 boundary conditions are all symmetric about a plane the flow runs along, the body is kept symmetric about it and the output says which; `None` leaves the body alone.
-**`iterations`** is at most how many design updates (default **80**): the design is sharpened a little at every iteration over the first three quarters of the run (and
-waits while a condition is broken), so a flow wants about that many -- a run stops sooner only when the design has stopped changing after the sharpening.
+**`iterations`** is at most how many design updates (default **20**, as for every optimization; a flow wants about **100**, so ask for them: `iterations=100`, as example 17 and the Pironneau script do): the design is sharpened a little at every iteration over the first three quarters of the run (and
+waits while a condition is broken), so a flow wants that many -- a run stops sooner only when the design has stopped changing after the sharpening.
 
 **Watching it go.** While it runs, the viewport shows the flow of the optimiser's model **after every iteration, as the result shows it**: the fluid around the body
 coloured by the speed, with the streamlines from the inlets and the particles moving along them, the colour bar and the result card, and the body solid. A card says how it is
@@ -803,6 +803,25 @@ The argument is on `static_analysis`, `modal_analysis`, `thermal_analysis`, `flu
 elements as they are: the number is used when the mesh is made, and `surface_fit` beside a mesh is an error. A result made with another number is another result (it is not taken from what was kept for the default). A word or a number outside 0 to 1 is an error that says so.
 Where a part has no sharp edge -- a ball -- every number gives the same to a few elements: there is no edge to decide. **The number is not a quality setting that makes a mesh better**: each end gives something up (poorer tetrahedra beside the edges towards 1, a coarser skin and time towards 0), and the
 usual rule stays: halve the element size and see whether the answer moves.
+
+## Symmetric parts: `symmetry`
+
+A mesh cut from a lattice is not symmetric even when the part is: the lattice cuts a square along the diagonal through its lowest-numbered corner, and a mirror reverses the numbers, so the two arms of a symmetric bracket come out with different elements and different
+edges. **A part that is symmetric about a plane through the middle of its box is therefore meshed as the mirror image of one half**: the half is meshed with the plane as a wall, mended, and mirrored, so the mesh is exactly symmetric, and it is made in about half the time.
+It is on by default and the argument turns it off or restricts it, on every function that meshes a body:
+
+```python
+mesh = mesh_tet4(bracket, 2.0)                              # symmetric about x: made as a half and mirrored
+mesh = mesh_tet4(bracket, 2.0, symmetry=None)               # the whole part, as the lattice cuts it
+mesh = mesh_tet4(bracket, 2.0, symmetry='x')                # only the plane x may be used ('xz': two planes)
+result = static_analysis(bracket, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, symmetry=None)
+```
+
+`symmetry` is `'auto'` (the default), `None`, or the planes to look at (`'x'`, `'y'`, `'z'`, `'xz'`, a list of letters). It is on `static_analysis`, `modal_analysis`, `thermal_analysis`, `fluid_analysis`, `mesh_tet4`, `mesh_tet10`, `mesh_hex_quanta`, `mesh_hex20_quanta`, `mesh_cartesian`,
+`mesh_hex_extrusion`, `mesh_surface_tri` and `mesh_surface_quad` (the optimizers have their own `symmetry`, which keeps the *design* symmetric). **Whether the part is symmetric is decided once, on the field itself, in the one function every tetrahedral mesh passes through**: the part and its mirror
+image are laid over each other, the region where they differ is searched with the kernel's interval arithmetic, and a plane is used when that region is under half a cube of one element. A part that is only almost symmetric is not mirrored (a body 0.5 mm off the middle plane at an element size of 1.8 mm would be flattened by it), a plane that the
+surface meets at a shallow angle is not used, and a plane that leaves less than two elements on its side is left out. The graded meshes (a size field, `graded_size`) and the meshes with layers are meshed whole. A mesh that is **given** to an analysis is the elements as they are: `symmetry` beside a mesh is an error. A result made with `symmetry=None` is another result (it is not
+taken from what was kept for the default). The grids of cubes (`mesh_hex_quanta`, `mesh_hex20_quanta`, `mesh_cartesian`) fit one side with the plane as a wall (the grid starts on the plane), and every cell has its mirror image -- a grid of equal cubes only about an axis along which it has an even number of cubes (four or more): with an odd number the middle cube straddles the plane and the grid is symmetric by itself, and half of it from the plane would make cubes of another size; `mesh_hex_extrusion` makes the end face on one side of the plane and mirrors it; the surface meshes remesh one side and mirror it.
 
 ## A mesh of your own
 

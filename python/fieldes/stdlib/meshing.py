@@ -91,6 +91,8 @@ EDGES['hex20'] = EDGES['hex8']
 ELEMENTS = ('tet', 'tet10', 'hex_quanta', 'hex_quanta20', 'cartesian', 'hex_extrusion')
 _PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
 DEFAULT_HEXAHEDRA = 15000           # the budget of hexahedra of the default element size (they are made in python: about 5 ms each)
+CARTESIAN_DEFAULT_FACTOR = 0.66     # the edge of the cube of mesh_cartesian at its default size over the edge of the tetrahedra's: skin faces of the same area (a triangle of edge h has 0.43 h^2, a face of a cube h^2)
+CARTESIAN_DEFAULT_CELLS = 40000     # the budget of cells of mesh_cartesian at its default size
 DEFAULT_ELEMENTS = 100000           # the budget of tetrahedra of the default element size: a plain cube takes about 20 s and its elements are drawn (the viewer draws up to MAX_DISPLAYED)
 
 
@@ -922,18 +924,30 @@ def _cell_volume(P, kind, ids):
 ################################################################################
 # Meshing
 
-def _kernel_tets(field, lo, hi, h, snap=True):
-    ''' The kernel's conforming tetrahedra of the inside of a body: (nodes, tetrahedra) as flat arrays '''
+_MIRRORED = [0]             # the planes the last mesh of _kernel_tets was mirrored about (H226): 0 for a part that has no symmetry about a plane through the middle of its box
+
+
+def _kernel_tets(field, lo, hi, h, snap=True, symmetric_mend=None):
+    ''' The kernel's conforming tetrahedra of the inside of a body: (nodes, tetrahedra) as flat arrays.  `symmetric_mend` 0 or 1 (H226, the user, 2026-11-16: "I meshed the bracket myself from a file and the mesh is just
+        not symmetrical, despite the part being symmetrical"): a part that is symmetric about a plane through the middle of its box is meshed as the mirror image of a half that was mended before it was mirrored (1: mended),
+        as an analysis does it -- the mesh is then symmetric and needs no mending after it: _MIRRORED says how many planes it was mirrored about, and 0 when the mesh is the plain one that is mended after, as before '''
     _need_kernel()
     region = libfive_region_t()
     for i, axis in enumerate((region.X, region.Y, region.Z)):
         axis.lower, axis.upper = lo[i], hi[i]
+    _MIRRORED[0] = 0
     # (a mesh that is refined after this one -- a graded mesh -- is cleaned up once, after the refinement: _snap; on the lattice before it the passes made the mesh of example 36 worse, H223)
-    make = lib.libfive_tetmesh_new if snap or getattr(lib, 'libfive_tetmesh_new_plain', None) is None else lib.libfive_tetmesh_new_plain
-    ptr = make(field.ptr, region, float(h))
+    symmetric = snap and symmetric_mend is not None and getattr(lib, 'libfive_tetmesh_new_symmetric', None) is not None
+    if symmetric:
+        ptr = lib.libfive_tetmesh_new_symmetric(field.ptr, region, float(h), 1 if symmetric_mend else 0)
+    else:
+        make = lib.libfive_tetmesh_new if snap or getattr(lib, 'libfive_tetmesh_new_plain', None) is None else lib.libfive_tetmesh_new_plain
+        ptr = make(field.ptr, region, float(h))
     if not ptr:
         message = lib.libfive_tetmesh_last_message()
         raise MeshError('the body cannot be meshed' + (': ' + message.decode('utf-8', 'replace') if message else ''))
+    if symmetric:
+        _MIRRORED[0] = int(lib.libfive_tetmesh_mirrored(ptr))
     try:
         counts = (ctypes.c_int64 * 3)()
         lib.libfive_tetmesh_counts(ptr, counts)
@@ -1618,8 +1632,10 @@ def _boundary_edges_made(tets):
     return edges, faces
 
 
-def _to_tet10(P, tets, field, curved):
-    ''' 10-node tetrahedra: a node in the middle of every edge, on the surface when the edge is (and `curved`) '''
+def _to_tet10(P, tets, field, curved, planes=(), size=1.0):
+    ''' 10-node tetrahedra: a node in the middle of every edge, on the surface when the edge is (and `curved`).  `planes` ([(axis, at)]): the planes the mesh was mirrored about (H226) -- the middle nodes that
+        are put on the surface are put there on one side of them only and mirrored, the Newton steps on a field read in single precision would give a node and its image a hair of difference (0.03 mm, in places 0.3 mm, on the
+        real bracket at 6 mm) '''
     boundary, _ = _boundary_edges(tets) if curved else (set(), None)
     mids = {}
     out = array('i')
@@ -1641,7 +1657,60 @@ def _to_tet10(P, tets, field, curved):
         points = [(P[3 * m], P[3 * m + 1], P[3 * m + 2]) for m, _ in new_boundary]
         # (a midside node that moves so far that it folds the element is worse than a straight edge: a step is half an edge at most, so the node stays within a quarter of it)
         scales = [0.5 * math.sqrt((P[3 * e[0]] - P[3 * e[1]]) ** 2 + (P[3 * e[0] + 1] - P[3 * e[1] + 1]) ** 2 + (P[3 * e[0] + 2] - P[3 * e[1] + 2]) ** 2) for _, e in new_boundary]
-        target = _snap_to_surface(field, points, scales, 2)
+        if planes:
+            tol = 1e-6 * size
+            grid = 1e-5 * size
+
+            def canonical(p):
+                ''' The point reflected about every plane that it is below (the side the mesh was fitted on is the upper one), and the axes it was reflected along '''
+                r, along = list(p), []
+                for a, at in planes:
+                    if r[a] < at - tol:
+                        r[a] = 2.0 * at - r[a]
+                        along.append(a)
+                return r, along
+
+            def key(p):
+                return tuple(int(round(c / grid)) for c in p)
+
+            roots, found = {}, []
+            for i, p in enumerate(points):
+                c, along = canonical(p)
+                found.append((c, along))
+                if not along:
+                    roots[key(c)] = i
+            of = []                                           # (the middle node that stands for each one: itself when it is on the upper side)
+            for i, (c, along) in enumerate(found):
+                if not along:
+                    of.append(i)
+                    continue
+                k0 = key(c)
+                j = roots.get(k0)
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        for dz in (-1, 0, 1):
+                            if j is None:
+                                j = roots.get((k0[0] + dx, k0[1] + dy, k0[2] + dz))
+                of.append(j if j is not None else i)          # (no image found: it is put on the surface itself)
+            stand = sorted(set(of))
+            moved = _snap_to_surface(field, [points[i] for i in stand], [scales[i] for i in stand], 2)
+            at_root = {}
+            for i, p in zip(stand, moved):
+                p = list(p)
+                for a, at in planes:
+                    if abs(points[i][a] - at) <= tol:
+                        p[a] = at                             # (a node on a plane stays on it)
+                at_root[i] = p
+            target = []
+            for i, p in enumerate(points):
+                root = of[i]
+                q = list(at_root[root])
+                if root != i:
+                    for a in found[i][1]:
+                        q[a] = 2.0 * dict(planes)[a] - q[a]
+                target.append(q)
+        else:
+            target = _snap_to_surface(field, points, scales, 2)
         for (m, e), p in zip(new_boundary, target):
             P[3 * m], P[3 * m + 1], P[3 * m + 2] = p
     return out
@@ -1996,12 +2065,22 @@ def _mesh_any(body, element_size=None, element='tet', boundary_layers=None, zone
         if hexahedral:
             # (a grid of cubes: the budget is cells, not tetrahedra -- about a third of the tetrahedra's number holds the same body)
             from fieldes.stdlib.element_size import estimated_volume
+            budget = DEFAULT_HEXAHEDRA
+            if element == 'cartesian':
+                # (H223, his words of 2026-11-16: "TET4 IS REALLY GOOD", measured on the real bracket at the same nominal size of 3.75 mm, the same code for both: the Cartesian mesh had 4,630 skin faces against 15,584 of the tetrahedra,
+                # 5.2 % of them leaning more than 12 degrees against 1.1 %, 18.2 % with their middle off the true surface against 5.4 %.  The same number is not the same size: it is the EDGE of a tetrahedron, whose skin
+                # triangle has 0.43 of the area of the face of a cube of that edge, and the faces of a curved surface are wrong by about the square of their size.  The cube of the default size has the edge that gives
+                # a skin face of the area of the tetrahedra's: 0.66 of the size.  The budget of cells is 40,000 for it)
+                element_size *= CARTESIAN_DEFAULT_FACTOR
+                budget = CARTESIAN_DEFAULT_CELLS
+                notes.append('the default element size of mesh_cartesian is {:.2g} of the size of the tetrahedra (a cube of {:.4g} mm: its skin faces are as large as the skin triangles of mesh_tet4 at its default size, {:.4g} mm)'.format(
+                    CARTESIAN_DEFAULT_FACTOR, element_size, element_size / CARTESIAN_DEFAULT_FACTOR))
             volume = estimated_volume(body, box[0], box[1])
-            if volume and volume > 0.0 and volume / element_size ** 3 > DEFAULT_HEXAHEDRA:
-                element_size = (volume / DEFAULT_HEXAHEDRA) ** (1.0 / 3.0)
+            if volume and volume > 0.0 and volume / element_size ** 3 > budget:
+                element_size = (volume / budget) ** (1.0 / 3.0)
             # (H193: a grid of cubes loses a wall thinner than about its cube as the lattice of tetrahedra does -- a tube with a wall of 0.6 mm and a length of 40 was meshed at 1 mm and held 22 % of its volume with hexahedra and 61 % with
             # the cartesian cells --: the size that holds the walls, within the budget of cells as far as that holds them and never more than four times it)
-            element_size, note = thin_size(body, box[0], box[1], element_size, DEFAULT_HEXAHEDRA, 2.0, 4 * DEFAULT_HEXAHEDRA, None, None, 'hexahedra')
+            element_size, note = thin_size(body, box[0], box[1], element_size, budget, 2.0, 4 * budget, None, None, 'hexahedra')
             if note:
                 notes.append(note)
     sizer = _Sizer(element_size)
@@ -2025,9 +2104,13 @@ def _mesh_any(body, element_size=None, element='tet', boundary_layers=None, zone
         mesh = _mesh_hex_cells(body, core, box, sizer, element, quanta, layers, zones, default_zone, feature_angle, cell_zones, notes, name, t0)
         mesh.box = box
         return mesh
-    P, T = _kernel_tets(core, box[0], box[1], base, snap=sizer.uniform is not None)
+    P, T = _kernel_tets(core, box[0], box[1], base, snap=sizer.uniform is not None, symmetric_mend=(1 if optimize else 0) if sizer.uniform is not None else None)
+    mirrored = _MIRRORED[0] if sizer.uniform is not None else 0
     if not len(T):
         raise MeshError('mesh_tet4: the body has nothing inside the box it is meshed in')
+    if mirrored:
+        notes.append('the body is symmetric about {} plane{} through the middle of its box: meshed as the mirror image of a half{}, so the mesh is symmetric too'.format(
+            mirrored, '' if mirrored == 1 else 's', ' that was mended before it was mirrored' if optimize else ''))
     if sizer.uniform is None:
         tet_list = _refine_to_size(P, T, sizer, core, notes=notes)
     else:
@@ -2039,7 +2122,9 @@ def _mesh_any(body, element_size=None, element='tet', boundary_layers=None, zone
     # corners where its layers meet the walls: the ledge in the ring of prisms of example 36 was 0.095 mm with 0.3, 0.004 with 0.1, skewness 0.889 as before)
     if sizer.uniform is None:
         tet_list = _snap(P, tet_list, core, notes, 0.1)
-    if optimize:
+    if mirrored:
+        pass                    # (H226: the half was mended before it was mirrored; a pass over the whole mesh goes through it in an order that a mirror reverses, and the mesh would not be symmetric any more)
+    elif optimize:
         tet_list = _mend(P, tet_list, core, smooth, notes)
         tet_list = _lift_caps(P, tet_list, notes)
     elif smooth and sizer.uniform is None:
@@ -2052,6 +2137,7 @@ def _mesh_any(body, element_size=None, element='tet', boundary_layers=None, zone
     mesh.element = element
     mesh.element_size = sizer.uniform if sizer.uniform is not None else base
     mesh.graded = sizer.uniform is None             # (made with a size that varies on purpose: its spread of sizes is its design, see MeshQuality.spread)
+    mesh.mirrored = mirrored                        # (H226: the planes the mesh was mirrored about: a skin that is remeshed afterwards is remeshed on one side of them too)
     mesh.notes = notes
     mesh.body = body
     mesh.box = box
@@ -2062,7 +2148,7 @@ def _mesh_any(body, element_size=None, element='tet', boundary_layers=None, zone
             _add_layers(mesh, tet_list or [tuple(T[4 * i:4 * i + 4]) for i in range(len(T) // 4)], wall_distance, layers, notes)
     else:
         tet_list = tet_list or [tuple(T[4 * i:4 * i + 4]) for i in range(len(T) // 4)]
-        mesh.cells['tet10'] = _to_tet10(P, tet_list, core, curved)
+        mesh.cells['tet10'] = _to_tet10(P, tet_list, core, curved, _mirror_planes(core, box[0], box[1], base) if mirrored and curved else (), base)
     _compact_nodes(mesh)
     mesh.faces = _boundary_of(mesh)
     tolerance = 0.02 * (mesh.element_size or base)
@@ -2070,6 +2156,49 @@ def _mesh_any(body, element_size=None, element='tet', boundary_layers=None, zone
     _assign_cell_zones(mesh, cell_zones, tolerance)
     mesh.seconds = time.time() - t0
     return mesh
+
+
+def _mirror_planes(field, lo, hi, h):
+    ''' The planes through the middle of the box [lo, hi] that `field` is symmetric about and that the symmetry argument allows (sim_mesh.current_symmetry), as [(axis, at)]: the decision is the kernel's, the one that
+        meshShape makes for the tetrahedra (H226); a plane whose half is less than two cells across is left out, as the kernel leaves it out '''
+    from fieldes.stdlib import sim_mesh
+    mask = sim_mesh.current_symmetry()
+    fn = getattr(lib, 'libfive_tetmesh_find_mirrors', None)
+    if not mask or fn is None:
+        return []
+    _need_kernel()
+    region = libfive_region_t()
+    for i, axis in enumerate((region.X, region.Y, region.Z)):
+        axis.lower, axis.upper = float(lo[i]), float(hi[i])
+    axes = (ctypes.c_int * 3)()
+    places = (ctypes.c_double * 3)()
+    count = int(fn(field.ptr, region, float(h), int(mask), axes, places))
+    return [(int(axes[i]), float(places[i])) for i in range(count) if float(hi[int(axes[i])]) - float(places[i]) >= 2.0 * float(h)]
+
+
+def _aligned_note(fit):
+    ''' What the grid did with the flat faces of the body (H223), as a note: '' when no plane of it was put on one '''
+    aligned = getattr(fit, 'aligned', None)
+    if not aligned or not any(aligned):
+        return ''
+    narrow, wide = fit.width_range
+    return 'the planes of the grid were put on {} flat faces of the body that stand square to an axis ({} along x, {} along y, {} along z), so the cells are bricks {:.2g} to {:.2g} of the element size across (align=False: equal cubes)'.format(
+        sum(len(a) for a in aligned), len(aligned[0]), len(aligned[1]), len(aligned[2]), narrow / fit.size, wide / fit.size)
+
+
+def _fit_cells(core, box, size, **options):
+    ''' The Fit (bodyfit.py) of a grid of cubes cut by `core`: the mirror image of a fit of one side when the body is symmetric about planes through the middle of its box (H226), else a fit of the whole body '''
+    from fieldes.stdlib import bodyfit
+    options.setdefault('align', _ALIGN[0])
+    planes = _mirror_planes(core, box[0], box[1], size)
+    if planes and not options['align']:
+        # (a grid of equal cubes has a plane of the grid at the middle of the box only when it has an even number of cubes along that axis; with an odd number the middle cube straddles the plane, and the half grid -- whole
+        # cubes from the plane to the end -- would make cubes of another size: 5 cubes of 2 mm across a box of 10 became 2 of 2.5.  Such an axis is not mirrored: the grid is symmetric about the plane by itself)
+        planes = [(axis, at) for axis, at in planes
+                  if max(2, int(round((float(box[1][axis]) - float(box[0][axis])) / float(size)))) % 2 == 0 and int(round((float(box[1][axis]) - float(box[0][axis])) / float(size))) >= 4]
+    if planes:
+        return bodyfit.MirroredFit(core, box[0], box[1], size, planes, **options)
+    return bodyfit.Fit(core, box[0], box[1], size, **options)
 
 
 def _mesh_hex_cells(body, core, box, sizer, element, quanta, layers, zones, default_zone, feature_angle, cell_zones, notes, name, t0):
@@ -2081,10 +2210,12 @@ def _mesh_hex_cells(body, core, box, sizer, element, quanta, layers, zones, defa
         raise MeshError("mesh_tet4: a grid of cubes is of one size: give element_size as a number (a size field and graded_size are for tetrahedra)")
     if not 0.0 < float(quanta) <= 1.0:
         raise ValueError('mesh_tet4: quanta is the part of a cube that must be inside the body for the cube to be made, above 0 and at most 1')
-    fit = bodyfit.Fit(core, box[0], box[1], sizer.uniform, quanta=quanta)
+    fit = _fit_cells(core, box, sizer.uniform, quanta=quanta)
     cells = fit.run()
     if not cells:
         raise MeshError('mesh_tet4: no cube of the grid holds the body: use a smaller element_size')
+    if isinstance(fit, bodyfit.MirroredFit):
+        notes.append('the body is symmetric about {} plane{} through the middle of its box: meshed on one side and mirrored, so the mesh is symmetric too'.format(len(fit.planes), '' if len(fit.planes) == 1 else 's'))
     mesh = Mesh(name or 'mesh')
     mesh.element = element
     mesh.element_size = sizer.uniform
@@ -2109,6 +2240,8 @@ def _mesh_hex_cells(body, core, box, sizer, element, quanta, layers, zones, defa
     cut = len(cells) - fit.whole
     notes.append('a grid of cubes of {:.4g} mm, {:,} hexahedra: {:,} lie in the body and {:,} are cubes the surface cuts with at least {:.3g} of the cube inside; {:,} cut cubes with less inside are left out, so the boundary '
                  'is a staircase of whole cubes'.format(fit.d[0], len(cells), fit.whole, cut, float(quanta), fit.dropped))
+    if _aligned_note(fit):
+        notes.append(_aligned_note(fit))
     mesh.notes = notes
     mesh.seconds = time.time() - t0
     return mesh
@@ -2140,10 +2273,12 @@ def _mesh_cartesian_cells(body, core, box, sizer, threshold, layers, zones, defa
     from fieldes.stdlib import bodyfit
     if sizer.uniform is None:
         raise MeshError("mesh_tet4: a grid of cubes is of one size: give element_size as a number (a size field and graded_size are for tetrahedra)")
-    fit = bodyfit.Fit(core, box[0], box[1], sizer.uniform, threshold)
+    fit = _fit_cells(core, box, sizer.uniform, threshold=threshold)
     cells = fit.run()
     if not cells:
         raise MeshError('mesh_tet4: no cube of the grid holds the body: use a smaller element_size')
+    if isinstance(fit, bodyfit.MirroredFit):
+        notes.append('the body is symmetric about {} plane{} through the middle of its box: meshed on one side and mirrored, so the mesh is symmetric too'.format(len(fit.planes), '' if len(fit.planes) == 1 else 's'))
     mesh = Mesh(name or 'mesh')
     mesh.element = 'cartesian'
     mesh.element_size = sizer.uniform
@@ -2171,6 +2306,8 @@ def _mesh_cartesian_cells(body, core, box, sizer, threshold, layers, zones, defa
     notes.append('a grid of cubes of {:.4g} mm cut by the body: {}; {:,} cut cells with at most 1/{:.4g} of a cube inside were joined to the cell they share the most face with{}{}'.format(
         fit.d[0], shares, fit.merged, threshold, '' if not fit.dropped else ' ({:,} without a neighbour or flat were left out)'.format(fit.dropped),
         '' if not (fit.edge_moved or fit.collapsed) else '; {:,} nodes were put on an edge of the body and {:,} taken into a node beside them'.format(fit.edge_moved, fit.collapsed)))
+    if _aligned_note(fit):
+        notes.append(_aligned_note(fit))
     mesh.notes = notes
     mesh.seconds = time.time() - t0
     return mesh
@@ -2187,7 +2324,7 @@ def _run(function, body, element_size, element, **options):
         raise
 
 
-def mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5):
+def mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5, symmetry='auto'):
     ''' The inside of `body` as a mesh of TETRAHEDRA of 4 nodes that follow its surface (see the description of this module).
 
             mesh = mesh_tet4(part, element_size=2.0)
@@ -2202,15 +2339,19 @@ def mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default
         surface_fit     a number from 0 to 1 that says what the mesh gives up where the exact surface and good elements pull against each other (a sharp edge that the lattice cuts across):
                         0.5 by default (what the mesher has always done); towards 1 nodes go onto edges even where the elements get poorer and the skin stays nearer the exact surface; towards 0
                         a move that would leave a poor element is refused and the skin may stand further off the surface to remove a sliver.  The limits each number stands for are in
-                        docs/analysis.md, Surface or elements '''
+                        docs/analysis.md, Surface or elements
+        symmetry        'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a body that is symmetric about a plane through the middle of its box is meshed as the mirror image of a
+                        half that was mended before it was mirrored, so that the mesh is symmetric too (a lattice cut by a body cannot be); None meshes the body whole.  A graded mesh (a size field) and
+                        a mesh with layers are meshed whole '''
     from fieldes.stdlib import sim_mesh
     fit = sim_mesh.surface_fit_value(surface_fit, 'mesh_tet4')
-    with sim_mesh.surface_fit_scope(fit):
+    sym = sim_mesh.symmetry_value(symmetry, 'mesh_tet4')
+    with sim_mesh.surface_fit_scope(fit, sym):
         return _run('mesh_tet4', body, element_size, 'tet', boundary_layers=boundary_layers, zones=zones, default_zone=default_zone, feature_angle=feature_angle, cell_zones=cell_zones,
                     smooth=smooth, optimize=optimize, bounds=bounds, name=name)
 
 
-def mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5):
+def mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5, symmetry='auto'):
     ''' The inside of `body` as a mesh of TETRAHEDRA of 10 nodes: the tetrahedra of mesh_tet4 with a node in the middle of every edge, the ones on the surface put on it (the edges there curved).
 
             mesh = mesh_tet10(part, element_size=3.0)
@@ -2219,17 +2360,36 @@ def mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature
         zones           {name: region}: the patches of the boundary; the rest are `default_zone`; feature_angle (degrees) splits those at the creases
         cell_zones      {name: region}: zones of cells; the rest are 'fluid'
         curved          the nodes in the middle of the edges and faces on the boundary lie on the surface (False: halfway between the corners)
-        smooth, optimize, bounds, name, surface_fit   as for mesh_tet4
+        smooth, optimize, bounds, name, surface_fit, symmetry   as for mesh_tet4
 
         Layers of prisms (boundary_layers) are made with mesh_tet4: a prism has no node in the middle of every edge of the tetrahedra. '''
     from fieldes.stdlib import sim_mesh
     fit = sim_mesh.surface_fit_value(surface_fit, 'mesh_tet10')
-    with sim_mesh.surface_fit_scope(fit):
+    sym = sim_mesh.symmetry_value(symmetry, 'mesh_tet10')
+    with sim_mesh.surface_fit_scope(fit, sym):
         return _run('mesh_tet10', body, element_size, 'tet10', zones=zones, default_zone=default_zone, feature_angle=feature_angle, cell_zones=cell_zones, curved=curved,
                     smooth=smooth, optimize=optimize, bounds=bounds, name=name)
 
 
-def mesh_hex_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None):
+_ALIGN = [True]             # (H223: whether the grid of the cubes of the next mesh has its planes put on the flat faces of the body: the argument `align` of the grid meshers, read by _fit_cells)
+
+
+def _symmetric_run(function, symmetry, *args, align=True, **kwargs):
+    ''' _run inside the scope of the symmetry argument (H226): the meshers that have no surface_fit keep the one that stands; and with the choice `align` of the grid meshers (H223) '''
+    from fieldes.stdlib import sim_mesh
+    mask = sim_mesh.symmetry_value(symmetry, function)
+    if not isinstance(align, bool):
+        raise ValueError('{}: align is True (the planes of the grid are put on the flat faces of the body, the default) or False (a grid of equal cubes), not {!r}'.format(function, align))
+    before = _ALIGN[0]
+    _ALIGN[0] = align
+    try:
+        with sim_mesh.surface_fit_scope(sim_mesh.current_surface_fit(), mask):
+            return _run(function, *args, **kwargs)
+    finally:
+        _ALIGN[0] = before
+
+
+def mesh_hex_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None, symmetry='auto', align=False):
     ''' The inside of `body` as HEXAHEDRA of 8 nodes only: the cubes of a Cartesian grid, those the surface cuts included when `quanta` of them is inside (Salome's Body Fitting with Quanta).  Every cell is
         a perfect cube; the boundary is a staircase of whole cubes.
 
@@ -2239,23 +2399,27 @@ def mesh_hex_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, 
         quanta          a cube that the surface cuts is a whole cube of the grid when what is inside holds at least this part of it (0.5 by default, so that the mesh has about the volume of the body), and is left out when it holds less
         axes            the grid of cubes turned, as the rotation= of a placement is -- (x, y, z) in degrees: a box turned by 30 degrees about z is a block of perfect cubes along its own sides with axes=(0, 0, 30)
         zones, default_zone, feature_angle, cell_zones, bounds, name   as for mesh_tet4
+        symmetry        'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a body that is symmetric about a plane through the middle of its box is meshed on one side of it and
+                        mirrored, so the mesh is exactly symmetric; None meshes the body whole
+        align           False (default): a grid of equal cubes, every cell a perfect cube.  True: the planes of the grid are put ON the flat faces of the body that stand square to an axis, so a crease between two of
+                        them is an edge of the grid and the boundary is exact there; the cells are then bricks, 0.6 to 1.5 of the element size across, where the gap between two such faces is not a whole number of cubes
 
         The grid has one size: no size field and no layers.  The cubes with a node in the middle of every edge are mesh_hex20_quanta. '''
-    return _run('mesh_hex_quanta', body, element_size, 'hex_quanta', zones=zones, default_zone=default_zone, feature_angle=feature_angle,
-                cell_zones=cell_zones, quanta=quanta, bounds=bounds, name=name, axes=axes)
+    return _symmetric_run('mesh_hex_quanta', symmetry, body, element_size, 'hex_quanta', zones=zones, default_zone=default_zone, feature_angle=feature_angle,
+                          cell_zones=cell_zones, quanta=quanta, bounds=bounds, name=name, axes=axes, align=align)
 
 
-def mesh_hex20_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None):
+def mesh_hex20_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None, symmetry='auto', align=False):
     ''' The inside of `body` as HEXAHEDRA of 20 nodes only: the cubes of mesh_hex_quanta with a node in the middle of every edge.
 
             mesh = mesh_hex20_quanta(part, 2.0)
 
         All the arguments are the ones of mesh_hex_quanta. '''
-    return _run('mesh_hex20_quanta', body, element_size, 'hex_quanta20', zones=zones, default_zone=default_zone, feature_angle=feature_angle,
-                cell_zones=cell_zones, quanta=quanta, bounds=bounds, name=name, axes=axes)
+    return _symmetric_run('mesh_hex20_quanta', symmetry, body, element_size, 'hex_quanta20', zones=zones, default_zone=default_zone, feature_angle=feature_angle,
+                          cell_zones=cell_zones, quanta=quanta, bounds=bounds, name=name, axes=axes, align=align)
 
 
-def mesh_cartesian(body, element_size=None, threshold=4.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None):
+def mesh_cartesian(body, element_size=None, threshold=4.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None, symmetry='auto', align=True):
     ''' The inside of `body` as a grid of cubes CUT by the body: hexahedra inside it, and where the surface cuts a cube the cell of what is inside -- a tetrahedron, prism, pyramid, hexahedron or polyhedron by its faces --
         with its nodes on the surface (Salome's Body Fitting).
 
@@ -2269,13 +2433,16 @@ def mesh_cartesian(body, element_size=None, threshold=4.0, axes=None, zones=None
                         (scaled Jacobian under 0.2) is joined whatever it holds.  The nodes the snap took for on the surface (within a tenth of a cube of it) are put on it
         axes            the grid turned, as for mesh_hex_quanta
         zones, default_zone, feature_angle, cell_zones, bounds, name   as for mesh_tet4
+        symmetry        as for mesh_hex_quanta: a symmetric body is meshed on one side of the plane and mirrored
+        align           as for mesh_hex_quanta: the planes of the grid are put on the flat faces of the body that stand square to an axis (True, the default), so that the edges between them are exact and no cell is cut
+                        across them -- where the cut cells of a grid of equal cubes have a bevel; False: a grid of equal cubes
 
         The grid has one size: no size field and no layers. '''
-    return _run('mesh_cartesian', body, element_size, 'cartesian', zones=zones, default_zone=default_zone, feature_angle=feature_angle, cell_zones=cell_zones,
-                threshold=threshold, bounds=bounds, name=name, axes=axes)
+    return _symmetric_run('mesh_cartesian', symmetry, body, element_size, 'cartesian', zones=zones, default_zone=default_zone, feature_angle=feature_angle, cell_zones=cell_zones,
+                          threshold=threshold, bounds=bounds, name=name, axes=axes, align=align)
 
 
-def mesh_hex_extrusion(body, element_size=None, axis='z', layers=None, smooth=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None):
+def mesh_hex_extrusion(body, element_size=None, axis='z', layers=None, smooth=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None, symmetry='auto'):
     ''' A body that is a PRISM along `axis` as hexahedra: its end face meshed with quadrilaterals and swept along it, the surface exact (Salome's Extrusion 3D).  A body that is not a prism along the axis is refused.
 
             mesh = mesh_hex_extrusion(plate_with_holes, 1.0)             # along z, the cells about 1 mm across
@@ -2285,9 +2452,11 @@ def mesh_hex_extrusion(body, element_size=None, axis='z', layers=None, smooth=No
         layers          the layers along it: a whole number, or a list of their thicknesses in mm (default: cells of the element size)
         smooth          rounds of smoothing the hexahedra (default 10)
         boundary_layers inflation_layers(...): layers of hexahedra on the surface of a solid, growing into the mesh
-        zones, default_zone, feature_angle, bounds, name   as for mesh_tet4 '''
-    return _run('mesh_hex_extrusion', body, element_size, 'hex_extrusion', boundary_layers=boundary_layers, zones=zones, default_zone=default_zone, feature_angle=feature_angle,
-                smooth=smooth, bounds=bounds, name=name, axis=axis, layers=layers)
+        zones, default_zone, feature_angle, bounds, name   as for mesh_tet4
+        symmetry        'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a body that is symmetric about a plane along the axis of the prism has its end face made on one side of the
+                        plane and mirrored, so the mesh is exactly symmetric; None meshes the end face whole '''
+    return _symmetric_run('mesh_hex_extrusion', symmetry, body, element_size, 'hex_extrusion', boundary_layers=boundary_layers, zones=zones, default_zone=default_zone, feature_angle=feature_angle,
+                          smooth=smooth, bounds=bounds, name=name, axis=axis, layers=layers)
 
 
 def _surface(function, body, element_size, quads, zones, default_zone, feature_angle, bounds, name):
@@ -2300,7 +2469,9 @@ def _surface(function, body, element_size, quads, zones, default_zone, feature_a
         try:
             from fieldes.stdlib import surface_remesh
             before = out.face_count('tri3')
-            if surface_remesh.remesh_skin(out, size, 30.0 if feature_angle is None else float(feature_angle)):
+            # (H226: a skin that is symmetric is remeshed on one side of the plane and mirrored, so that it stays symmetric; the planes are the kernel's decision, the one the volume mesh was made with)
+            planes = _mirror_planes(mesh.body, mesh.box[0], mesh.box[1], size) if getattr(mesh, 'box', None) is not None and getattr(mesh, 'mirrored', 0) else []
+            if surface_remesh.remesh_skin(out, size, 30.0 if feature_angle is None else float(feature_angle), planes):
                 out.notes = list(out.notes) + ['the surface remeshed to triangles of about {:.3g} mm: {:,} triangles (the skin of the volume mesh had {:,})'.format(size, out.face_count('tri3'), before)]
         except Exception as e:                    # (a surface that cannot be remeshed keeps the skin it has)
             out.notes = list(out.notes) + ['the surface was not remeshed: {}'.format(e)]
@@ -2310,23 +2481,32 @@ def _surface(function, body, element_size, quads, zones, default_zone, feature_a
     return out
 
 
-def mesh_surface_tri(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None):
+def mesh_surface_tri(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None, symmetry='auto'):
     ''' The surface of `body` as a mesh of TRIANGLES.  It is the boundary of the tetrahedra that mesh_tet4 makes, so it follows the body's surface and is conforming, and it costs the volume mesh; its arguments are
         mesh_tet4's.
 
             surface = mesh_surface_tri(part, 1.0)
 
+        symmetry        'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a body that is symmetric about a plane through the middle of its box has a symmetric surface mesh (the half is
+                        remeshed and mirrored); None meshes the body whole
+
         The surface as quadrilaterals is mesh_surface_quad. '''
-    return _surface('mesh_surface_tri', body, element_size, False, zones, default_zone, feature_angle, bounds, name)
+    from fieldes.stdlib import sim_mesh
+    mask = sim_mesh.symmetry_value(symmetry, 'mesh_surface_tri')
+    with sim_mesh.surface_fit_scope(sim_mesh.current_surface_fit(), mask):
+        return _surface('mesh_surface_tri', body, element_size, False, zones, default_zone, feature_angle, bounds, name)
 
 
-def mesh_surface_quad(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None):
+def mesh_surface_quad(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None, symmetry='auto'):
     ''' The surface of `body` as a mesh of QUADRILATERALS: every triangle of mesh_surface_tri cut into three, so the quadrilaterals are about half the size of the triangles.
 
             surface = mesh_surface_quad(part, 1.0)
 
         All the arguments are the ones of mesh_surface_tri. '''
-    return _surface('mesh_surface_quad', body, element_size, True, zones, default_zone, feature_angle, bounds, name)
+    from fieldes.stdlib import sim_mesh
+    mask = sim_mesh.symmetry_value(symmetry, 'mesh_surface_quad')
+    with sim_mesh.surface_fit_scope(sim_mesh.current_surface_fit(), mask):
+        return _surface('mesh_surface_quad', body, element_size, True, zones, default_zone, feature_angle, bounds, name)
 
 
 def _layer_levels(layers, length, wide):
@@ -2391,10 +2571,32 @@ class _CoarseEnd(MeshError):
     ''' The triangles of the end face are too coarse for its curves '''
 
 
+def _mirror_quads(pos, quads, axis, at, tol):
+    ''' (pos, quads) with the mirror image about the plane `axis` = `at` added (H226): the nodes within `tol` of the plane are put on it and shared, every other node gets an image, every quadrilateral its image turned
+        the other way (so that the cells made from them keep the one sense) '''
+    new_pos = [list(p) for p in pos]
+    image = {}
+    for n in sorted({n for q in quads for n in q}):
+        p = pos[n]
+        if abs(p[axis] - at) <= tol:
+            new_pos[n][axis] = at
+            image[n] = n
+        else:
+            q = list(p)
+            q[axis] = 2.0 * at - p[axis]
+            new_pos.append(q)
+            image[n] = len(new_pos) - 1
+    out = list(quads)
+    for q in quads:
+        out.append((image[q[0]], image[q[3]], image[q[2]], image[q[1]]))
+    return new_pos, out
+
+
 def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, feature_angle, bounds, name, t0):
     ''' One try of mesh_extrusion with triangles of `factor` times the element size on the end face '''
     # the end face: the boundary triangles of the tetrahedral mesh that look away from the axis and lie at its low end
-    tet = mesh_tet4(body, factor * h, bounds=bounds)
+    from fieldes.stdlib import sim_mesh
+    tet = mesh_tet4(body, factor * h, bounds=bounds, symmetry=sim_mesh.symmetry_letters(sim_mesh.current_symmetry()))
     P = tet.nodes
     nn = len(P) // 3
     z0 = min(P[3 * i + a] for i in range(nn))
@@ -2416,6 +2618,26 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
                 base.append((f[0], f[2], f[1]))                 # (turned to face along the axis: the boundary face looks away from it)
     if not base:
         raise MeshError('mesh_hex_extrusion: the body has no flat end face perpendicular to the {} axis: it is not a prism along it'.format('xyz'[a]))
+    # (H226: a body that is symmetric about a plane along the axis has an end face that is symmetric about it, and the tetrahedral mesh it was taken from is the mirror image of a half.  The pairing of triangles and the
+    # smoothing below go through the end face in an order that a mirror reverses, so the quadrilaterals are made on one side of the plane and mirrored: the plane is a wall of the half, as it is for the tetrahedra)
+    planes = []
+    if getattr(tet, 'mirrored', 0) and getattr(tet, 'box', None) is not None:
+        planes = [(ax, at) for ax, at in _mirror_planes(tet.body, tet.box[0], tet.box[1], factor * h) if ax != a]
+    tol = 1e-6 * h
+
+    def on_plane(q, ax, at):
+        return abs(q[ax] - at) <= tol
+
+    if planes:
+        def side(n, ax, at):
+            c = P[3 * n + ax] - at
+            return 0 if abs(c) <= tol else (1 if c > 0 else -1)
+        if all(len({side(n, ax, at) for n in f} - {0}) <= 1 for f in base for ax, at in planes):
+            base = [f for f in base if all(side(n, ax, at) >= 0 for n in f for ax, at in planes)]
+        else:
+            planes = []                                         # (a triangle with nodes on both sides of a plane: the end face is not cut cleanly by it, and is made whole)
+    if not base:
+        raise MeshError('mesh_hex_extrusion: the body has no flat end face perpendicular to the {} axis: it is not a prism along it'.format('xyz'[a]))
     # the nodes of the end face, then the middle of every edge and of every triangle (each triangle becomes three quadrilaterals)
     used = sorted(set(n for f in base for n in f))
     index = {n: i for i, n in enumerate(used)}
@@ -2433,6 +2655,10 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
     mid = {}
     rim_middles = []
 
+    def plane_edge(p, q):
+        ''' An edge along a plane of the mirror (both nodes on it): the wall of the half, not the rim of the body '''
+        return any(on_plane(pos[p], ax, at) and on_plane(pos[q], ax, at) for ax, at in planes)
+
     def middle(p, q):
         key = (p, q) if p < q else (q, p)
         m = mid.get(key)
@@ -2440,7 +2666,7 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
             m = len(pos)
             mid[key] = m
             pos.append([(pos[p][c] + pos[q][c]) * 0.5 for c in range(3)])
-            if use.get(key) == 1:
+            if use.get(key) == 1 and not plane_edge(p, q):
                 rim_middles.append(m)                           # (the middle of an edge of the rim lies on its chord: it goes onto the surface)
         return m
 
@@ -2501,8 +2727,14 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
         for k in range(m_):
             quads.append((ring[k], middles[k], c, middles[(k - 1) % m_]))
     # the body must be a prism: over a grid on the box of its end face it is inside at the same places near the end, in the middle and near the other end
+    # (the box of the whole end face: the nodes of the half, and the box mirrored about every plane, since the quadrilaterals of a symmetric body are made on one side of its plane and mirrored after this check)
     lo_u, hi_u = min(p[u] for p in pos), max(p[u] for p in pos)
     lo_v, hi_v = min(p[v] for p in pos), max(p[v] for p in pos)
+    for ax, at in planes:
+        if ax == u:
+            lo_u = min(lo_u, 2.0 * at - hi_u)
+        else:
+            lo_v = min(lo_v, 2.0 * at - hi_v)
     grid = 60
     inside_at = []
     for height in (z0 + min(0.25 * h, 0.1 * length), z0 + 0.5 * length, z1 - min(0.25 * h, 0.1 * length)):
@@ -2514,15 +2746,19 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
                 q[u] = lo_u + (hi_u - lo_u) * i / grid
                 q[v] = lo_v + (hi_v - lo_v) * j / grid
                 pts.append(tuple(q))
-        inside_at.append([val <= 0.0 for val in _eval(body, pts)])
-    differ = sum(1 for k in range(len(inside_at[0])) if not (inside_at[0][k] == inside_at[1][k] == inside_at[2][k]))
+        inside_at.append(_eval(body, pts))
+    # (a place within a thousandth of an element of the surface is not asked: the field there reads a hair either side of zero at different heights, and the box of a mirrored end face has its edges ON the tangent
+    # points of a round wall -- 12 of 3,721 places of a tube along x were counted as different for that alone)
+    near = 1e-3 * h
+    differ = sum(1 for k in range(len(inside_at[0]))
+                 if min(abs(inside_at[0][k]), abs(inside_at[1][k]), abs(inside_at[2][k])) > near and not ((inside_at[0][k] <= 0.0) == (inside_at[1][k] <= 0.0) == (inside_at[2][k] <= 0.0)))
     if differ > 0.003 * len(inside_at[0]):
         raise MeshError('mesh_hex_extrusion: the body is not a prism along the {} axis: {:,} of {:,} places over its end face are inside it at one height and outside it at another'.format('xyz'[a], differ, len(inside_at[0])))
     # the nodes of the rim go onto the surface -- the corners of the triangles too: the tetrahedral mesh's boundary vertices lie on the lattice, a fifth of a millimetre off a round hole at 2 mm -- along it, in the
     # plane (the field of a prism has no gradient along the axis); the middle of each triangle is then the mean of its six nodes
     rim_corners = set()
     for (p_, q_), count in use.items():
-        if count == 1:
+        if count == 1 and not plane_edge(p_, q_):
             rim_corners.update((p_, q_))
     on_rim = sorted(rim_corners) + rim_middles
     if on_rim:
@@ -2532,7 +2768,11 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
             q[a] = z0 + 0.5 * length
             pts.append(tuple(q))
         for m, q in zip(on_rim, _snap_to_surface(body, pts, [1.5 * h] * len(pts), 3)):
+            was = list(pos[m])
             pos[m][u], pos[m][v] = q[u], q[v]
+            for ax, at in planes:
+                if on_plane(was, ax, at):
+                    pos[m][ax] = at                             # (a node of the rim on the plane of the mirror stays on it: the Newton steps may leave it off by a hair)
         for c, ring in centre_rings:
             for k in range(3):
                 pos[c][k] = sum(pos[n][k] for n in ring) / float(len(ring))
@@ -2547,8 +2787,8 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
     for (p, q_), count in edge_use.items():
         neighbours.setdefault(p, set()).add(q_)
         neighbours.setdefault(q_, set()).add(p)
-        if count == 1:
-            rim.add(p)
+        if count == 1 and not plane_edge(p, q_):
+            rim.add(p)                                           # (an edge along a plane of the mirror is the wall of the half, not the rim: its nodes slide along the plane below)
             rim.add(q_)
     around = {}
     for qi, q in enumerate(quads):
@@ -2573,9 +2813,12 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
                 continue
             before = min(worst(qi) for qi in around[n])
             old = (pos[n][u], pos[n][v])
+            held = [(ax, at) for ax, at in planes if on_plane(pos[n], ax, at)]
             ns = neighbours[n]
             pos[n][u] = old[0] + 0.5 * (sum(pos[m][u] for m in ns) / len(ns) - old[0])
             pos[n][v] = old[1] + 0.5 * (sum(pos[m][v] for m in ns) / len(ns) - old[1])
+            for ax, at in held:
+                pos[n][ax] = at                                  # (a node on a plane of the mirror stays on it: it slides along it)
             after = min(worst(qi) for qi in around[n])
             if after >= before - 1e-12 and (after > 0.0 or after > before):
                 moved += 1
@@ -2584,6 +2827,8 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
     inverted = sum(1 for qi in range(len(quads)) if worst(qi) <= 0.0)
     if inverted:
         raise _CoarseEnd('mesh_hex_extrusion: {:,} of the {:,} quadrilaterals of the end face are turned inside out at this element size, and at the finer triangles that were tried (the curves of the face are finer than the element size): use a smaller element_size'.format(inverted, len(quads)))
+    for ax, at in planes:
+        pos, quads = _mirror_quads(pos, quads, ax, at, tol)
     # the layers: as high as the quadrilaterals are wide, in a whole number
     edge_sum = 0.0
     edge_count = 0
@@ -2617,6 +2862,9 @@ def _extrusion_attempt(body, h, factor, a, layers, smooth, zones, default_zone, 
     mesh.notes = ['the end face meshed with {:,} quadrilaterals (the triangles of its tetrahedral mesh, {:.2g} times the element size, paired into quadrilaterals where two make a good one, every quadrilateral cut '
                   'into four and every triangle left over into three, the nodes of the rim put on the surface, {:,} nodes moved toward the middle of their neighbours) and swept through {:.6g} mm in {} layers: '
                   '{:,} hexahedra, the surface fitted'.format(len(quads), factor, moved, length, len(levels) - 1, len(H) // 8)]
+    if planes:
+        mesh.notes.append('the body is symmetric about {} plane{} along the {} axis: the end face was made on one side of {} and mirrored, so the mesh is symmetric too'.format(
+            len(planes), '' if len(planes) == 1 else 's', 'xyz'[a], 'it' if len(planes) == 1 else 'them'))
     mesh.seconds = time.time() - t0
     return mesh
 

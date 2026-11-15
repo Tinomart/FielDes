@@ -52,11 +52,17 @@ def _dot(a, b):
 class Fit(object):
     ''' The grid, the field at its nodes, the crossings, and the cells '''
 
-    def __init__(self, body, lo, hi, size, threshold=10.0, edges=True, edge_angle=40.0, quanta=None, merge=True):
+    def __init__(self, body, lo, hi, size, threshold=10.0, edges=True, edge_angle=40.0, quanta=None, merge=True, align=True, full=None, planes=()):
         from fieldes.stdlib import meshing as M
         self.M = M
         self.body = body
+        # (H226: the half of a mirrored mesh is fitted to the body cut at its planes -- `body` here -- whose field is ZERO all over a plane inside the body, so a node of the grid on a plane that stands near the surface looks as if it
+        # were on it: the nodes on the planes read their value, and are settled, from `full`, the body itself, along the plane)
+        self.full = full
+        self.wall_planes = [(int(a), float(at)) for a, at in planes]
+        self.plane_nodes = set()
         self.size = float(size)
+        self.align = bool(align)
         # (the field is evaluated in single precision: on a face of the body far from the origin a point reads a few millionths of a millimetre instead of 0 -- +4.3e-6 at 70 mm -- and a surface that lies ON a face of the grid
         # (every face of a box) then has no sign change along the links in it: the crossing search found none, the cube lost its face on the surface and was half a cube, or was left out: an L of two boxes 70 mm from the origin
         # had 18 cubes of 75 % less than at the origin.  A value within `noise` of 0 is 0 for the crossings and the middles of faces)
@@ -67,10 +73,15 @@ class Fit(object):
         self.quanta = None if quanta is None else float(quanta)
         if self.quanta is not None:
             edges = False
-        n = [max(2, int(round((float(hi[a]) - float(lo[a])) / size))) for a in range(3)]
-        self.d = [(float(hi[a]) - float(lo[a])) / n[a] for a in range(3)]
-        self.n = [n[a] + 2 for a in range(3)]                  # (one cube more all round: the surface may lie on the box)
-        self.o = [float(lo[a]) - self.d[a] for a in range(3)]
+        # (H223, his words 2026-11-16 on the default size: "almost half the edges are chamfered instead of clean": the planes of the grid are put ON the flat faces of the body that stand square to an axis -- see _axes --, so a
+        # crease between two of them is an edge of a cell, not a corner that a cell is cut across.  The cells are bricks then, not cubes: along an axis a gap between two such planes is divided into cells of about the
+        # element size, so a cell is 0.6 to 1.5 of it across.  `align=False` is the grid of equal cubes)
+        self.coords = self._axes(lo, hi)
+        self.n = [len(c) - 1 for c in self.coords]             # (the cells along each axis, one more all round: the surface may lie on the box)
+        self.o = [c[0] for c in self.coords]
+        self.d = [(c[-1] - c[0]) / (len(c) - 1) for c in self.coords]       # (the mean width of a cell along each axis)
+        widths = [b - a for c in self.coords for a, b in zip(c[1:-2], c[2:-1])]
+        self.width_range = (min(widths), max(widths)) if widths else (self.size, self.size)        # (the narrowest and the widest cell inside the box)
         self.threshold = float(threshold)
         self.merge = bool(merge)                                # (a cut cell that is small is joined to a neighbour; False leaves it out, as Salome does)
         self.edges = bool(edges)
@@ -87,27 +98,121 @@ class Fit(object):
         self.on_edge = set()                                  # (the nodes that the edge pass put on an edge of the body)
         self.edge_moved = 0                                   # (how many moves of that kind the edge pass made, all rounds)
         self.edge_stats = {}                                  # (what the edge pass did and why it refused: counted, for the probes)
+        self.edge_fit = float(os.environ.get('FIELDES_CART_FIT', '0.5'))      # (the gates of the edge pass, 0 to 1: see _edge_pass; 0.5 is what it has always asked)
+        self.cut_stats = {}                                   # (what _edge_node and _cut_cell did with the cuts across the faces of the grid that are bent, and why they made no edge node: counted, for the probes)
         self.collapsed = 0                                    # (the nodes that were taken into a node beside them, _weld)
 
     def gid(self, i, j, k):
         return (i * (self.n[1] + 1) + j) * (self.n[2] + 1) + k
 
+    def _flat_planes(self, lo, hi):
+        """ THE FLAT FACES OF THE BODY THAT STAND SQUARE TO AN AXIS, found on the field: [[(coordinate, how many crossings), ...] for x, y and z].  The links of a grid of the element size (the one that _axes would make
+            without them) that the surface crosses are searched for the crossing (halving, 24 times); where the field's direction at a crossing is along the link -- within 1.8 degrees -- the crossing is on a face that stands
+            square to that axis, and its coordinate is the face's.  A face is a coordinate that at least three crossings share to a fiftieth of the element size (a ball or a cylinder has one crossing at its pole, not three) """
+        M = self.M
+        size = self.size
+        n = [max(2, int(round((float(hi[a]) - float(lo[a])) / size))) + 2 for a in range(3)]
+        d = [(float(hi[a]) - float(lo[a])) / (n[a] - 2) for a in range(3)]
+        o = [float(lo[a]) - d[a] for a in range(3)]
+        pts = [(o[0] + i * d[0], o[1] + j * d[1], o[2] + k * d[2]) for i in range(n[0] + 1) for j in range(n[1] + 1) for k in range(n[2] + 1)]
+        inside = [v <= self.noise for v in M._eval(self.body, pts)]
+        stride = ((n[1] + 1) * (n[2] + 1), n[2] + 1, 1)
+        links = [[], [], []]
+        for i in range(n[0] + 1):
+            for j in range(n[1] + 1):
+                base = (i * (n[1] + 1) + j) * (n[2] + 1)
+                for k in range(n[2] + 1):
+                    g = base + k
+                    for axis, last in ((0, i == n[0]), (1, j == n[1]), (2, k == n[2])):
+                        if not last and inside[g] != inside[g + stride[axis]]:
+                            links[axis].append((g, g + stride[axis]) if inside[g] else (g + stride[axis], g))
+        found = [[], [], []]
+        h = 0.01 * size
+        for axis in range(3):
+            if not links[axis]:
+                continue
+            pin = [pts[a] for a, b in links[axis]]
+            pout = [pts[b] for a, b in links[axis]]
+            for _ in range(24):
+                mid = [((p[0] + q[0]) * 0.5, (p[1] + q[1]) * 0.5, (p[2] + q[2]) * 0.5) for p, q in zip(pin, pout)]
+                v = M._eval(self.body, mid)
+                for m in range(len(mid)):
+                    if v[m] <= self.noise:
+                        pin[m] = mid[m]
+                    else:
+                        pout[m] = mid[m]
+            samples = []
+            for (x, y, z) in pin:
+                samples.extend(((x + h, y, z), (x - h, y, z), (x, y + h, z), (x, y - h, z), (x, y, z + h), (x, y, z - h)))
+            v = M._eval(self.body, samples)
+            for m, p in enumerate(pin):
+                g = [v[6 * m + 2 * c] - v[6 * m + 2 * c + 1] for c in range(3)]
+                ln = math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
+                if ln > 0.0 and abs(g[axis]) >= 0.9995 * ln:
+                    found[axis].append(p[axis])
+        planes = [[], [], []]
+        for axis in range(3):
+            coords = sorted(found[axis])
+            start = 0
+            for m in range(1, len(coords) + 1):
+                if m == len(coords) or coords[m] - coords[m - 1] > 0.02 * size:
+                    if m - start >= 3:
+                        planes[axis].append((sum(coords[start:m]) / (m - start), m - start))
+                    start = m
+        return planes
+
+    def _axes(self, lo, hi):
+        """ THE PLANES OF THE GRID along each axis: [[coordinates of the nodes] for x, y and z].  Without alignment the box of the body in a whole number of cubes of the element size, and one cube more at each end (the
+            surface may lie on the box).  With it (the default) the planes of the grid are put on the flat faces of the body that stand square to an axis (_flat_planes), the strongest first, and not within 0.45 of the element
+            size of one that was chosen or of an end of the box (the weaker one would only make a cell too thin); the gap between two of them is divided into a whole number of cells of about the element size (0.6 to 1.5 of it).  A crease between
+            two such faces is then an edge of the grid, and the cells at it are whole bricks: no cell is cut across it, which is where a cell was cut across the corner and the skin came out as a chamfer """
+        planes = self._flat_planes(lo, hi) if self.align else [[], [], []]
+        size = self.size
+        gap = 0.45 * size
+        axes = []
+        self.candidates = planes                                         # (every flat face that was found, per axis: (coordinate, crossings); for the probes)
+        self.aligned = [[], [], []]                                      # (the faces of the body that a plane of the grid was put on, per axis: for the probes)
+        for a in range(3):
+            lo_a, hi_a = float(lo[a]), float(hi[a])
+            chosen = []
+            for c, w in sorted(planes[a], key=lambda t: -t[1]):
+                if c - lo_a < gap or hi_a - c < gap:
+                    continue
+                if all(abs(c - p) >= gap for p in chosen):
+                    chosen.append(c)
+            chosen.sort()
+            self.aligned[a] = chosen
+            if not chosen:
+                n = max(2, int(round((hi_a - lo_a) / size)))
+                xs = [lo_a + (hi_a - lo_a) * t / n for t in range(n + 1)]
+            else:
+                marks = [lo_a] + chosen + [hi_a]
+                xs = [lo_a]
+                for p, q in zip(marks[:-1], marks[1:]):
+                    m = max(1, int(round((q - p) / size)))
+                    for t in range(1, m + 1):
+                        xs.append(q if t == m else p + (q - p) * t / m)
+            axes.append([xs[0] - (xs[1] - xs[0])] + xs + [xs[-1] + (xs[-1] - xs[-2])])
+        return axes
+
     def run(self):
         ''' The cells: [(kind, nodes)], kind 'hex8' 'tet4' 'prism6' 'pyra5' (the nodes in the order of meshing.py's tables) or 'poly' (the nodes are the faces: a list of lists, each turned outward) '''
         M = self.M
         nx, ny, nz = self.n
-        ox, oy, oz = self.o
-        dx, dy, dz = self.d
-        pts = [(ox + i * dx, oy + j * dy, oz + k * dz) for i in range(nx + 1) for j in range(ny + 1) for k in range(nz + 1)]
+        X, Y, Z = self.coords
+        pts = [(X[i], Y[j], Z[k]) for i in range(nx + 1) for j in range(ny + 1) for k in range(nz + 1)]
         self.pos = list(pts)
         values = M._eval(self.body, pts)
-        eps = SNAP * self.size                          # (a node within this of the surface is on it: the surface moves by at most that to the node, and no cell has an edge shorter than it)
+        if self.full is not None and self.wall_planes:
+            on_plane = [g for g, p in enumerate(pts) if any(p[a] == at for a, at in self.wall_planes)]
+            for g, v in zip(on_plane, M._eval(self.full, [pts[g] for g in on_plane]) if on_plane else ()):
+                values[g] = v
+            self.plane_nodes = set(on_plane)
+        eps = SNAP * self.size                         # (a node within this of the surface is on it: the surface moves by at most that to the node, and no cell has an edge shorter than it)
         inside = [v <= eps for v in values]
         self.inside = inside
-        cube = dx * dy * dz
-        # the cells that have a corner inside; the links of the ones that are cut
-        cells = []
-        links = {}
+        # the cells that have a corner inside, each with the volume of its brick (a cube when the grid is not aligned)
+        cand = []
         for i in range(nx):
             for j in range(ny):
                 for k in range(nz):
@@ -118,13 +223,35 @@ class Fit(object):
                             s += 1
                     if s == 0:
                         continue
-                    cells.append((ids, s))
-                    if s == 8:
-                        continue
-                    for a, b in EDGE:
-                        ga, gb = ids[a], ids[b]
-                        if inside[ga] != inside[gb]:
-                            links[(ga, gb) if ga < gb else (gb, ga)] = (ga, gb) if inside[ga] else (gb, ga)
+                    cand.append((ids, s, (X[i + 1] - X[i]) * (Y[j + 1] - Y[j]) * (Z[k + 1] - Z[k])))
+        if self.wall_planes:
+            # (the half of a mirrored mesh: the layer of cells below a plane of the mirror -- the grid has one cell more all round -- is nothing of the half: its nodes on the plane read the body's own field, which is inside)
+            cand = [c for c in cand if not any(all(self.pos[g][a] <= at for g in c[0]) for a, at in self.wall_planes)]
+        # (H223: a cell with nothing of the body in it, whose corners that count as inside all lie ON the surface -- the snap takes a node within a tenth of a cube for on it and inside -- and whose middle is outside.  At a
+        # concave edge between two flat faces that lie on planes of the grid, the cell in the empty corner of the L has three such corners: it was made a triangular prism, half of the cube, and its slanted face was the bevel
+        # across the edge: 82 of the 4,811 skin faces of the real bracket at its default size.  It is left out: the faces of the cells beside it are the boundary there, and they meet in the edge)
+        suspects = [m for m, (ids, s, _c) in enumerate(cand) if s < 8 and not any(values[g] < -eps for g in ids)] if os.environ.get('FIELDES_CART_EMPTY') != '0' else []       # (FIELDES_CART_EMPTY=0: they are kept, for the probes)
+        empty = set()
+        if suspects:
+            centres = [tuple(sum(self.pos[g][c] for g in cand[m][0]) / 8.0 for c in range(3)) for m in suspects]
+            for m, v in zip(suspects, M._eval(self.body, centres)):
+                if v > eps:
+                    empty.add(m)
+        if empty:
+            self.cut_stats['cells with nothing of the body in them, whose corners that count as inside are on the surface: left out'] = len(empty)
+        # the links of the cells that are cut
+        cells = []
+        links = {}
+        for m, (ids, s, cell_cube) in enumerate(cand):
+            if m in empty:
+                continue
+            cells.append((ids, s, cell_cube))
+            if s == 8:
+                continue
+            for a, b in EDGE:
+                ga, gb = ids[a], ids[b]
+                if inside[ga] != inside[gb]:
+                    links[(ga, gb) if ga < gb else (gb, ga)] = (ga, gb) if inside[ga] else (gb, ga)
         # the crossings, all links together
         keys = list(links)
         pin = [self.pos[links[key][0]] for key in keys]
@@ -148,7 +275,8 @@ class Fit(object):
                 self.cross[key] = len(self.pos) - 1
         # the faces whose inside corners are diagonal: the field at their middle says which way the inside goes
         amb = {}
-        for ids, s in cells:
+        self.cube_min = min((c for _, _, c in cells), default=self.size ** 3)       # (the smallest brick that has a corner inside: the smallest cell that a move or a collapse may leave is a fraction of it)
+        for ids, s, _c in cells:
             if s == 8:
                 continue
             for quad in FACE:
@@ -170,11 +298,14 @@ class Fit(object):
         self.welded = 0                                       # (the edge nodes that were one node with another at the same place)
         self.whole = 0                                        # (the cubes that lie wholly in the body)
         hexes = []
+        hex_cubes = []                                        # (the volume of the brick of each of the hexahedra, in step with `hexes`)
         pieces = []                                           # (the faces and the volume of every piece the surface leaves in a cut cube, when cut cells are made)
-        for ids, s in cells:
+        piece_cubes = []                                      # (the volume of the brick that each piece was cut from, in step with `pieces`)
+        for ids, s, cube in cells:
             if s == 8:
                 if self.quanta is None and self.merge:
                     hexes.append(ids)
+                    hex_cubes.append(cube)
                 else:
                     out.append(('hex8', ids))
                 self.whole += 1
@@ -196,6 +327,7 @@ class Fit(object):
                     continue
                 if self.merge:
                     pieces.append((faces, volume))
+                    piece_cubes.append(cube)
                 elif volume > cube / self.threshold:
                     out.append(self._named(faces))
                 else:
@@ -203,7 +335,7 @@ class Fit(object):
         if self.quanta is None and self.merge:
             self._settle(values, eps, hexes, pieces)
             self._settle_edges(pieces)
-            out.extend(self._join(hexes, pieces, cube))
+            out.extend(self._join(hexes, pieces, hex_cubes, piece_cubes))
             if self.edges and os.environ.get('FIELDES_CART_EDGES') != '0':
                 self._weld(out)
                 self._edge_pass(out)
@@ -223,6 +355,15 @@ class Fit(object):
         M = self.M
         pos = self.pos
         size = self.size
+        # (the gates of the pass as one number, 0 to 1, 0.5 being what the pass has always asked: his words of 2026-11-16, "TET4 IS REALLY GOOD ... is there a reason why the things that makes its edges so clean cant work here":
+        # a cut cell refuses most of the moves onto the crease -- a neighbour under 0.7 of its volume 273 to 398 times, a scaled Jacobian under 0.3 284 to 316 times at 2 mm -- where a tetrahedron stays valid; towards 1 the
+        # gates are looser (a neighbour may lose two thirds of its volume, the Jacobian may fall to 0.12, a crease up to a cube away is reached, eight rounds), towards 0 stricter)
+        fit = min(1.0, max(0.0, float(getattr(self, 'edge_fit', 0.5))))
+        up, down = max(0.0, (fit - 0.5) * 2.0), max(0.0, (0.5 - fit) * 2.0)
+        vol_gate = 0.7 + (0.25 - 0.7) * up + (0.85 - 0.7) * down
+        jac_gate = 0.3 + (0.12 - 0.3) * up + (0.4 - 0.3) * down
+        reach = 0.6 + (1.0 - 0.6) * up + (0.4 - 0.6) * down
+        rounds = int(round(rounds + 4 * up - 2 * down))
         cos_crease = math.cos(math.radians(40.0))
         cos_lean = math.cos(math.radians(12.0))               # (4 degrees was tried: it put a few more nodes of the neck edge on the crease and made 6 faces turn the wrong way and the leaning faces more)
         cfaces = []
@@ -242,7 +383,7 @@ class Fit(object):
         vol0 = [volume_of(ci) for ci in range(len(cells))]
         jac0 = {ci: M._cell_jacobian(flat, kind, data) for ci, (kind, data) in enumerate(cells) if kind != 'poly'}
 
-        floor = self.d[0] * self.d[1] * self.d[2] / self.threshold          # (the smallest cell that the join of the small ones leaves: a move does not push a cell under it)
+        floor = self.cube_min / self.threshold                              # (the smallest cell that the join of the small ones leaves: a move does not push a cell under it)
 
         stats = self.edge_stats = {}
 
@@ -253,11 +394,11 @@ class Fit(object):
             """ None when the cell is sound, else what is wrong with it """
             kind, data = cells[ci]
             v = volume_of(ci)
-            if not v > 0.7 * vol0[ci]:
-                return 'cell under 0.7 of its volume'
+            if not v > vol_gate * vol0[ci]:
+                return 'cell under %.2f of its volume' % vol_gate
             if v < min(vol0[ci], floor):
                 return 'cell under a tenth of a cube'
-            if kind != 'poly' and M._cell_jacobian(flat, kind, data) < min(0.3, 0.9 * jac0[ci]):
+            if kind != 'poly' and M._cell_jacobian(flat, kind, data) < min(jac_gate, 0.9 * jac0[ci]):
                 return 'scaled Jacobian'
             return None
 
@@ -407,10 +548,10 @@ class Fit(object):
                 s1 = (r1 - d12 * r2) / det
                 s2 = (r2 - d12 * r1) / det
                 x = tuple(p[c] - s1 * n1[c] - s2 * n2[c] for c in range(3))
-                if math.dist(x, p) <= 0.6 * size:
+                if math.dist(x, p) <= reach * size:
                     targets.append([nd, x])
                 elif rnd == 0:
-                    tally('first round: the edge is farther than 0.6 of a cube')
+                    tally('first round: the edge is farther than %.1f of a cube' % reach)
             if not targets:
                 break
             if rnd == 0:
@@ -426,7 +567,7 @@ class Fit(object):
             final = M._eval(self.body, [t[1] for t in targets])
             moved = 0
             for (nd, x), f in zip(targets, final):
-                if abs(f) > 2e-3 * size or math.dist(x, pos[nd]) > 0.6 * size or math.dist(x, pos[nd]) < 1e-4 * size:
+                if abs(f) > 2e-3 * size or math.dist(x, pos[nd]) > reach * size or math.dist(x, pos[nd]) < 1e-4 * size:
                     if rnd == 0:
                         tally('first round: the place is not on the surface (or is where the node is)')
                     continue
@@ -450,7 +591,7 @@ class Fit(object):
         pos = self.pos
         size = self.size
         limit = tol * size
-        cube = self.d[0] * self.d[1] * self.d[2]
+        cube = self.cube_min
         cf = []
         for kind, data in cells:
             cf.append([tuple(f) for f in data] if kind == 'poly' else [tuple(data[j] for j in face) for face in M.FACES[kind]])
@@ -597,10 +738,26 @@ class Fit(object):
                         q = list(p)
                         q[axis] += sign
                         pts.append(tuple(q))
-            vals = self.M._eval(self.body, pts)
+            vals = list(self.M._eval(self.body, pts))
+            if self.plane_nodes and self.full is not None:
+                # (a node on a plane of the mirror reads the body's own field, and moves along the plane: the field of the half is zero all over the plane)
+                idx = [m for m, g in enumerate(todo) if g in self.plane_nodes]
+                if idx:
+                    sub = []
+                    for m in idx:
+                        sub.extend(pts[7 * m:7 * m + 7])
+                    got = self.M._eval(self.full, sub)
+                    for k, m in enumerate(idx):
+                        vals[7 * m:7 * m + 7] = got[7 * k:7 * k + 7]
             for m, g in enumerate(todo):
                 v = vals[7 * m:7 * m + 7]
                 gx, gy, gz = [(v[2 + 2 * c] - v[1 + 2 * c]) / (2.0 * h) for c in range(3)]
+                if g in self.plane_nodes:
+                    along = [gx, gy, gz]
+                    for a, at in self.wall_planes:
+                        if start[g][a] == at:
+                            along[a] = 0.0
+                    gx, gy, gz = along
                 ln2 = gx * gx + gy * gy + gz * gz
                 if ln2 < 1e-12:
                     continue
@@ -713,18 +870,19 @@ class Fit(object):
         for g in todo:
             self.pos[g] = cur[g]
 
-    def _join(self, hexes, pieces, cube):
+    def _join(self, hexes, pieces, hex_cubes, piece_cubes):
         """ The cells when the small cut cells are JOINED to a neighbour instead of being left out.  A cut cell that holds no more than 1 / threshold of a cube is made one cell with the cell it shares its largest face
             with (a whole cube, or another cut cell: the one with the larger volume; again, while the joined cell is still that small): the faces they share are inside the new cell and go, the others stay, so the
             polygon of the surface that the small cell had stays on the boundary and the surface is not opened up where the small cell was (Salome's threshold leaves such a cell out and the faces of its neighbours
             become the boundary: a staircase that lies up to a third of a cube off the surface, in faces that lean up to 45 degrees from it).  A cut cell with no neighbour at all is left out.  Returns the (kind, nodes) of all the cells """
-        limit = cube / self.threshold
         count = len(hexes)
+        cube_of = list(hex_cubes) + list(piece_cubes)         # (the brick of every cell, the hexahedra first: a small cut cell is small against its own brick)
+        limit_of = [c / self.threshold for c in cube_of]
         faces_of = []
         volume = []
-        for ids in hexes:
+        for hx, ids in enumerate(hexes):
             faces_of.append([tuple(ids[c] for c in quad) for quad in FACE])
-            volume.append(cube)
+            volume.append(hex_cubes[hx])
         for faces, v in pieces:
             faces_of.append([tuple(f) for f in faces])
             volume.append(self.volume(faces))                 # (again: the nodes that were put on the surface have moved)
@@ -806,15 +964,15 @@ class Fit(object):
             flat.extend(p)
         poor = set()
         for i in range(count, len(faces_of)):
-            if volume[i] > limit:
+            if volume[i] > limit_of[i]:
                 kind, nodes = self._named(faces_of[i])
                 if kind != 'poly' and self.M._cell_jacobian(flat, kind, nodes) < 0.2:
                     poor.add(i)
-        for i in sorted((i for i in range(count, len(faces_of)) if volume[i] <= limit or i in poor), key=lambda i: volume[i]):
+        for i in sorted((i for i in range(count, len(faces_of)) if volume[i] <= limit_of[i] or i in poor), key=lambda i: volume[i]):
             r = find(i)
             force = i in poor
             for _ in range(8):
-                if volume[r] > limit and not force:
+                if volume[r] > limit_of[r] and not force:
                     break
                 force = False
                 # (the neighbour it shares the most face with, one that does not grow past two cubes by it when there is such a neighbour: the neighbour with the larger volume let one cell take every small one
@@ -826,10 +984,10 @@ class Fit(object):
                         if rj != r:
                             shared[rj] = shared.get(rj, 0.0) + self._area(f)
                 if not shared:
-                    if volume[r] <= limit:
+                    if volume[r] <= limit_of[r]:
                         gone.add(r)                           # (no cell next to it: it is left out)
                     break
-                best = max(shared, key=lambda x: (volume[x] + volume[r] <= 2.2 * cube, shared[x], -volume[x]))
+                best = max(shared, key=lambda x: (volume[x] + volume[r] <= 2.2 * max(cube_of[x], cube_of[r]), shared[x], -volume[x]))
                 target = faces_dict(best)
                 for k, f in group.pop(r).items():
                     if k in target:
@@ -886,7 +1044,16 @@ class Fit(object):
         if ck in self.edge_node:
             return self.edge_node[ck]
         found = None
+        stats = self.cut_stats
+
+        def why(reason):
+            stats[reason] = stats.get(reason, 0) + 1
+        why('a cut across a face asked for an edge node')
         na, nb = self.normal.get(a), self.normal.get(b)
+        if na is None or nb is None:
+            why('no: the surface has no one direction at an end of the cut (the end is on an edge)')
+        elif na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2] >= self.cos_edge:
+            why('no: the surface turns by less than the edge angle between the ends of the cut')
         # (an end of the cut that is a node of the grid, one the snap took for on the surface, has a normal of its own and counts as well: it was left out as "the direction of the surface there is not the direction of
         # one side of an edge it may lie on", and 886 of the cuts across the creases of the real bracket at 2 mm ended in one, which got no edge node: the faces that lean more than 12 degrees fell from 6.1 % to 2.8 %)
         if na is not None and nb is not None and na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2] < self.cos_edge:
@@ -900,6 +1067,7 @@ class Fit(object):
             # 0.3 deep and 1.0 long, the neck's top edge of the bracket where it crosses a grid plane next to a grid line -- has its middle within 0.15 of the line and got no node, a diagonal cut across it instead)
             corner = na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2] < self.cos_corner
             if span <= 0.0 or (not corner and abs(self.M._eval(self.body, [mid_point])[0]) / scale < 0.15 * span):
+                why('no: a curve, not a corner (the middle of the cut is near the surface)')
                 self.edge_node[ck] = None
                 return None
             corners = [self.pos[g] for g in face_key]
@@ -907,32 +1075,42 @@ class Fit(object):
             for c in range(3):
                 if max(q[c] for q in corners) - min(q[c] for q in corners) < 1e-9 * self.size:
                     axis = c
-            if axis is not None:
+            if axis is None:
+                why('no: the face of the grid is not flat along an axis')
+            else:
                 u, v = [c for c in range(3) if c != axis]
                 A, B = self.pos[a], self.pos[b]
                 g1 = (na[u], na[v])
                 g2 = (nb[u], nb[v])
                 l1 = math.hypot(*g1)
                 l2 = math.hypot(*g2)
-                if l1 > 1e-6 and l2 > 1e-6:
+                if not (l1 > 1e-6 and l2 > 1e-6):
+                    why('no: the surface normal at an end of the cut is along the axis of the face')
+                else:
                     t1 = (-g1[1] / l1, g1[0] / l1)
                     t2 = (-g2[1] / l2, g2[0] / l2)
                     w = (B[u] - A[u], B[v] - A[v])
                     det = -(t1[0] * t2[1] - t1[1] * t2[0])
                     length = math.hypot(*w)
-                    if abs(det) > 1e-3 and length > 0.0:
+                    if not (abs(det) > 1e-3 and length > 0.0):
+                        why('no: the lines along the two sides of the cut are parallel')
+                    else:
                         s_ = (w[0] * (-t2[1]) - (-t2[0]) * w[1]) / det
                         c2 = (A[u] + s_ * t1[0], A[v] + s_ * t1[1])
                         mid = ((A[u] + B[u]) * 0.5, (A[v] + B[v]) * 0.5)
-                        if (math.hypot(c2[0] - mid[0], c2[1] - mid[1]) <= length and math.hypot(c2[0] - A[u], c2[1] - A[v]) > 0.05 * self.size
+                        if not (math.hypot(c2[0] - mid[0], c2[1] - mid[1]) <= length and math.hypot(c2[0] - A[u], c2[1] - A[v]) > 0.05 * self.size
                                 and math.hypot(c2[0] - B[u], c2[1] - B[v]) > 0.05 * self.size):
+                            why('no: the two lines meet far from the cut or within a twentieth of a cube of an end')
+                        else:
                             lo_u, hi_u = min(q[u] for q in corners), max(q[u] for q in corners)
                             lo_v, hi_v = min(q[v] for q in corners), max(q[v] for q in corners)
                             c2 = (min(max(c2[0], lo_u), hi_u), min(max(c2[1], lo_v), hi_v))
                             # (a point on a SIDE of the face is on an edge of the grid, which the cells on the other side of it share and do not have the node on: the polygon of this face would run out along the side to the
                             # corner and back to the new node, a spike of no width -- 164 faces of the real bracket at 2 mm, skewness 1 -- and the node would hang on that edge.  The crease that runs along a grid edge needs no node)
                             side = 1e-6 * self.size
-                            if min(c2[0] - lo_u, hi_u - c2[0], c2[1] - lo_v, hi_v - c2[1]) > side:
+                            if not min(c2[0] - lo_u, hi_u - c2[0], c2[1] - lo_v, hi_v - c2[1]) > side:
+                                why('no: the meeting point is on a side of the face (the crease runs along a grid edge)')
+                            else:
                                 point = [0.0, 0.0, 0.0]
                                 point[axis] = A[axis]
                                 point[u], point[v] = c2
@@ -940,6 +1118,7 @@ class Fit(object):
                                 found = len(self.pos) - 1
                                 self.edge_ids.add(found)
                                 self.edge_axis[found] = axis
+                                why('YES: an edge node was made')
         self.edge_node[ck] = found
         return found
 
@@ -1006,6 +1185,12 @@ class Fit(object):
                         if node is not None:
                             verts.insert(p + 1, node)
                             flags.insert(p + 1, True)
+                    else:
+                        key_ = 'a face with two crossings has %d pairs of ends of a cut (no edge node is asked for)' % len(pairs)
+                        self.cut_stats[key_] = self.cut_stats.get(key_, 0) + 1
+                elif self.edges and crossings > 2:
+                    key_ = 'a face with %d crossings (no edge node is asked for)' % crossings
+                    self.cut_stats[key_] = self.cut_stats.get(key_, 0) + 1
                 faces.append(verts)
                 m = len(verts)
                 for p in range(m):
@@ -1058,8 +1243,12 @@ class Fit(object):
                     a_, b_ = at
                     split.append(loop[a_:b_ + 1])
                     split.append(loop[b_:] + loop[:a_ + 1])
+                    self.cut_stats['a loop of the surface in a cell was split along an edge'] = self.cut_stats.get('a loop of the surface in a cell was split along an edge', 0) + 1
                 else:
                     split.append(loop)
+                    if at:
+                        key_ = 'a loop of the surface with %d edge nodes was NOT split (%d nodes, edge nodes at %s)' % (len(at), len(loop), at if len(at) <= 3 else '...')
+                        self.cut_stats[key_] = self.cut_stats.get(key_, 0) + 1
             loops = split
         faces.extend(loops)
         pieces = self._pieces(faces)
@@ -1166,3 +1355,80 @@ class Fit(object):
                 top.append(other[0])
             return ('prism6', bottom + top)
         return ('poly', faces)
+
+
+################################################################################
+# H226 (the user, 2026-11-16: "I meshed the bracket myself from a file and the mesh is just not symmetrical, despite the part being symmetrical"; "THAT APPLIES FOR ALL MESHING CORRECT?"): a body that is symmetric about a plane through the
+# middle of its box is fitted on ONE side of the plane, with the plane a wall, and the cells and nodes are mirrored: the mesh is then exactly symmetric whatever order the passes above went through the cells in (they
+# decide cell by cell, and a mirror reverses the order: a mesh of the whole has no mirror image).  The nodes on the plane are shared, every other node and cell has its image, and a mirrored cell has its nodes
+# renumbered so that it has the handedness the tables of meshing.py ask for
+
+_REVERSED = {'hex8': (0, 3, 2, 1, 4, 7, 6, 5), 'tet4': (0, 2, 1, 3), 'prism6': (0, 2, 1, 3, 5, 4), 'pyra5': (0, 3, 2, 1, 4)}
+
+
+def mirror_cells(pos, cells, axis, at, tol):
+    ''' (pos, cells) with the mirror image about the plane `axis` = `at` added: the nodes of the cells within `tol` of the plane are put exactly on it and shared, every other node of a cell gets an image, and every cell its image
+        (a polyhedron: the faces turned the other way) '''
+    used = set()
+    for kind, ids in cells:
+        if kind == 'poly':
+            for face in ids:
+                used.update(face)
+        else:
+            used.update(ids)
+    new_pos = list(pos)
+    image = {}
+    for g in sorted(used):
+        p = pos[g]
+        if abs(p[axis] - at) <= tol:
+            q = list(p)
+            q[axis] = at
+            new_pos[g] = tuple(q)
+            image[g] = g
+        else:
+            q = list(p)
+            q[axis] = 2.0 * at - p[axis]
+            new_pos.append(tuple(q))
+            image[g] = len(new_pos) - 1
+    out = list(cells)
+    for kind, ids in cells:
+        if kind == 'poly':
+            out.append((kind, [[image[x] for x in reversed(face)] for face in ids]))
+        else:
+            out.append((kind, [image[ids[i]] for i in _REVERSED[kind]]))
+    return new_pos, out
+
+
+class MirroredFit(object):
+    ''' Fit for a body that is symmetric about `planes` ((axis, at) through the middle of the box): the part of the body on the upper side of every plane is fitted with the planes as its walls, and mirrored about them one
+        after the other.  The attributes the meshers read of a Fit (pos, cells, d, size, whole, dropped, merged, flat, edge_moved, collapsed) are those of the mirrored mesh '''
+
+    def __init__(self, body, lo, hi, size, planes, **options):
+        from fieldes.shape import Shape
+        from fieldes.stdlib.csg import intersection
+        self.planes = [(int(a), float(at)) for a, at in planes]
+        lo2 = [float(c) for c in lo]
+        half = body
+        for axis, at in self.planes:
+            lo2[axis] = at
+            coordinate = (Shape.X(), Shape.Y(), Shape.Z())[axis]
+            half = intersection(half, at - coordinate)          # (the side where the coordinate is above `at`: the field is negative inside)
+        self.half = Fit(half, lo2, hi, size, full=body, planes=self.planes, **options)
+        self.size = self.half.size
+        self.d = self.half.d
+        self.align = self.half.align
+        self.aligned = self.half.aligned
+        self.width_range = self.half.width_range
+
+    def run(self):
+        cells = self.half.run()
+        pos = list(self.half.pos)
+        tol = 1e-6 * self.size
+        for axis, at in self.planes:
+            pos, cells = mirror_cells(pos, cells, axis, at, tol)
+        self.pos = pos
+        self.cells = cells
+        times = 2 ** len(self.planes)
+        for name in ('whole', 'dropped', 'merged', 'flat', 'edge_moved', 'collapsed', 'settled', 'welded'):
+            setattr(self, name, getattr(self.half, name, 0) * times)
+        return cells

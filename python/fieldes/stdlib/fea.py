@@ -961,7 +961,7 @@ def _fitted_voxel_size(lo, hi, h):
 
 @_with_conditions
 def static_analysis(shape, supports, loads, material=steel, element_size=None,
-                    bounds=None, tolerance=1e-6, cache=True, element='tet', surface_fit=0.5):
+                    bounds=None, tolerance=1e-6, cache=True, element='tet', surface_fit=0.5, symmetry='auto'):
     ''' Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_tet4) can take the place of `shape`: the analysis then solves on its tetrahedra as they
         are, and `element_size` is not given (see docs/analysis.md, A mesh of your own).
 
@@ -985,6 +985,8 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
                    edge the lattice cuts across): 0.5 by default (what the mesher has always done); towards 1 nodes go onto edges even where the elements get
                    poorer and the skin stays nearer the exact surface; towards 0 a move that would leave a poor element is refused and the skin may stand
                    further off the surface to remove a sliver.  The limits each number stands for are in docs/analysis.md, Surface or elements
+        symmetry   'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a part that is symmetric about a plane through the middle of its box
+                   is meshed as the mirror image of a half, so that its mesh -- and the result on it -- is symmetric too; None meshes the part whole
 
         Returns a Result (see its fields).  Raises FeaError if the problem
         can't be solved as given (no support touching the part, supports
@@ -993,6 +995,8 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
     shape, mesh = _sim_mesh.part(shape, 'static_analysis', element_size, element)
     surface_fit = _sim_mesh.surface_fit_value(surface_fit, 'static_analysis')
     _sim_mesh.check_fit_with_mesh(mesh, surface_fit, 'static_analysis')
+    symmetry = _sim_mesh.symmetry_value(symmetry, 'static_analysis')
+    _sim_mesh.check_symmetry_with_mesh(mesh, symmetry, 'static_analysis')
     if not isinstance(shape, Shape):
         raise TypeError('static_analysis: the part must be a Shape')
     if _is_cases(loads):
@@ -1006,12 +1010,12 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
     ekey = problem_key('static', shape=shape, part_bounds=getattr(shape, '_bounds', None),
                        supports=supports, loads=loads, material=material, element_size=element_size,
                        bounds=bounds, max_iterations=max_iterations, tolerance=tolerance,
-                       element=element, **_sim_mesh.fit_key(surface_fit), **_sim_mesh.key(mesh)) if cache else None
+                       element=element, **_sim_mesh.fit_key(surface_fit), **_sim_mesh.symmetry_key(symmetry), **_sim_mesh.key(mesh)) if cache else None
     if ekey is not None and ekey in _early:
         _early.move_to_end(ekey)
         found = _early[ekey]
         return found if found.shape is shape else _copy_for(found, shape)
-    with _sim_mesh.surface_fit_scope(surface_fit):
+    with _sim_mesh.surface_fit_scope(surface_fit, symmetry):
         result = _static_analysis_solve(shape, supports, loads, material, element_size, bounds,
                                         max_iterations, tolerance, cache, element, ekey, mesh)
     if ekey is not None:
@@ -1270,7 +1274,7 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
             raise TypeError('loads must be force(...), gravity(...) or thermal_expansion(...) items')
     if not lib.libfive_tetfea_prepare(ptr):
         raise FeaError(lib.libfive_tetfea_message(ptr).decode('utf-8', 'replace'))
-    key = (element, lib.libfive_tetfea_hash(ptr), _sim_mesh.current_surface_fit())
+    key = (element, lib.libfive_tetfea_hash(ptr), _sim_mesh.current_surface_fit(), _sim_mesh.current_symmetry())
     if cache and key in _cache:
         result = _cache[key]
         _cache.move_to_end(key)
@@ -1465,7 +1469,7 @@ _modal_cache = OrderedDict()
 
 @_with_conditions
 def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, bounds=None,
-                   tolerance=1e-6, cache=True, element='tet', surface_fit=0.5):
+                   tolerance=1e-6, cache=True, element='tet', surface_fit=0.5, symmetry='auto'):
     ''' The natural frequencies and mode shapes of `shape` (a Shape, in
         mm), held by `supports` (fixed(...) items, one or a list) -- how it
         vibrates.  No loads are needed; the
@@ -1481,20 +1485,24 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
         surface_fit  a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5
                      by default: what the mesh gives up where the exact surface and good
                      elements pull against each other; see static_analysis
+        symmetry     'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a symmetric part is meshed as the mirror image of a half, so its
+                     mesh and its mode shapes are symmetric; None meshes the part whole; see static_analysis
 
         Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
         fields -- displacement, ux, uy, uz).  The shapes are fields like any
         other: e.g. stiffen the part where the first mode moves most.  An
         unchanged problem is cached. '''
     surface_fit = _sim_mesh.surface_fit_value(surface_fit, 'modal_analysis')
-    with _sim_mesh.surface_fit_scope(surface_fit):
-        return _modal_analysis_solve(shape, supports, material, modes, element_size, bounds, tolerance, cache, element, surface_fit)
+    symmetry = _sim_mesh.symmetry_value(symmetry, 'modal_analysis')
+    with _sim_mesh.surface_fit_scope(surface_fit, symmetry):
+        return _modal_analysis_solve(shape, supports, material, modes, element_size, bounds, tolerance, cache, element, surface_fit, symmetry)
 
 
-def _modal_analysis_solve(shape, supports, material, modes, element_size, bounds, tolerance, cache, element, surface_fit):
+def _modal_analysis_solve(shape, supports, material, modes, element_size, bounds, tolerance, cache, element, surface_fit, symmetry):
     max_iterations = 100        # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     shape, mesh = _sim_mesh.part(shape, 'modal_analysis', element_size, element)
     _sim_mesh.check_fit_with_mesh(mesh, surface_fit, 'modal_analysis')
+    _sim_mesh.check_symmetry_with_mesh(mesh, symmetry, 'modal_analysis')
     if not isinstance(shape, Shape):
         raise TypeError('modal_analysis: the part must be a Shape')
     if not _density_given(material):
@@ -1508,7 +1516,7 @@ def _modal_analysis_solve(shape, supports, material, modes, element_size, bounds
     key = problem_key('modal', shape=shape, part_bounds=getattr(shape, '_bounds', None), supports=supports,
                       material=material, modes=int(modes), element_size=element_size, bounds=bounds,
                       max_iterations=max_iterations, tolerance=tolerance,
-                      element=element, **_sim_mesh.fit_key(surface_fit), **_sim_mesh.key(mesh)) if cache else None
+                      element=element, **_sim_mesh.fit_key(surface_fit), **_sim_mesh.symmetry_key(symmetry), **_sim_mesh.key(mesh)) if cache else None
     if key is not None and key in _modal_cache:
         _modal_cache.move_to_end(key)
         return _modal_cache[key]

@@ -199,6 +199,8 @@
  "Opacity": "Deckkraft",
  "Residual": "Residuum",
  "How far the solver was from balancing the loads, as a share of the load, after each iteration, on a log scale. It falls until it is below the tolerance, and then the solve stops.": "Wie weit der Löser nach jeder Iteration noch vom Kräftegleichgewicht entfernt war, als Anteil der Last, auf einer logarithmischen Skala. Das Residuum fällt, bis es unter der Toleranz liegt; dann endet die Berechnung.",
+ "Optimisation": "Optimierung",
+ "What the optimisation made best, at every iteration it made, from the first to the last. The curve falls (or rises, when the aim is the highest value) until the design stops changing. The numbers at the ends are the lowest and the highest value of the curve.": "Was die Optimierung in jeder ihrer Iterationen am besten gemacht hat, von der ersten bis zur letzten. Die Kurve fällt (oder steigt, wenn der höchste Wert das Ziel ist), bis sich der Entwurf nicht mehr ändert. Die Zahlen an den Enden sind der niedrigste und der höchste Wert der Kurve.",
  "Not validated for safety-critical use": "Nicht für sicherheitskritische Anwendungen validiert",
  "FielDes is a design tool, not a certified solver. The program is checked against four known answers (the validation folder: a beam, a plate with a hole, a channel flow, the conduction through a slab); compare any result with a hand calculation and a test before you rely on it.": "FielDes ist ein Entwurfswerkzeug, kein zertifizierter Solver. Das Programm ist an vier bekannten Lösungen geprüft (validation: ein Balken, eine Platte mit Loch, eine Kanalströmung, die Wärmeleitung durch eine Platte); vergleichen Sie jedes Ergebnis mit einer Handrechnung und einem Versuch, bevor Sie sich darauf verlassen.",
  "off": "aus",

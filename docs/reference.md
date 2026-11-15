@@ -3270,7 +3270,7 @@ profile  a field: the total is spread over the surface in proportion to it (not 
 The part's own weight: acceleration in mm/s^2 (default: 1 g down
 along -Z), with the material's density
 
-### `modal_analysis(shape, supports, material=Material('steel', E=200000 MPa, nu=0.3), modes=6, element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet', surface_fit=0.5)`
+### `modal_analysis(shape, supports, material=Material('steel', E=200000 MPa, nu=0.3), modes=6, element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet', surface_fit=0.5, symmetry='auto')`
 
 The natural frequencies and mode shapes of `shape` (a Shape, in
 mm), held by `supports` (fixed(...) items, one or a list) -- how it
@@ -3287,6 +3287,8 @@ element      'tet' (default), 'tet10' (10-node elements: the frequencies of a
 surface_fit  a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5
              by default: what the mesh gives up where the exact surface and good
              elements pull against each other; see static_analysis
+symmetry     'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a symmetric part is meshed as the mirror image of a half, so its
+             mesh and its mode shapes are symmetric; None meshes the part whole; see static_analysis
 
 Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
 fields -- displacement, ux, uy, uz).  The shapes are fields like any
@@ -3306,7 +3308,7 @@ body     the body the load is on, when the regions are bodies that choose WHERE 
 value    the pressure in MPa (N/mm^2): positive PRESSES INTO the part (the way a fluid presses on the wall that holds it), negative PULLS on it (a traction, a tension on the surface)
 profile  a field: the pressure is the value times the field there (not negative), a pressure that is not the same everywhere.  (Tetrahedral elements.)
 
-### `static_analysis(shape, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet', surface_fit=0.5)`
+### `static_analysis(shape, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet', surface_fit=0.5, symmetry='auto')`
 
 Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_tet4) can take the place of `shape`: the analysis then solves on its tetrahedra as they
 are, and `element_size` is not given (see docs/analysis.md, A mesh of your own).
@@ -3331,6 +3333,8 @@ surface_fit    a number from 0 to 1 that says what the mesh gives up where the e
            edge the lattice cuts across): 0.5 by default (what the mesher has always done); towards 1 nodes go onto edges even where the elements get
            poorer and the skin stays nearer the exact surface; towards 0 a move that would leave a poor element is refused and the skin may stand
            further off the surface to remove a sliver.  The limits each number stands for are in docs/analysis.md, Surface or elements
+symmetry   'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a part that is symmetric about a plane through the middle of its box
+           is meshed as the mirror image of a half, so that its mesh -- and the result on it -- is symmetric too; None meshes the part whole
 
 Returns a Result (see its fields).  Raises FeaError if the problem
 can't be solved as given (no support touching the part, supports
@@ -3582,7 +3586,7 @@ body     the body the heat goes into, when the regions are bodies that choose WH
 watts    the total power in watts (negative takes heat out)
 profile  a field -- the power is spread in proportion to it (not negative) instead of evenly
 
-### `thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, convections, material=Material('aluminium', E=69000 MPa, nu=0.33), element_size=None, bounds=None, conductivity=None, tolerance=1e-07, element='tet', cache=True, surface_fit=0.5)`
+### `thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, convections, material=Material('aluminium', E=69000 MPa, nu=0.33), element_size=None, bounds=None, conductivity=None, tolerance=1e-07, element='tet', cache=True, surface_fit=0.5, symmetry='auto')`
 
 Steady-state heat conduction in `shape` with the given boundary
 conditions, one input for each kind (each one item or a list, [] for none):
@@ -3593,6 +3597,8 @@ convections         convection(...) items
 (see the module's description).  Each condition is a model of its own, drawn on `shape`.
 surface_fit         a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5 by default: what the mesh gives up where the exact
                     surface and good elements pull against each other; see static_analysis
+symmetry            'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a symmetric part is meshed as the mirror image of a half, so its mesh and
+                    its temperature are symmetric; None meshes the part whole; see static_analysis
 
 Everything else is as in the analysis below.
 
@@ -3729,7 +3735,7 @@ switches the field and steps through the iterations or the times (slider, play /
 #### `FluidResult.streamlines(self, seeds=None, count=40, max_time=None, max_points=4000, backward=False, step=None)`
 
 The paths of particles carried by the flow: a list of lines, each a list of (x, y, z, speed, time)
-points, from `seeds` (a list of (x, y, z); by default `count` points spread over the inlets), by
+points, from `seeds` (a list of (x, y, z); by default `count` points spread over the inlets, or over the middle plane of the fluid when there is no inlet), by
 Runge-Kutta steps of half an element, for up to `max_time` seconds (by default the time it takes to
 cross the fluid three times) or `max_points` points, until the particle leaves the fluid.  backward=True
 follows the flow upstream; step= picks a step of a flow in time (the last one by default).
@@ -3750,7 +3756,7 @@ Stated on its own, FielDes shows it as it shows the result.
 
 The streamlines of the flow at this time (see FluidResult.streamlines)
 
-### `fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=Fluid('water', density=1e-09 t/mm^3, viscosity=1e-09 MPa s), element_size=None, bounds=None, gravity=None, stokes=False, tolerance=1e-05, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit=0.5)`
+### `fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=Fluid('water', density=1e-09 t/mm^3, viscosity=1e-09 MPa s), element_size=None, bounds=None, gravity=None, stokes=False, tolerance=1e-05, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit=0.5, symmetry='auto')`
 
 Laminar flow of `fluid` around `body` (a Shape, the solid the flow goes around) in `domain` (a Shape whose inside is the
 fluid, the body's place in it too: the fluid is the domain with the body cut out) with the boundary conditions, the same
@@ -3777,6 +3783,8 @@ tolerance      the relative residual of the discrete equations at which to stop
 bounds         ((x0, y0, z0), (x1, y1, z1)) of the domain (found if not given)
 surface_fit    a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5 by default: what the mesh gives up where the exact
                surface and good elements pull against each other; see static_analysis
+symmetry       'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a flow domain that is symmetric about a plane through the middle of its box
+               is meshed as the mirror image of a half, so its mesh and its flow are symmetric; None meshes it whole; see static_analysis
 
 Returns a FluidResult: the fields (speed, pressure, ...), the flows and the pressure drop,
 the wall force (on every wall, the body's: its drag is the part along the flow), streamlines(), .body and .domain.  An unchanged problem is cached (as a static analysis is).
@@ -3984,7 +3992,7 @@ half of the thinnest passage of the fluid
 The advice about linear tetrahedra for a body whose walls (the thickness that a tenth of its surface is thinner than) are `wall` mm and whose elements are `h` mm: a sentence when fewer than THIN_FEW_ACROSS
 elements lie across them, else None
 
-### `mesh_cartesian(body, element_size=None, threshold=4.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None)`
+### `mesh_cartesian(body, element_size=None, threshold=4.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None, symmetry='auto', align=True)`
 
 The inside of `body` as a grid of cubes CUT by the body: hexahedra inside it, and where the surface cuts a cube the cell of what is inside -- a tetrahedron, prism, pyramid, hexahedron or polyhedron by its faces --
 with its nodes on the surface (Salome's Body Fitting).
@@ -3999,10 +4007,13 @@ threshold       a cut cell that holds no more than 1 / threshold of a cube (4 by
                 (scaled Jacobian under 0.2) is joined whatever it holds.  The nodes the snap took for on the surface (within a tenth of a cube of it) are put on it
 axes            the grid turned, as for mesh_hex_quanta
 zones, default_zone, feature_angle, cell_zones, bounds, name   as for mesh_tet4
+symmetry        as for mesh_hex_quanta: a symmetric body is meshed on one side of the plane and mirrored
+align           as for mesh_hex_quanta: the planes of the grid are put on the flat faces of the body that stand square to an axis (True, the default), so that the edges between them are exact and no cell is cut
+                across them -- where the cut cells of a grid of equal cubes have a bevel; False: a grid of equal cubes
 
 The grid has one size: no size field and no layers.
 
-### `mesh_hex20_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None)`
+### `mesh_hex20_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None, symmetry='auto', align=False)`
 
 The inside of `body` as HEXAHEDRA of 20 nodes only: the cubes of mesh_hex_quanta with a node in the middle of every edge.
 
@@ -4010,7 +4021,7 @@ The inside of `body` as HEXAHEDRA of 20 nodes only: the cubes of mesh_hex_quanta
 
 All the arguments are the ones of mesh_hex_quanta.
 
-### `mesh_hex_extrusion(body, element_size=None, axis='z', layers=None, smooth=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None)`
+### `mesh_hex_extrusion(body, element_size=None, axis='z', layers=None, smooth=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None, symmetry='auto')`
 
 A body that is a PRISM along `axis` as hexahedra: its end face meshed with quadrilaterals and swept along it, the surface exact (Salome's Extrusion 3D).  A body that is not a prism along the axis is refused.
 
@@ -4022,8 +4033,10 @@ layers          the layers along it: a whole number, or a list of their thicknes
 smooth          rounds of smoothing the hexahedra (default 10)
 boundary_layers inflation_layers(...): layers of hexahedra on the surface of a solid, growing into the mesh
 zones, default_zone, feature_angle, bounds, name   as for mesh_tet4
+symmetry        'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a body that is symmetric about a plane along the axis of the prism has its end face made on one side of the
+                plane and mirrored, so the mesh is exactly symmetric; None meshes the end face whole
 
-### `mesh_hex_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None)`
+### `mesh_hex_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None, symmetry='auto', align=False)`
 
 The inside of `body` as HEXAHEDRA of 8 nodes only: the cubes of a Cartesian grid, those the surface cuts included when `quanta` of them is inside (Salome's Body Fitting with Quanta).  Every cell is
 a perfect cube; the boundary is a staircase of whole cubes.
@@ -4034,10 +4047,14 @@ element_size    the edge of the cubes in mm; default: about fifteen thousand cub
 quanta          a cube that the surface cuts is a whole cube of the grid when what is inside holds at least this part of it (0.5 by default, so that the mesh has about the volume of the body), and is left out when it holds less
 axes            the grid of cubes turned, as the rotation= of a placement is -- (x, y, z) in degrees: a box turned by 30 degrees about z is a block of perfect cubes along its own sides with axes=(0, 0, 30)
 zones, default_zone, feature_angle, cell_zones, bounds, name   as for mesh_tet4
+symmetry        'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a body that is symmetric about a plane through the middle of its box is meshed on one side of it and
+                mirrored, so the mesh is exactly symmetric; None meshes the body whole
+align           False (default): a grid of equal cubes, every cell a perfect cube.  True: the planes of the grid are put ON the flat faces of the body that stand square to an axis, so a crease between two of
+                them is an edge of the grid and the boundary is exact there; the cells are then bricks, 0.6 to 1.5 of the element size across, where the gap between two such faces is not a whole number of cubes
 
 The grid has one size: no size field and no layers.  The cubes with a node in the middle of every edge are mesh_hex20_quanta.
 
-### `mesh_surface_quad(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None)`
+### `mesh_surface_quad(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None, symmetry='auto')`
 
 The surface of `body` as a mesh of QUADRILATERALS: every triangle of mesh_surface_tri cut into three, so the quadrilaterals are about half the size of the triangles.
 
@@ -4045,16 +4062,19 @@ The surface of `body` as a mesh of QUADRILATERALS: every triangle of mesh_surfac
 
 All the arguments are the ones of mesh_surface_tri.
 
-### `mesh_surface_tri(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None)`
+### `mesh_surface_tri(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None, symmetry='auto')`
 
 The surface of `body` as a mesh of TRIANGLES.  It is the boundary of the tetrahedra that mesh_tet4 makes, so it follows the body's surface and is conforming, and it costs the volume mesh; its arguments are
 mesh_tet4's.
 
     surface = mesh_surface_tri(part, 1.0)
 
+symmetry        'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a body that is symmetric about a plane through the middle of its box has a symmetric surface mesh (the half is
+                remeshed and mirrored); None meshes the body whole
+
 The surface as quadrilaterals is mesh_surface_quad.
 
-### `mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5)`
+### `mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5, symmetry='auto')`
 
 The inside of `body` as a mesh of TETRAHEDRA of 10 nodes: the tetrahedra of mesh_tet4 with a node in the middle of every edge, the ones on the surface put on it (the edges there curved).
 
@@ -4064,11 +4084,11 @@ element_size    the element edge in mm, or a field (see graded_size); default: a
 zones           {name: region}: the patches of the boundary; the rest are `default_zone`; feature_angle (degrees) splits those at the creases
 cell_zones      {name: region}: zones of cells; the rest are 'fluid'
 curved          the nodes in the middle of the edges and faces on the boundary lie on the surface (False: halfway between the corners)
-smooth, optimize, bounds, name, surface_fit   as for mesh_tet4
+smooth, optimize, bounds, name, surface_fit, symmetry   as for mesh_tet4
 
 Layers of prisms (boundary_layers) are made with mesh_tet4: a prism has no node in the middle of every edge of the tetrahedra.
 
-### `mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5)`
+### `mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5, symmetry='auto')`
 
 The inside of `body` as a mesh of TETRAHEDRA of 4 nodes that follow its surface (see the description of this module).
 
@@ -4085,6 +4105,9 @@ surface_fit     a number from 0 to 1 that says what the mesh gives up where the 
                 0.5 by default (what the mesher has always done); towards 1 nodes go onto edges even where the elements get poorer and the skin stays nearer the exact surface; towards 0
                 a move that would leave a poor element is refused and the skin may stand further off the surface to remove a sliver.  The limits each number stands for are in
                 docs/analysis.md, Surface or elements
+symmetry        'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a body that is symmetric about a plane through the middle of its box is meshed as the mirror image of a
+                half that was mended before it was mirrored, so that the mesh is symmetric too (a lattice cut by a body cannot be); None meshes the body whole.  A graded mesh (a size field) and
+                a mesh with layers are meshed whole
 
 ### `thin_size(shape, lo, hi, h, budget, tets_per_cube=12.0, hard=4000000, across=None, walls=None, unit='tetrahedra')`
 

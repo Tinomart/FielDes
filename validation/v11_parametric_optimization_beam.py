@@ -13,7 +13,7 @@
 from fieldes import *
 
 view.set_bounds((-10, -10, -10), (110, 40, 30), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)                # ten samples across the longest side of a model for every unit, the result as every model: 100 across
 view.set_quality(8)
 P, L, E = 200.0, 100.0, aluminium.E
 rho = aluminium.density * 1000.0                      # kg per mm^3
@@ -27,17 +27,24 @@ print('exact best      : width %.1f, height %.2f -> mass %.5f kg' % (width_low, 
 width = var(20)
 height = var(12)
 beam = box((100, width, height), position=(50, width / 2, height / 2))
-wall = fixed(box((2, 61, 61), position=(0, 29.5, 29.5)))
-pull = force(box((2, 61, 61), position=(100, 29.5, 29.5)), (0, 0, -200))
-stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=4)
+support = fixed(box((2, 61, 61), position=(0, 29.5, 29.5)))
+load = force(box((2, 61, 61), position=(100, 29.5, 29.5)), (0, 0, -200))
+stress = static_analysis(beam, supports=[support], loads=[load], material=aluminium, element_size=4)
 mass_1 = stress.mass
 max_von_mises_1 = stress.max_von_mises
 max_displacement_1 = stress.max_displacement
 best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)], conditions=[minimize(mass_1), keep_below(max_von_mises_1, 90), keep_below(max_displacement_1, 0.5)])
+
+# SHOWN IN THE VIEWPORT, directly after the models and before any check: the analysis of the best design the optimizer found, with the conditions every design was solved with.
+best                                    # the best design: its stress on the beam
+support                                 # the held end
+load                                    # the 200 N across the free end
+
 w, h = best.values['width'], best.values['height']
 print('found           : width %.2f, height %.2f -> mass %.5f kg  (%d designs tried, feasible: %s)' % (w, h, rho * w * h * L, best.evaluations, best.feasible))
 print('height %+.1f %% from the exact one, mass %+.1f %%' % (100 * (h / height_exact - 1), 100 * (rho * w * h * L / mass_exact - 1)))
-if not best.feasible:
+feasible = best.feasible                # (a number read from the result: an `if` that read `best` itself would take its row into its own)
+if not feasible:
     raise AssertionError('the best design breaks a limit')
 if abs(w - width_low) > 0.3:
     raise AssertionError('the width should be at its lower bound, %g mm: it is %.2f' % (width_low, w))
@@ -46,5 +53,3 @@ if abs(h / height_exact - 1) > TOLERANCE:
 if abs(rho * w * h * L / mass_exact - 1) > TOLERANCE:
     raise AssertionError('the mass is more than %.0f %% from the exact one' % (100 * TOLERANCE))
 print('OK')
-
-best                                    # shown: the analysis of the best design the optimizer found, its stress on the beam

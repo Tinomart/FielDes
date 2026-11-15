@@ -65,9 +65,10 @@ view.set_quality(8)
 #     optimiser's own value and the value of the part analysed again (lower: only the metal makes heat in it); the card steps through the iterations.
 #
 # 11. THE SYMMETRIC MESH.  Open examples/06_modal_analysis.py (about twenty seconds) and look at the first mode from the front (View > Front).  YOU MUST SEE: both lugs moving alike, the same red on
-#     both (the first mode, about 1507 Hz); before the mesh was mirrored one lug moved about twice as far as the other.  Then open examples/17_flow_topology_optimization.py (about four minutes): a slender
-#     spindle with pointed ends in the stream, the same above and below the middle line; the card says a drag coefficient of about 0.3 and a lift coefficient of a few thousandths (a symmetric body has no lift:
-#     that is the noise of the places of the lattice, about 1 % of the drag, and the one flow that is drawn has a lift of 1e-11 of its drag).
+#     both (the first mode, about 1507 Hz); before the mesh was mirrored one lug moved about twice as far as the other.  Then open examples/17_flow_topology_optimization.py (about fourteen minutes the first time,
+#     about a minute and a half from the result cache after that): a lens with pointed ends in the stream, the same above and below the middle line and the same in front and behind (the best body in creeping flow, Pironneau 1973);
+#     the card says 'Optimisation: drag_force (-85.8 %)' with the curve, iteration 79, a volume of 157.4 mm^3, a drag coefficient of 0.1665 and a lift of 4.5e-10 N against a drag of 1.07e-07 N (a symmetric body has
+#     no lift: what is left is the noise of the places of the lattice).
 #
 # 12. THE ELEMENTS OF A RESULT, AND THE CUT THROUGH THEM.  Open examples/05_static_analysis.py, then examples/07_thermal_analysis.py, examples/06_modal_analysis.py and examples/16_fluid_flow.py, one after the
 #     other.  On the result card of each: the button "Elements" (and, below the colour bar, the number of nodes and elements).  YOU MUST SEE: pressing it draws the tetrahedra of the part, coloured by the value of

@@ -19,7 +19,7 @@
 from fieldes import *
 
 view.set_bounds((-45, -25, -10), (45, 25, 10), auto_scale=True)
-view.set_resolution(12)                # (the result of an analysis is drawn at this many samples to the mm: 12 draws the plate in a few seconds)
+view.set_resolution(12)                # (normed by the size of the model, as for every model: ten samples across the plate for every unit, 120 across)
 view.set_quality(8)
 
 width, height, thickness, hole_radius, pull = 80.0, 40.0, 6.0, 6.0, 2000.0          # mm, mm, mm, mm, newtons

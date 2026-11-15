@@ -2080,6 +2080,12 @@ void libfive_tetmesh_set_limits(double floor_ratio, double sliver_angle, double 
     limits.menderPoor = mender_poor;
 }
 
+// H226: the planes a symmetric part is meshed as the mirror image of a half about, from now on (the argument symmetry of the meshing and analysis functions): bits 1 x, 2 y, 4 z; 7 is every plane (the default), 0 meshes the part whole
+void libfive_tetmesh_set_symmetry(int axes)
+{
+    fea::meshLimits().mirrorAxes = axes & 7;
+}
+
 libfive_tetmesh* libfive_tetmesh_mend(libfive_tree shape, int64_t node_count, const double* positions, int64_t tet_count, const int32_t* tets,
                                       int rounds, int sweeps, double split_badness, int surface, int64_t* stats4)
 {
@@ -2156,6 +2162,7 @@ static libfive_tetmesh* tetmeshNew(libfive_tree shape, libfive_region3 r, float 
     plain.rims = snap;
     plain.edges = snap;
     plain.smooth = snap;
+    plain.mirrorAxes = 0;       // (H226: the plain mesh is meshed whole: a symmetric part gets its mirrored mesh from libfive_tetmesh_new_symmetric, which mends the half before it mirrors it)
     if (!fea::meshShape(Tree(shape), Eigen::Vector3d(r.X.lower, r.Y.lower, r.Z.lower),
                         Eigen::Vector3d(r.X.upper, r.Y.upper, r.Z.upper), h, m->mesh, error, plain))
     {
@@ -2175,6 +2182,52 @@ libfive_tetmesh* libfive_tetmesh_new(libfive_tree shape, libfive_region3 r, floa
 libfive_tetmesh* libfive_tetmesh_new_plain(libfive_tree shape, libfive_region3 r, float h)
 {
     return tetmeshNew(shape, r, h, false);
+}
+
+// H226 (the user, 2026-11-16: "I meshed the bracket myself from a file and the mesh is just not symmetrical, despite the part being symmetrical"): the mesh of mesh_tet4 and mesh_tet10 for a part that is symmetric about a plane
+// through the middle of its box is the half of it mirrored, as the mesh of an analysis is (meshShapeMirrored): a lattice cut by a shape cannot be symmetric, and every pass after it (the mender, the lifting of the caps) went
+// through the whole mesh in an order that a mirror reverses.  The half is mended before it is mirrored (`mend`: what the python side asks for with optimize=True), and the mesh the call returns is then what mesh_tet4 gives:
+// libfive_tetmesh_mirrored says how many planes it was mirrored about, and when it says 0 the part has none (or only a half too thin to mesh) and the mesh is the plain one of libfive_tetmesh_new, which python mends as before
+libfive_tetmesh* libfive_tetmesh_new_symmetric(libfive_tree shape, libfive_region3 r, float h, int mend)
+{
+    const Eigen::Vector3d lo(r.X.lower, r.Y.lower, r.Z.lower), hi(r.X.upper, r.Y.upper, r.Z.upper);
+    const Tree tree(shape);
+    const auto planes = fea::findMeshMirrors(tree, lo, hi, h, fea::meshLimits().mirrorAxes);
+    if (planes.empty()) return tetmeshNew(shape, r, h, true);
+    auto m = new libfive_tetmesh_;
+    std::string error;
+    fea::MeshOptions options;
+    options.mend = mend != 0;
+    if (!fea::meshShapeMirrored(tree, lo, hi, h, planes, m->mesh, error, options))
+    {
+        g_tetmesh_message = error;
+        delete m;
+        return nullptr;
+    }
+    g_tetmesh_message.clear();
+    return m;
+}
+
+int libfive_tetmesh_mirrored(libfive_tetmesh* m)
+{
+    return int(m->mesh.mirrored);
+}
+
+// H226: the planes through the middle of a region that a shape is symmetric about, as the one decision the meshers of the python side (the grids of cubes, the Cartesian cells) make their mirrored meshes from -- the
+// same findMeshMirrors that meshShape asks: the axes (0 x, 1 y, 2 z) and the places of at most three planes, only those of the bit set `axes` looked at; returns how many
+int libfive_tetmesh_find_mirrors(libfive_tree shape, libfive_region3 r, float h, int axes, int* out_axis, double* out_at)
+{
+    const Eigen::Vector3d lo(r.X.lower, r.Y.lower, r.Z.lower), hi(r.X.upper, r.Y.upper, r.Z.upper);
+    const auto planes = fea::findMeshMirrors(Tree(shape), lo, hi, h, axes);
+    int n = 0;
+    for (const auto& p : planes)
+    {
+        if (n >= 3) break;
+        out_axis[n] = p.axis;
+        out_at[n] = p.at;
+        ++n;
+    }
+    return n;
 }
 
 struct libfive_probe_
@@ -3750,6 +3803,20 @@ void libfive_tetflow_add_mirror(libfive_tetflow* f, int axis, double at, int at_
 void libfive_tetflow_set_symmetry_auto(libfive_tetflow* f, int on)
 {
     if (f) f->symmetryAuto = on != 0;
+}
+
+void libfive_tetflow_set_mesh_mirrors(libfive_tetflow* f, int count, const int* axes, const double* at)
+{
+    if (!f) return;
+    std::vector<fea::MeshMirror> planes;
+    for (int k = 0; k < count; ++k)
+    {
+        fea::MeshMirror m;
+        m.axis = axes[k];
+        m.at = at[k];
+        planes.push_back(m);
+    }
+    f->problem->setMeshMirrors(std::move(planes));
 }
 
 int libfive_tetflow_mirror(libfive_tetflow* f, int axis, double* at)

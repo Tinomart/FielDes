@@ -196,22 +196,93 @@ def _set_limits(fit):
     fn(*fit_limits(fit))
 
 
-class surface_fit_scope(object):
-    ''' with surface_fit_scope(0.8): the meshes made inside are made with the limits of that number; what stood before stands again after (a scope inside a scope too) '''
+# H226 (the user, 2026-11-16: "this should certainly be an argument for each meshing that can turn it off. But I would definitely have it on by default"): the argument `symmetry` of the meshing and analysis functions.  A part that is
+# symmetric about a plane through the middle of its box is meshed as the mirror image of a half, so that its mesh is symmetric too (a lattice cut by a shape cannot be: the cut of a square goes along the diagonal through its
+# lowest-numbered vertex, and a mirror reverses the numbers).  The decision is made in the kernel, in the one function every tetrahedral mesh passes through (meshShape); this is what the argument says to it, as the bit set of
+# the planes it may mirror about.  The words are those of the symmetry of topology_optimization: 'auto' (the default), None, and the axes
+SYMMETRY_ALL = 7
+_AXIS_BITS = {'x': 1, 'y': 2, 'z': 4}
+_symmetry_stack = [SYMMETRY_ALL]
 
-    def __init__(self, fit):
+
+def symmetry_value(value, what):
+    ''' The planes a symmetric part may be mirrored about, as a bit set (1 x, 2 y, 4 z), from the argument: 'auto' every plane (the default), None none (the part is meshed whole), 'x', 'y', 'z' or several of them ('xz', ['x', 'z']) '''
+    if value is None:
+        return 0
+    letters = None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text == 'auto':
+            return SYMMETRY_ALL
+        letters = list(text)
+    elif isinstance(value, (list, tuple)) and value and all(isinstance(c, str) for c in value):
+        letters = [c.strip().lower() for c in value]
+    if letters and all(c in _AXIS_BITS for c in letters):
+        mask = 0
+        for c in letters:
+            mask |= _AXIS_BITS[c]
+        return mask
+    raise ValueError("%s: symmetry is 'auto' (the default: a part that is symmetric about a plane through the middle of its box is meshed as the mirror image of a half, so that its mesh is symmetric), None (the part is "
+                     "meshed whole), or the axes to look at: 'x', 'y', 'z' or several ('xz'); not %r" % (what, value))
+
+
+def symmetry_letters(mask):
+    ''' The argument that stands for a bit set again (what a mesher that calls another one hands to it): None for no plane, else the letters of the planes '''
+    letters = ''.join(c for c in 'xyz' if mask & _AXIS_BITS[c])
+    return letters or None
+
+
+def check_symmetry_with_mesh(given, mask, what):
+    ''' A mesh that is given is the elements: whether it is symmetric is the person's, not the analysis' '''
+    if given is not None and mask != SYMMETRY_ALL:
+        raise _error('%s: symmetry has no meaning with a mesh -- the mesh is the elements (make a symmetric mesh with mesh_tet4(body, symmetry=...))' % what)
+
+
+def symmetry_key(mask):
+    ''' What the choice adds to the key of a problem: nothing for the default (the keys, and the results kept under them, are as they were) '''
+    return {} if mask == SYMMETRY_ALL else {'symmetry': mask}
+
+
+def current_symmetry():
+    ''' The planes that stand now (they go into the key of a result: the same part meshed whole is another mesh) '''
+    return _symmetry_stack[-1]
+
+
+def _set_symmetry(mask):
+    from fieldes.ffi import lib
+    fn = getattr(lib, 'libfive_tetmesh_set_symmetry', None)
+    if fn is None:
+        if mask != SYMMETRY_ALL:
+            raise _error('this FielDes library is too old for symmetry')
+        return
+    fn(int(mask))
+
+
+class surface_fit_scope(object):
+    ''' with surface_fit_scope(0.8, symmetry=0): the meshes made inside are made with the limits of that number and with the symmetry asked (a bit set; the one that stands when it is left out); what stood before stands
+        again after (a scope inside a scope too) '''
+
+    def __init__(self, fit, symmetry=None):
         self.fit = fit
+        self.symmetry = symmetry            # (None: the symmetry that stands when the scope is entered -- an analysis inside a scope of another keeps its choice; a bit set otherwise, 0 for none)
 
     def __enter__(self):
+        if self.symmetry is None:
+            self.symmetry = _symmetry_stack[-1]
         _surface_fit_stack.append(self.fit)
+        _symmetry_stack.append(self.symmetry)
         try:
             _set_limits(self.fit)
+            _set_symmetry(self.symmetry)
         except BaseException:
             _surface_fit_stack.pop()
+            _symmetry_stack.pop()
             raise
         return self
 
     def __exit__(self, *exc):
         _surface_fit_stack.pop()
+        _symmetry_stack.pop()
         _set_limits(_surface_fit_stack[-1])
+        _set_symmetry(_symmetry_stack[-1])
         return False

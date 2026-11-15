@@ -22,10 +22,16 @@ P, FRACTION = 1000.0, 0.5            # N, the share of the bar the design may us
 E = aluminium.E                      # MPa = N/mm^2
 A = b * h
 
+view.set_bounds((-5, -5, -5), (L + 5, b + 5, h + 5), auto_scale=True)
+view.set_resolution(10)                # ten samples across the longest side of a model for every unit, the result as every model: 100 across
+view.set_quality(8)
+
 bar = box((L, b, h), position=(L / 2, b / 2, h / 2))
 wall = box((2, b + 2, h + 2), position=(0, b / 2, h / 2))
 pull = box((2, b + 2, h + 2), position=(L, b / 2, h / 2))
-stress = static_analysis(bar, supports=[fixed(wall)], loads=[force(pull, (P, 0, 0))], material=aluminium, element_size=2.0, cache=False)
+support = fixed(wall)                # the end at x = 0, held
+load = force(pull, (P, 0, 0))        # the 1000 N pulling the end at x = L
+stress = static_analysis(bar, supports=[support], loads=[load], material=aluminium, element_size=2.0, cache=False)
 c_whole_exact = P * P * L / (E * A)
 c_whole = float(stress.compliance)
 print('the whole bar: compliance %.5f N mm, exact P^2 L / (E A) = %.5f (%+.2f %%)' % (c_whole, c_whole_exact, 100 * (c_whole / c_whole_exact - 1)))
@@ -35,6 +41,12 @@ if abs(c_whole / c_whole_exact - 1) > 0.05:
 compliance_1 = stress.compliance
 volume_fraction_1 = stress.volume_fraction
 best = topology_optimization(stress, conditions=[minimize(compliance_1), keep_below(volume_fraction_1, FRACTION)], iterations=40, cache=False)
+
+# SHOWN IN THE VIEWPORT, directly after the models and before any check: the optimizer's result and the conditions every design was solved with.  The whole bar's analysis (`stress`) is a row of the model tree too: its eye shows it.
+best                                 # the optimized part, coloured by its density; the result card steps through the iterations
+support                              # the held end
+load                                 # the 1000 N pull on the other end
+
 part = best.analysis
 f_part = float(part.volume) / float(stress.volume)          # the share of the bar that the cut part really has: the volumes of the two meshes
 c_part = float(part.compliance)

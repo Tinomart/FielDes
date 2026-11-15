@@ -439,11 +439,20 @@ typedef struct libfive_tetmesh_ libfive_tetmesh;
 libfive_tetmesh* libfive_tetmesh_new(libfive_tree shape, libfive_region3 region, float h);
 /*  The same without the clean-up of the edges and rims (see libfive_tetmesh_snap): for a mesh that is refined after it and cleaned up then  */
 libfive_tetmesh* libfive_tetmesh_new_plain(libfive_tree shape, libfive_region3 region, float h);
+/*  H226: the same for a shape that is symmetric about a plane through the middle of its region, as the mirror image of a half that is mended (mend != 0) before it is mirrored, so that the mesh is symmetric; libfive_tetmesh_mirrored
+ *  is the number of planes it was mirrored about, 0 when the shape has none and the mesh is the one of libfive_tetmesh_new (not mended)  */
+libfive_tetmesh* libfive_tetmesh_new_symmetric(libfive_tree shape, libfive_region3 region, float h, int mend);
+int libfive_tetmesh_mirrored(libfive_tetmesh* m);
+/*  H226: the planes through the middle of the region that the shape is symmetric about, the same decision meshShape makes: the axes (0 x, 1 y, 2 z) and the places of at most three planes (out_axis: 3 ints, out_at: 3
+ *  doubles), only the axes of the bit set `axes` (1 x, 2 y, 4 z) looked at; returns how many  */
+int libfive_tetmesh_find_mirrors(libfive_tree shape, libfive_region3 region, float h, int axes, int* out_axis, double* out_at);
 /*  H225: the choice between fewer odd elements and more surface conformity (the argument surface_fit of the meshing and analysis functions): the limits that every mesh made after this call starts from --
  *  the poorest mean ratio and the smallest dihedral angle (degrees) that a move of a node onto an edge may leave a tetrahedron, how far the skin may stand off the exact surface as a fraction of the
  *  element size, and the mean ratio under which the mender takes a tetrahedron for poor and swaps, collapses or splits it (see MeshLimits in tetmesh.hpp).  The default, 'balanced', is 0.15, 10, 0.06
  *  and 0.6; the python side sets them around a meshing call and puts the default back  */
 void libfive_tetmesh_set_limits(double floor_ratio, double sliver_angle, double surface_tolerance, double mender_poor);
+/*  H226: the planes a part that is symmetric about them is meshed as the mirror image of a half about, as a bit set (1 x, 2 y, 4 z): 7, every plane, is the default; 0 meshes the part whole  */
+void libfive_tetmesh_set_symmetry(int axes);
 const char* libfive_tetmesh_last_message(void);
 /*  vertices, tetrahedra, boundary triangles  */
 void libfive_tetmesh_counts(libfive_tetmesh* m, int64_t* out3);
@@ -798,6 +807,9 @@ int libfive_tetflow_inlet_seeds(libfive_tetflow* f, int n, double* out);
  *  the domain's extent along that axis; or (set_symmetry_auto) about every plane the whole problem is symmetric about  */
 void libfive_tetflow_add_mirror(libfive_tetflow* f, int axis, double at, int at_centre);
 void libfive_tetflow_set_symmetry_auto(libfive_tetflow* f, int on);
+/*  The planes the MESH of the flow may be mirrored about, said by whoever already knows them, so that the mesh makes no search of its own (the user, 2026-11-15, capitals: "IT SHOULDNT REDETECT THE SYMMETRY"): `count` planes,
+ *  plane k perpendicular to axis axes[k] (0, 1, 2) at the coordinate at[k]; count 0: none, and no search.  Call it before the flow is prepared; not called, the mesh looks for the planes in the field  */
+void libfive_tetflow_set_mesh_mirrors(libfive_tetflow* f, int count, const int* axes, const double* at);
 /*  After libfive_tetflow_optimize_density: 0 if the design was not kept symmetric about a plane perpendicular to the axis, 1 if it was (asked for), 2 if it
  *  was found to be symmetric and kept so; *at is the plane's coordinate  */
 int libfive_tetflow_mirror(libfive_tetflow* f, int axis, double* at);

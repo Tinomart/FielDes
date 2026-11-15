@@ -57,6 +57,9 @@ struct MeshLimits
     double sliverAngle = 10.0;                  // the smallest dihedral angle, in degrees, that such a move may leave in a tetrahedron
     double surfaceTolerance = kSurfaceTolerance;    // how far the skin may stand off the exact surface, as a fraction of the element size: the mender's collapses of the skin, the check of a mirrored mesh
     double menderPoor = 0.6;                    // the mean ratio under which the mender takes a tetrahedron for poor and swaps, collapses or splits it (tetmender.hpp MendOptions::poor): the threshold of when elements are removed
+    // H226 (the user, 2026-11-16: "this should certainly be an argument for each meshing that can turn it off. But I would definitely have it on by default"): the planes a part that is symmetric about them is meshed as the mirror image
+    // of a half about, as a bit set (1 x, 2 y, 4 z): 7, every plane, is the default and 0 meshes the part whole (the argument symmetry of the meshing and analysis functions, sim_mesh.py).  meshShape looks at it itself
+    int mirrorAxes = 7;
 };
 MeshLimits& meshLimits();
 
@@ -135,6 +138,9 @@ struct MeshOptions
     double sliverAngle = meshLimits().sliverAngle;
     double surfaceTolerance = meshLimits().surfaceTolerance;
     double menderPoor = meshLimits().menderPoor;
+    // H226: the planes (bits 1 x, 2 y, 4 z) a part that is symmetric about them is meshed as the mirror image of a half about; 0: the part is meshed whole.  meshShape finds the planes itself and mirrors
+    // (every analysis, mesh_tet4 and mesh_tet10 get the symmetric mesh from that one place); the half of a mirrored mesh, which has holdPlanes, is never mirrored again
+    int mirrorAxes = meshLimits().mirrorAxes;
     // Planes (axis, where) the mesh is the half of a mesh that is mirrored about: the nodes on them are held and the faces on them kept (meshShapeMirrored)
     std::vector<std::pair<int, double>> holdPlanes;
 };
@@ -179,7 +185,7 @@ struct MeshMirror
 
 /*  The planes through the middle of [lo, hi] (one for each axis) that `shape` is symmetric about, found by comparing its field with its mirror image at
  *  3000 fixed pseudo-random points (the same points on every machine, so the same answer for the same input)  */
-std::vector<MeshMirror> findMeshMirrors(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector3d& hi, double h);
+std::vector<MeshMirror> findMeshMirrors(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector3d& hi, double h, int axes = 7);
 
 /*  meshShape for a shape that is symmetric about the planes given.  The lattice cut by a shape is not symmetric: a quadrilateral is cut along the diagonal
  *  through its lowest-numbered vertex, a vertex with two equal crossings goes to the first -- numbers a mirror reverses -- so a mesh of the whole has no

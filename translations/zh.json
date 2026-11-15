@@ -199,6 +199,8 @@
  "Opacity": "不透明度",
  "Residual": "残差",
  "How far the solver was from balancing the loads, as a share of the load, after each iteration, on a log scale. It falls until it is below the tolerance, and then the solve stops.": "每次迭代后求解器离载荷平衡还有多远，以载荷的比例表示，采用对数刻度。它会下降到低于容差，然后求解停止。",
+ "Optimisation": "优化",
+ "What the optimisation made best, at every iteration it made, from the first to the last. The curve falls (or rises, when the aim is the highest value) until the design stops changing. The numbers at the ends are the lowest and the highest value of the curve.": "优化在每一次迭代中所要做到最好的量，从第一次到最后一次。曲线会下降（目标为最大值时则上升），直到设计不再变化。两端的数字是曲线的最低值和最高值。",
  "Not validated for safety-critical use": "未针对安全关键用途进行验证",
  "FielDes is a design tool, not a certified solver. The program is checked against four known answers (the validation folder: a beam, a plate with a hole, a channel flow, the conduction through a slab); compare any result with a hand calculation and a test before you rely on it.": "FielDes 是设计工具，不是经认证的求解器。程序已用四个已知解进行核对（validation：梁、带孔板、通道流、穿过平板的导热）；在依赖任何结果之前，请先与手算和试验对比。",
  "off": "关",

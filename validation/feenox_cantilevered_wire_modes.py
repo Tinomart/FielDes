@@ -26,13 +26,19 @@ PAGE = (61.92, 388.0, 1086.0, 2129.0, 3519.0)    # Hz, the page's Euler-Bernoull
 TOLERANCE = 0.03                                 # 3 % (10-node tetrahedra of 0.8 mm: two and a half elements across the diameter; with 1 mm, two across, the first mode reads 3.9 % low and the volume of the mesh 6.9 % short: a wire that thin is not yet resolved, see docs/validation.md)
 
 view.set_bounds((-1, -2, -2), (l + 1, 2, 2), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(25)                 # ten samples across the longest side of a model for every unit: 250 across the wire of 151 mm, cells of 0.6 mm for its 1.9 mm; the modes themselves are drawn with the elements of the analysis
 view.set_quality(8)
 
 wire = cylinder(0.5 * d, l, position=(l / 2, 0, 0), rotation=(0, 90, 0))                      # along x, from 0 to l
 wall = box((1.01, 6, 6), position=(-0.495, 0, 0))                                             # the held end: the face at x = 0
 aluminium_wire = Material('aluminium wire', E, 0.0, rho, 100.0, 0.167, 23e-6)
-modes = modal_analysis(wire, supports=[fixed(wall)], material=aluminium_wire, modes=10, element_size=0.8, element='tet10', cache=False)
+support = fixed(wall)
+modes = modal_analysis(wire, supports=[support], material=aluminium_wire, modes=10, element_size=0.8, element='tet10', cache=False)
+
+# SHOWN IN THE VIEWPORT, directly after the models and before any check: the modal analysis (a row of its own: it shows its first mode, the wire bending; the result card plays it) and the support it was solved with.
+# The other modes are `modes.modes[1]` ... `modes.modes[9]`: state one of them to see it (a mode stated on its own is a model made from the analysis, and takes the analysis into its row).
+modes                                # the modal analysis: the first mode of the wire
+support                              # the held end
 
 
 def roots(count):
@@ -52,16 +58,23 @@ def roots(count):
 
 theory = [x * x / (2.0 * math.pi * l * l) * math.sqrt(E / rho) * d / 4.0 for x in roots(5)]         # sqrt(E I / (rho A)) = sqrt(E / rho) d / 4
 frequencies = sorted(float(f) for f in modes.frequencies)
-worst = 0.0
-print("mode        modal_analysis [Hz]   Euler-Bernoulli [Hz]   page's Euler [Hz]   difference from the theory")
-for n in range(5):
-    f = 0.5 * (frequencies[2 * n] + frequencies[2 * n + 1])
-    error = f / theory[n] - 1.0
-    worst = max(worst, abs(error))
-    print("%d (x2)     %10.2f            %10.2f             %8.2f           %+.2f %%" % (n + 1, f, theory[n], PAGE[n], 100 * error))
+
+
+def table():
+    ''' the first five frequencies (the mean of each pair) against the theory and the page's numbers; prints the table and returns the worst difference from the theory '''
+    worst = 0.0
+    print("mode        modal_analysis [Hz]   Euler-Bernoulli [Hz]   page's Euler [Hz]   difference from the theory")
+    for n in range(5):
+        f = 0.5 * (frequencies[2 * n] + frequencies[2 * n + 1])
+        error = f / theory[n] - 1.0
+        worst = max(worst, abs(error))
+        print("%d (x2)     %10.2f            %10.2f             %8.2f           %+.2f %%" % (n + 1, f, theory[n], PAGE[n], 100 * error))
+    return worst
+
+
+worst = table()
 print("worst: %.2f %%  (the theory computed here differs from the page's by at most %.2f %%)" % (100 * worst, 100 * max(abs(t / p - 1.0) for t, p in zip(theory, PAGE))))
 if worst > TOLERANCE:
     raise AssertionError("a frequency is %.1f %% from beam theory: more than %.0f %%" % (100 * worst, 100 * TOLERANCE))
 print("ok: within %.0f %%" % (100 * TOLERANCE))
 
-modes.modes[0]                       # shown: the first mode (play it on the result card)

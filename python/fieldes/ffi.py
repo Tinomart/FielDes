@@ -466,6 +466,17 @@ try:
     if hasattr(lib, 'libfive_tetmesh_new_plain'):       # (the lattice mesh without the clean-up of its edges and rims: for a mesh that is refined after it, meshing.py _kernel_tets, H223)
         lib.libfive_tetmesh_new_plain.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float]
         lib.libfive_tetmesh_new_plain.restype = libfive_tetmesh_p
+    if hasattr(lib, 'libfive_tetmesh_set_symmetry'):    # (H226: the planes a symmetric part is meshed as the mirror image of a half about: the argument symmetry of the meshing and analysis functions, sim_mesh.py)
+        lib.libfive_tetmesh_set_symmetry.argtypes = [ctypes.c_int]
+        lib.libfive_tetmesh_set_symmetry.restype = None
+    if hasattr(lib, 'libfive_tetmesh_new_symmetric'):   # (H226: a part that is symmetric is meshed as the mirror image of a mended half, so that its mesh is symmetric: meshing.py _kernel_tets)
+        lib.libfive_tetmesh_new_symmetric.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float, ctypes.c_int]
+        lib.libfive_tetmesh_new_symmetric.restype = libfive_tetmesh_p
+        lib.libfive_tetmesh_mirrored.argtypes = [libfive_tetmesh_p]
+        lib.libfive_tetmesh_mirrored.restype = ctypes.c_int
+    if hasattr(lib, 'libfive_tetmesh_find_mirrors'):    # (H226: the planes a shape is symmetric about, for the grids of cubes: meshing.py _mirror_planes)
+        lib.libfive_tetmesh_find_mirrors.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float, ctypes.c_int, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_double)]
+        lib.libfive_tetmesh_find_mirrors.restype = ctypes.c_int
     if hasattr(lib, 'libfive_tetmesh_set_limits'):      # (H225: the choice between fewer odd elements and more surface conformity, sim_mesh.py surface_fit_scope)
         lib.libfive_tetmesh_set_limits.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
         lib.libfive_tetmesh_set_limits.restype = None
@@ -846,6 +857,10 @@ try:
         lib.libfive_tetflow_set_symmetry_auto.restype = None
         lib.libfive_tetflow_mirror.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
         lib.libfive_tetflow_mirror.restype = ctypes.c_int
+    if getattr(lib, 'libfive_tetflow_set_mesh_mirrors', None) is not None:
+        # (the planes the mesh of a flow may be mirrored about, said by whoever knows them, so that the mesh makes no search: count 0 is none)
+        lib.libfive_tetflow_set_mesh_mirrors.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_double)]
+        lib.libfive_tetflow_set_mesh_mirrors.restype = None
     lib.libfive_tetflow_direction.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
     lib.libfive_tetflow_direction.restype = None
     lib.libfive_tetflow_level.argtypes = [libfive_tetflow_p]

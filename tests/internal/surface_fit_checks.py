@@ -122,7 +122,9 @@ def main():
     check('the skin has the fewest triangles at 0 (the mender takes elements out of the skin: %d), the most at 1 (%d), the default between (%d)' % (faces[MOST_ELEMENTS], faces[MOST_SURFACE], faces[DEFAULT]),
           faces[MOST_ELEMENTS] < faces[DEFAULT] <= faces[MOST_SURFACE])
     # a ball has no edge: the number moves the skin and the elements a little, nothing is cut across
-    ball = {fit: mesh_tet4(sphere(8), 3.0, surface_fit=fit) for fit in (MOST_SURFACE, DEFAULT, MOST_ELEMENTS)}
+    # (meshed whole, symmetry=None: a ball is symmetric about three planes, and an octant of a ball only 2.7 elements along its radius is a coarse half mesh with planes for walls, whose skin the mender takes much more of out
+    # at 0 -- 192 triangles against 336 at the default, 2026-11-16 -- than the whole ball's, whose skin does not change at all with the number)
+    ball = {fit: mesh_tet4(sphere(8), 3.0, surface_fit=fit, symmetry=None) for fit in (MOST_SURFACE, DEFAULT, MOST_ELEMENTS)}
     ball_faces = {fit: len(boundary(ball[fit])) for fit in ball}
     print('      a ball of radius 8 at 3 mm: %s boundary triangles' % ', '.join('%s %d' % (fit, ball_faces[fit]) for fit in (MOST_SURFACE, DEFAULT, MOST_ELEMENTS)))
     check('a ball (no edge) is meshed with about the same skin whatever the number (within 15 %% of the default)', all(abs(ball_faces[fit] / ball_faces[DEFAULT] - 1.0) < 0.15 for fit in ball_faces), ball_faces)

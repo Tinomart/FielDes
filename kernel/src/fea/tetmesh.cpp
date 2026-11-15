@@ -758,6 +758,8 @@ size_t snapPlaneEdges(TetMesh& m, const Tree& shape, const MeshOptions& opt)
     }
     struct Goal { int v; Vec3 x; double dist; double length; };
     std::vector<Goal> goals;
+    struct Cand { int v; Vec3 x; Vec3 n1, n2, axis; double length; };
+    std::vector<Cand> cands;
     size_t candidates = 0;
     // THE TRUE FACES (second version, read from the debug lines on the beam of v11): the planes of the two faces of an edge come from the NODES round a node and the field's own normal at each of them -- a node that stands
     // on a face has the face's normal there --, not from the normals of the triangles: near a missing corner the triangles are bevels (the top face of the beam read as tilted by 6 degrees and 0.26 mm low at the plane, and the
@@ -858,31 +860,123 @@ size_t snapPlaneEdges(TetMesh& m, const Tree& shape, const MeshOptions& opt)
         }
         const double dist = (x - m.pos[v]).norm();
         if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges]    node %zu (%.3f %.3f %.3f): %zu groups of nodes with a face's normal (%zu nodes in the ring), the two largest n1 (%.2f %.2f %.2f) n2 (%.2f %.2f %.2f), nodes %d %d; the corner of them and the plane (%.3f %.3f %.3f) is %.2f of a length of %.2f away%s\n", v, m.pos[v][0], m.pos[v][1], m.pos[v][2], groups.size(), ringOf[v].size(), n1[0], n1[1], n1[2], n2[0], n2[1], n2[2], groups[size_t(gi)].count, groups[size_t(gj)].count, x[0], x[1], x[2], dist / length, length, (dist > 1.0 * length || dist < 1e-4 * length) ? ": OUT OF REACH or no move" : "");
-        if (dist > 1.0 * length || dist < 1e-4 * length) continue;
-        goals.push_back({int(v), x, dist, length});
-    }    if (goals.empty())
+        if (dist > 2.0 * length) continue;
+        cands.push_back({int(v), x, n1, n2, axis, length});
+    }
+    // THE CREASE BY A SEARCH ALONG THE LINE OF EACH FACE (H226, found by the plate with a hole at 3 mm, mirrored, in the window of 2026-11-16: the bottom rim of the hole had 4 of its 12 nodes on it): the three planes meet in
+    // a point that is the corner of a STRAIGHT edge, and the test that the point is on the surface passes for any point of a flat face, because the field is zero all over it -- so a node that stood right on the circle where
+    // a bore meets a face was moved 0.2 mm off it, to where the tangent plane of the wall meets the face.  The crease is found on the field instead: the plane of the mirror and the plane of one face meet in a line; along
+    // it the field is zero (the line lies in the face) and becomes positive where the line leaves the body -- there the other face, straight or round, closes the edge.  Sampled along the line within a length of the
+    // point, then halved; a line is taken only when the surface is ON it right up to the crossing (a line that enters the body or lies off the surface is not the line of a face).  Both faces' lines give the same point
+    // at a straight edge, one of them gives the rim of a bore
+    std::vector<Vec3> refined(cands.size(), Vec3::Zero());
+    std::vector<char> found(cands.size(), 0);
+    if (!cands.empty())
+    {
+        constexpr int kSamples = 21;
+        std::vector<Vec3> pts;
+        std::vector<double> scl;
+        std::vector<Vec3> dirs(cands.size() * 2, Vec3::Zero());
+        for (size_t c = 0; c < cands.size(); ++c)
+            for (int i = 0; i < 2; ++i)
+            {
+                Vec3 d = cands[c].axis.cross(i == 0 ? cands[c].n1 : cands[c].n2);
+                const double dn = d.norm();
+                if (dn >= 0.2) dirs[2 * c + size_t(i)] = d / dn;
+                // (the field of the half mesh is max(the body, the plane): ZERO all over the plane inside the body, so a line IN the plane reads 0 everywhere inside it -- the interior looks like a surface.  The samples are read
+                // a fiftieth of a length off the plane, on the side of the half, where the field is the body's own near the surface and the plane's -(the offset) deeper in: a point strictly inside is no longer on the surface)
+                for (int k = 0; k < kSamples; ++k)
+                {
+                    pts.push_back(cands[c].x + cands[c].axis * (0.02 * cands[c].length) + dirs[2 * c + size_t(i)] * ((k - 10) * 0.1 * cands[c].length));
+                    scl.push_back(cands[c].length);
+                }
+            }
+        const std::vector<FieldAt> got = fieldAt(shape, pts, scl);
+        if (stopped()) return 0;
+        auto distOf = [](const FieldAt& fa) { const double gl = fa.g.norm(); return gl > 1e-12 ? fa.value / gl : 1e30; };
+        struct Bracket { Vec3 a, b; double length; bool ok = false; };
+        std::vector<Bracket> brackets(cands.size() * 2);
+        for (size_t c = 0; c < cands.size(); ++c)
+            for (size_t i = 0; i < 2; ++i)
+            {
+                Bracket& br = brackets[2 * c + i];
+                br.length = cands[c].length;
+                if (dirs[2 * c + i].norm() < 0.5) continue;
+                const double tol = 2e-3 * cands[c].length;
+                std::vector<double> dd(kSamples);
+                for (int k = 0; k < kSamples; ++k) dd[size_t(k)] = distOf(got[(2 * c + i) * kSamples + size_t(k)]);
+                auto onSurf = [&](int k) { return std::abs(dd[size_t(k)]) <= tol; };
+                auto outside = [&](int k) { return dd[size_t(k)] > tol; };
+                if (std::getenv("FIELDES_TET_DEBUG"))
+                    fprintf(stderr, "[snapPlaneEdges]    node %d line %zu (direction %.2f %.2f %.2f): the distance along it, 21 samples of %.3f: %.3f %.3f %.3f %.3f %.3f | %.3f | %.3f %.3f %.3f %.3f %.3f\n", cands[c].v, i + 1,
+                            dirs[2 * c + i][0], dirs[2 * c + i][1], dirs[2 * c + i][2], 0.1 * cands[c].length, dd[5], dd[6], dd[7], dd[8], dd[9], dd[10], dd[11], dd[12], dd[13], dd[14], dd[15]);
+                double best = 1e30;
+                for (int k = 0; k + 1 < kSamples; ++k)
+                    for (int dir = 0; dir < 2; ++dir)
+                    {
+                        const int in = dir == 0 ? k : k + 1, out = dir == 0 ? k + 1 : k;       // (the sample on the surface and the sample outside it)
+                        if (!onSurf(in) || !outside(out)) continue;
+                        const int back = in + (in - out);                                        // (the sample beyond the one on the surface, away from the outside: the line runs along the face there)
+                        if (back >= 0 && back < kSamples && !onSurf(back)) continue;
+                        const double centre = std::abs((k + 0.5 - 10) * 0.1);
+                        if (centre < best)
+                        {
+                            best = centre;
+                            br.a = pts[(2 * c + i) * kSamples + size_t(in)];
+                            br.b = pts[(2 * c + i) * kSamples + size_t(out)];
+                            br.ok = true;
+                        }
+                    }
+            }
+        for (int it = 0; it < 24; ++it)
+        {
+            std::vector<Vec3> mid;
+            std::vector<double> ms;
+            std::vector<size_t> which;
+            for (size_t k = 0; k < brackets.size(); ++k)
+                if (brackets[k].ok)
+                {
+                    mid.push_back(0.5 * (brackets[k].a + brackets[k].b));
+                    ms.push_back(brackets[k].length);
+                    which.push_back(k);
+                }
+            if (mid.empty()) break;
+            const std::vector<FieldAt> gm = fieldAt(shape, mid, ms);
+            if (stopped()) return 0;
+            for (size_t q = 0; q < which.size(); ++q)
+            {
+                Bracket& br = brackets[which[q]];
+                if (distOf(gm[q]) > 2e-5 * br.length) br.b = mid[q];
+                else br.a = mid[q];
+            }
+        }
+        for (size_t c = 0; c < cands.size(); ++c)
+        {
+            const Bracket& b0 = brackets[2 * c];
+            const Bracket& b1 = brackets[2 * c + 1];
+            const Vec3 off = cands[c].axis * (0.02 * cands[c].length);         // (the samples were read off the plane)
+            if (b0.ok) { refined[c] = 0.5 * (b0.a + b0.b) - off; found[c] = 1; }
+            else if (b1.ok) { refined[c] = 0.5 * (b1.a + b1.b) - off; found[c] = 1; }
+            if (found[c] && std::getenv("FIELDES_TET_DEBUG"))
+                fprintf(stderr, "[snapPlaneEdges]    node %d: the crease along the line of face %d is at (%.3f %.3f %.3f), the planes' corner was (%.3f %.3f %.3f)\n", cands[c].v, b0.ok ? 1 : 2,
+                        refined[c][0], refined[c][1], refined[c][2], cands[c].x[0], cands[c].x[1], cands[c].x[2]);
+        }
+    }
+    for (size_t c = 0; c < cands.size(); ++c)
+    {
+        if (!found[c]) continue;
+        const double dist = (refined[c] - m.pos[size_t(cands[c].v)]).norm();
+        if (dist > 1.0 * cands[c].length || dist < 1e-4 * cands[c].length) continue;
+        goals.push_back({cands[c].v, refined[c], dist, cands[c].length});
+    }
+    if (goals.empty())
     {
         if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges] %zu nodes of a plane with two groups of faces, none with a corner of the edge within reach\n", candidates);
         return 0;
     }
-    // (the field at the corners: a straight edge has the surface right there)
-    std::vector<Vec3> points;
-    std::vector<double> scales;
-    for (const auto& g : goals)
-    {
-        points.push_back(g.x);
-        scales.push_back(g.length);
-    }
-    const std::vector<FieldAt> at = fieldAt(shape, points, scales);
-    if (stopped()) return 0;
+    // (every goal was found ON the surface by the search along a face's line, to a five-hundredth of a length: no second test of the field at the point, which a flat face passes anywhere)
     std::vector<size_t> order;
-    for (size_t k = 0; k < goals.size(); ++k)
-    {
-        const double gl = at[k].g.norm();
-        const bool onSurface = gl > 1e-12 && std::abs(at[k].value) / gl <= 1e-3 * goals[k].length;
-        if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges]    node %d: the field at its corner %.5f, its gradient %.3f: %s\n", goals[k].v, at[k].value, gl, onSurface ? "on the surface" : "NOT ON THE SURFACE (a bent edge, or the planes of the groups are not those of the edge)");
-        if (onSurface) order.push_back(k);
-    }
+    for (size_t k = 0; k < goals.size(); ++k) order.push_back(k);
     std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return goals[a].dist < goals[b].dist; });
     std::vector<Vec3> used;
     size_t moved = 0;
@@ -2691,6 +2785,16 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
         error = "the element size must be positive";
         return false;
     }
+    // H226 (the user, 2026-11-16: "I meshed the bracket myself from a file and the mesh is just not symmetrical, despite the part being symmetrical"; "THAT APPLIES FOR ALL MESHING CORRECT? YOU ARE NOT JUST HARD CODING IT IN TO TET4
+    // LIKE YOU HARD CODED IT IN TO THE ANALYSIS AUTO MESH"): the symmetry is decided here, in the one function that every tetrahedral mesh passes through, and not by each caller: a part that is symmetric about a plane
+    // through the middle of its region (opt.mirrorAxes: the argument symmetry of the meshing and analysis functions, on by default, 0 turns it off) is meshed on one side of it and mirrored, see meshShapeMirrored.  The half
+    // mesh itself has holdPlanes and is never mirrored again
+    if (opt.mirrorAxes != 0 && opt.holdPlanes.empty())
+    {
+        const auto planes = findMeshMirrors(shape, lo, hi, h, opt.mirrorAxes);
+        if (stopped()) { error = "cancelled"; return false; }
+        if (!planes.empty()) return meshShapeMirrored(shape, lo, hi, h, planes, out, error, optIn);
+    }
     Lattice L;
     if (!makeLattice(lo, hi, h, opt.fit, L, error)) return false;
     const size_t nTotal = L.total();
@@ -3428,6 +3532,35 @@ void finalizeMesh(TetMesh& mesh)
 // size of the mesh itself is the least that can be seen on it.  No mesh is looked at; the boxes that the interval test cannot decide at half an element are judged by the field at their centres (below)
 static bool fieldSymmetric(const Tree& shape, const Vec3& lo, const Vec3& hi, int axis, double at, double h)
 {
+    // THE QUICK LOOK FIRST (H228, measured 2026-11-15 in the window: the flow around an optimised body, whose field is a level set read from a mesh, took 3 s to 7.5 s per axis and 11 s per mesh in the interval search below, eight
+    // meshes after every flow optimisation -- 90 s of the 108 s that the real drag takes): a part that is not symmetric shows it at a few thousand points.  The field is read at 20,000 points of the region (a low-discrepancy sequence) and at
+    // their mirror images; where the one is inside by more than a tenth of an element and the other outside by as much the plane is not a plane of symmetry, whatever the interval search would find: a symmetric part has the same value at
+    // both, so it never shows such a point, and it goes on to the proof below as before.  Three such points are enough (a lone one may be a thin feature between two samples); a part the look condemns is meshed whole, which is always right
+    {
+        const size_t count = 20000;
+        std::vector<Eigen::Vector3f> pts, mirrored;
+        pts.reserve(count);
+        mirrored.reserve(count);
+        const double alpha[3] = {0.8191725134, 0.6710436067, 0.5497004779};         // (the generalised golden ratio sequence for three dimensions)
+        for (size_t k = 0; k < count; ++k)
+        {
+            Eigen::Vector3f p;
+            for (int a = 0; a < 3; ++a) p[a] = float(lo[a] + (hi[a] - lo[a]) * std::fmod(0.5 + alpha[a] * double(k + 1), 1.0));
+            pts.push_back(p);
+            Eigen::Vector3f q = p;
+            q[axis] = float(2.0 * at) - p[axis];
+            mirrored.push_back(q);
+        }
+        std::vector<float> fa, fb;
+        evalPoints(shape, pts, fa);
+        evalPoints(shape, mirrored, fb);
+        if (stopped()) return false;
+        const float margin = float(0.1 * h);
+        size_t wrong = 0;
+        for (size_t k = 0; k < count; ++k)
+            if ((fa[k] < -margin && fb[k] > margin) || (fa[k] > margin && fb[k] < -margin)) ++wrong;
+        if (wrong >= 3) return false;
+    }
     Tree mx = Tree::X(), my = Tree::Y(), mz = Tree::Z();
     const Tree flipped = Tree(float(2.0 * at)) - (axis == 0 ? Tree::X() : (axis == 1 ? Tree::Y() : Tree::Z()));
     if (axis == 0) mx = flipped;
@@ -3570,13 +3703,14 @@ static size_t shallowContacts(const Tree& shape, const Vec3& lo, const Vec3& hi,
     return shallow;
 }
 
-std::vector<MeshMirror> findMeshMirrors(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector3d& hi, double h)
+std::vector<MeshMirror> findMeshMirrors(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector3d& hi, double h, int axes)
 {
     std::vector<MeshMirror> found;
     const Vec3 size = hi - lo;
     if (!(size.minCoeff() > 0)) return found;
     for (int axis = 0; axis < 3; ++axis)
     {
+        if (((axes >> axis) & 1) == 0) continue;          // (H226: an axis the user left out: no look at it)
         const double at = 0.5 * (lo[axis] + hi[axis]);
         bool same = fieldSymmetric(shape, lo, hi, axis, at, h);
         if (stopped()) return found;
@@ -4117,7 +4251,10 @@ bool meshShapeMirrored(const Tree& shape, const Eigen::Vector3d& lo, const Eigen
         }
         fprintf(stderr, "[tetmesh] the mirrored mesh has tetrahedra without a volume: the part is meshed whole\n");
     }
-    return meshShape(shape, lo, hi, h, out, error, optIn);
+    // (the whole part: with the mirroring off, or meshShape would look for the planes again and come back here)
+    MeshOptions whole = optIn;
+    whole.mirrorAxes = 0;
+    return meshShape(shape, lo, hi, h, out, error, whole);
 }
 
 MeshQuality meshQuality(const TetMesh& mesh)

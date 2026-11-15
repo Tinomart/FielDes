@@ -437,7 +437,7 @@ class FluidResult(FieldResult):
 
     def streamlines(self, seeds=None, count=40, max_time=None, max_points=4000, backward=False, step=None):
         ''' The paths of particles carried by the flow: a list of lines, each a list of (x, y, z, speed, time)
-            points, from `seeds` (a list of (x, y, z); by default `count` points spread over the inlets), by
+            points, from `seeds` (a list of (x, y, z); by default `count` points spread over the inlets, or over the middle plane of the fluid when there is no inlet), by
             Runge-Kutta steps of half an element, for up to `max_time` seconds (by default the time it takes to
             cross the fluid three times) or `max_points` points, until the particle leaves the fluid.  backward=True
             follows the flow upstream; step= picks a step of a flow in time (the last one by default). '''
@@ -447,7 +447,23 @@ class FluidResult(FieldResult):
             n = lib.libfive_tetflow_inlet_seeds(p, int(count), buf)
             seeds = [(buf[3 * i], buf[3 * i + 1], buf[3 * i + 2]) for i in range(n)]
             if not seeds:
-                raise FeaError('streamlines: the flow has no inlet to seed from: give seeds=[(x, y, z), ...]')
+                # a flow with no inlet (a lid-driven cavity, a stirred tank): `count` points spread over the middle plane of the fluid, in its two longest directions
+                b = getattr(self, '_bounds', None)
+                if b is None:
+                    raise FeaError('streamlines: the flow has no inlet to seed from: give seeds=[(x, y, z), ...]')
+                lo, hi = b
+                extent = [float(h) - float(l) for l, h in zip(lo, hi)]
+                thin, u, v = sorted(range(3), key=lambda k: extent[k])
+                nu = max(2, int(round(math.sqrt(int(count) * extent[u] / max(extent[v], 1e-12)))))
+                nv = max(2, int(math.ceil(int(count) / float(nu))))
+                seeds = []
+                for i in range(nu):
+                    for j in range(nv):
+                        seed = [0.0, 0.0, 0.0]
+                        seed[thin] = 0.5 * (float(lo[thin]) + float(hi[thin]))
+                        seed[u] = float(lo[u]) + (i + 0.5) * extent[u] / nu
+                        seed[v] = float(lo[v]) + (j + 0.5) * extent[v] / nv
+                        seeds.append(tuple(seed))
         seeds = [tuple(float(c) for c in s) for s in seeds]
         if not seeds:
             return []
@@ -607,7 +623,10 @@ class FluidStep:
             self.label, self.max_speed, self.pressure_drop, *self.wall_force)
 
 
-def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, relaxation, what, mesh=None):
+def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, relaxation, what, mesh=None, mirrors=None):
+    ''' `mirrors`: the planes the mesh may be mirrored about, [(axis, at)], when whoever builds the problem already knows them (the optimiser of a flow decided the symmetry of its problem once; the flows round
+        the body it made take its answer, and a flow on a lattice moved against the body, whose region has no plane through its middle, none: [] -- the user, 2026-11-15, capitals: "IT SHOULDNT REDETECT THE SYMMETRY").
+        None: the mesh looks for the planes in the field, as it always did '''
     if not isinstance(shape, Shape):
         raise TypeError('{}: the fluid domain must be a Shape'.format(what))
     if not isinstance(fluid, Fluid):
@@ -628,6 +647,11 @@ def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, ma
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
     ptr = lib.libfive_tetflow_new(shape.ptr, region, element_size, fluid.density, fluid.viscosity)
     handle = _Handle(ptr)
+    if mirrors is not None and getattr(lib, 'libfive_tetflow_set_mesh_mirrors', None) is not None:
+        count = len(mirrors)
+        axes = (ctypes.c_int * max(1, count))(*[int(a) for a, _ in mirrors])
+        ats = (ctypes.c_double * max(1, count))(*[float(v) for _, v in mirrors])
+        lib.libfive_tetflow_set_mesh_mirrors(ptr, count, axes, ats)
     if mesh is not None:
         _sim_mesh.give('tetflow', ptr, mesh, what)
     n_in = 0
@@ -665,7 +689,7 @@ _cache = OrderedDict()
 
 @_with_conditions
 def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-                   tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit=0.5):
+                   tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit=0.5, symmetry='auto'):
     ''' Laminar flow of `fluid` around `body` (a Shape, the solid the flow goes around) in `domain` (a Shape whose inside is the
         fluid, the body's place in it too: the fluid is the domain with the body cut out) with the boundary conditions, the same
         inputs of topology_optimization for a body in a flow, one for each kind (each one item or a list, [] for none):
@@ -691,6 +715,8 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
         bounds         ((x0, y0, z0), (x1, y1, z1)) of the domain (found if not given)
         surface_fit    a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5 by default: what the mesh gives up where the exact
                        surface and good elements pull against each other; see static_analysis
+        symmetry       'auto' (default), None, or the axes to look at ('x', 'y', 'z', 'xz'): a flow domain that is symmetric about a plane through the middle of its box
+                       is meshed as the mirror image of a half, so its mesh and its flow are symmetric; None meshes it whole; see static_analysis
 
         Returns a FluidResult: the fields (speed, pressure, ...), the flows and the pressure drop,
         the wall force (on every wall, the body's: its drag is the part along the flow), streamlines(), .body and .domain.  An unchanged problem is cached (as a static analysis is).
@@ -701,6 +727,8 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
     domain, mesh = _sim_mesh.part(domain, 'fluid_analysis', element_size, 'tet')      # (a mesh is the mesh of the fluid itself)
     surface_fit = _sim_mesh.surface_fit_value(surface_fit, 'fluid_analysis')
     _sim_mesh.check_fit_with_mesh(mesh, surface_fit, 'fluid_analysis')
+    symmetry = _sim_mesh.symmetry_value(symmetry, 'fluid_analysis')
+    _sim_mesh.check_symmetry_with_mesh(mesh, symmetry, 'fluid_analysis')
     if not isinstance(body, Shape) or not isinstance(domain, Shape):
         raise TypeError('fluid_analysis: the body and the domain must be Shapes (the flow goes around the body, inside the domain)')
     _use_conditions(conditions, domain)
@@ -709,16 +737,16 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
         around._bounds = bounds if bounds is not None else _bounds(domain)
     else:
         around = domain             # (the user's mesh is of the fluid: the domain with the body cut out, which they made)
-    with _sim_mesh.surface_fit_scope(surface_fit):
+    with _sim_mesh.surface_fit_scope(surface_fit, symmetry):
         result = _fluid_analysis(around, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, tolerance, relaxation, cache,
-                                 time, store_every, mesh, surface_fit)
+                                 time, store_every, mesh, surface_fit, symmetry=symmetry)
     result.body, result.domain = body, domain
     result._conditions = conditions
     return result
 
 
 def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, mesh=None, surface_fit=0.5):
+                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, mesh=None, surface_fit=0.5, mirrors=None, symmetry=_sim_mesh.SYMMETRY_ALL):
     if time is not None:
         try:
             duration, dt = float(time[0]), float(time[1])
@@ -731,7 +759,8 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
     ekey = problem_key('flow', mesh=2, shape=shape, part_bounds=getattr(shape, '_bounds', None), conditions=conditions,
                        fluid=fluid, element_size=element_size, bounds=bounds, gravity=gravity, stokes=bool(stokes),
                        max_iterations=int(max_iterations), tolerance=float(tolerance),
-                       relaxation=float(relaxation), time=time, store_every=int(store_every), **_sim_mesh.fit_key(surface_fit), **_sim_mesh.key(mesh)) if cache else None
+                       relaxation=float(relaxation), time=time, store_every=int(store_every), **_sim_mesh.fit_key(surface_fit), **_sim_mesh.symmetry_key(symmetry), **_sim_mesh.key(mesh),
+                       **({} if mirrors is None else {'mirrors': tuple((int(a), float(v)) for a, v in mirrors)})) if cache else None
     if ekey is not None and ekey in _cache:
         _cache.move_to_end(ekey)
         cached = _cache[ekey]
@@ -743,7 +772,7 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
         _rebind(r)
         return r
     handle, element_size, (lo, hi), items = _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes,
-                                                     max_iterations, relaxation, 'fluid_analysis', mesh)
+                                                     max_iterations, relaxation, 'fluid_analysis', mesh, mirrors)
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load('tetflow', ekey, 'flow analysis')
     if loaded is not None:
@@ -759,7 +788,7 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
         raise FeaError('fluid_analysis: ' + lib.libfive_tetflow_message(ptr).decode('utf-8', 'replace'))
     if cache:
         try:
-            key = (lib.libfive_tetflow_hash(ptr), float(tolerance), time, int(store_every), surface_fit,
+            key = (lib.libfive_tetflow_hash(ptr), float(tolerance), time, int(store_every), surface_fit, None if mirrors is None else tuple((int(a), float(v)) for a, v in mirrors),
                    tuple((type(b).__name__, shape_key(b.region)) +
                          tuple(sorted((k2, v) for k2, v in vars(b).items() if k2 != 'region'))
                          for b in items))
@@ -930,6 +959,13 @@ class FlowTopologyResult(FieldResult):
         fluid._fea_mesh = shown['_fea_mesh']
         fluid._fea_elements_note = shown['_fea_elements_note']
         fluid._color_detail = float(self.element_size or 0)
+        # (H228, the user, 2026-11-15, capitals: "WE WERE SO CLEAR THAT THE RENDERING IS WHAT WAS SO SLOW"): the fluid of the result is drawn from the boundary triangles of the real flow's mesh (the exact surface of the
+        # fluid, the body's included), and not meshed from its field.  Its field is the domain minus a level set read from a mesh, and a result is meshed at the scene's resolution as samples per mm over the whole region --
+        # 27 s for one pass of a small problem at 8 per mm, 45 s at the real one, the cost of a lookup in a mesh for every sample on the flat faces of the slab; the triangles are known and need no sampling
+        mesh = shown['_fea_mesh']
+        if mesh is not None and len(mesh[2]) >= 12:
+            import hashlib
+            fluid._display_mesh = ('flowtopo-' + hashlib.sha1(mesh[0] + mesh[2]).hexdigest(), mesh[0], mesh[2], (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0))
         body = Shape(lib.libfive_tree_copy(shown['body'].ptr))
         body._bounds = self.bounds
         if len(shown['fluid_steps']) > 1:
@@ -1049,7 +1085,8 @@ def _phase_forces(result, items, fluid, element_size, bounds, stokes, cache, d, 
     for k in range(1, count):
         shift = [((0.5 + alpha[a] * k) % 1.0) * 0.5 * h for a in range(3)]
         moved = (tuple(lo[a] - shift[a] for a in range(3)), tuple(hi))
-        f = _fluid_analysis(shape, items, fluid=fluid, element_size=element_size, bounds=moved, stokes=stokes, cache=cache)
+        # (a region moved against the body has no plane through its middle any more: no mirror, and no search for one -- the symmetry is decided once, by the optimiser)
+        f = _fluid_analysis(shape, items, fluid=fluid, element_size=element_size, bounds=moved, stokes=stokes, cache=cache, mirrors=[])
         w = f.wall_force
         drags.append(sum(w[i] * d[i] for i in range(3)))
         lifts.append(sum(w[i] * l[i] for i in range(3)))
@@ -1166,8 +1203,19 @@ def topology_optimization_flow(analysis, conditions=(), iterations=None, filter_
         model.element_size = element_size
         model._read_steps()
         result = FlowTopologyResult(model, body, domain, level, levels, drag, lift, (used_flow, used_lift), settings, element_size, (lo, hi), seconds)
+        # The planes the design was kept symmetric about: decided once, by the optimiser, for the problem -- and every later mesh of the problem takes the answer (the user, 2026-11-15, capitals: "IT SHOULDNT
+        # REDETECT THE SYMMETRY. ... iT DETECTS IT ONCE AND THEM MAKES ALL CHANGES SYMETRICAL"): the real flow round the final body is meshed about these planes, with no search of its own
+        if symmetric is None:
+            symmetric = {}
+            probe = getattr(lib, 'libfive_tetflow_mirror', None)
+            for k, name in enumerate('xyz'):
+                at = ctypes.c_double()
+                how = probe(ptr, k, ctypes.byref(at)) if probe else 0
+                if how:
+                    symmetric[name] = [float(at.value), int(how)]
+        planes = [('xyz'.index(n), float(v[0])) for n, v in symmetric.items()]
         # the real flow around the final body: the body a wall at rest, the same conditions (cached like any flow)
-        result.flow = _fluid_analysis(result.fluid_shape(), items, fluid=fluid, element_size=element_size, bounds=(lo, hi), stokes=stokes, cache=cache)
+        result.flow = _fluid_analysis(result.fluid_shape(), items, fluid=fluid, element_size=element_size, bounds=(lo, hi), stokes=stokes, cache=cache, mirrors=planes)
         # (what fluid_analysis tells its result, so that its drag_force and lift_force can be read: the flow's direction is the inlets')
         result.flow.body, result.flow.domain, result.flow._conditions = result.shape(), domain, conditions
         drags, lifts = _phase_forces(result, items, fluid, element_size, (lo, hi), stokes, cache, used_flow, used_lift)
@@ -1191,15 +1239,7 @@ def topology_optimization_flow(analysis, conditions=(), iterations=None, filter_
             pieces = int(lib.libfive_tetflow_stat(ptr, 27))
         result._set_problem(analyses, outputs, program, bases, outs, goal, body_volume)
         result.pieces = pieces
-        if symmetric is None:
-            symmetric = {}
-            probe = getattr(lib, 'libfive_tetflow_mirror', None)
-            for k, name in enumerate('xyz'):
-                at = ctypes.c_double()
-                how = probe(ptr, k, ctypes.byref(at)) if probe else 0
-                if how:
-                    symmetric[name] = [float(at.value), int(how)]
-        found_planes = ['%s = %.4g' % (n, v[0]) for n, v in symmetric.items() if v[1] == 2]
+        found_planes =['%s = %.4g' % (n, v[0]) for n, v in symmetric.items() if v[1] == 2]
         if found_planes:
             print('topology_optimization: the domain, the body and the boundary conditions are symmetric about %s: the design is kept symmetric '
                   '(symmetry=None leaves it alone).' % ' and '.join(found_planes))

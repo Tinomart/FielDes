@@ -217,7 +217,7 @@ takes a few seconds and is cached next to it.
 | [`14_conformal_lattice.py`](examples/14_conformal_lattice.py) | A lattice of a custom cell (`cell_custom_truss`) that follows an open surface |
 | [`15_conformal_closed_body.py`](examples/15_conformal_closed_body.py) | A conformal strut lattice filling the wall of a whole bracket: faces, fillets, bores, edges followed |
 | [`16_fluid_flow.py`](examples/16_fluid_flow.py) | Water past a round post in a channel: the velocity field and the wake, streamlines with moving particles, the drag; the flow in time as an option |
-| [`17_flow_topology_optimization.py`](examples/17_flow_topology_optimization.py) | The post of example 16 reshaped for the least drag, its volume kept |
+| [`17_flow_topology_optimization.py`](examples/17_flow_topology_optimization.py) | A post in a stream of water reshaped for the least drag, its volume kept: the lens of the least drag |
 | [`18_fields_everywhere.py`](examples/18_fields_everywhere.py) | A plate grown by a field, a blend whose radius varies, a lattice of graded cell size — driven from a point |
 | [`19_graded_material.py`](examples/19_graded_material.py) | A material whose stiffness varies and a load spread by a profile, against beam theory |
 | [`20_custom_blocks.py`](examples/20_custom_blocks.py) | Your own blocks: `perforate` with a field radius, `bracket` |

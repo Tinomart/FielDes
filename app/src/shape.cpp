@@ -2968,12 +2968,12 @@ double Shape::scaledResolution(const Settings& s) const
     const double base = m_res_override > 0 ? double(m_res_override) : double(s.res);
     // (a point is not painted -- its dot is drawn where its numbers say -- so its mesh is seen by nobody: it is meshed at the scene's plain resolution, not at a hundred samples across its little ball, which
     // made a script of forty points cost half a minute: the user's sheep horn, 2026-10-29, "just way slower")
-    // (a result that is drawn from the elements of a solver is meshed at the scene's resolution: its colours are read from them.  One whose fields are expressions -- the optimization of a
-    // topology, a check of a process: no grid and no mesh of elements -- is a body like any other and is normed like one.  At the scene's plain 20 to the mm the optimized beam of the tour was
-    // 1200 samples across its 60 mm, where a part of that size gets 200: six times finer in each direction, 8.8 s for the second finest level and minutes for the finest, and the step "Allow less
-    // material" never finished drawing (the user, 2026-11-03, H105: "STILL BROKEN NOT RENDERING"))
-    const bool fromElements = has_result && (m_grid.isMesh || !m_grid.fraction.empty());
-    if (!s.autoScale || has_hint || fromElements || (m_isPoint && no_paint)) return base;
+    // (H217, the user, 2026-11-15, capitals: "THAT IS BROKEN THEN AND NEEDS FIXING!!!! YOU FIX THE ROOT CAUSE OBVIOUSLY, NOT THE SYMPTOM"; "Since the resolution auto scales for part 12 does not mean 12 per mm"): a RESULT is a
+    // body like any other and is normed like one.  Until 2026-11-15 a result drawn from the elements of a solver was the one exception: it was meshed at the scene's number as samples per mm, so the same number
+    // meant something else for it than for everything beside it, every script had to know it, and a plate 3.35 m across and its boundary conditions could not both be drawn: at 12 the conditions were
+    // right (120 samples across) and the result 40,000 across (minutes), at 0.1 the result was quick and the conditions one sample across.  Its colours are read from the elements at the vertices of whatever mesh is
+    // drawn, whatever its size, and the elements themselves are drawn on it)
+    if (!s.autoScale || has_hint || (m_isPoint && no_paint)) return base;
     // The resolution is NORMED by the size of the part (the user, 2026-10-29: "Make resolution be normed by the bounding box size of the part ... so that when you scale the same part it does not change its
     // amount of triangles and when you create a huge cylinder next to a small one, they both have the same amount of vertices"): the setting says how many samples go across the longest side of the part's
     // box -- ten for every unit of it, a hundred at the default 10 -- whatever the size of the part in mm and whatever is beside it.  The sqrt(R / L) of before made a part finer the smaller it was
@@ -3201,7 +3201,7 @@ namespace {
 // longer than `detail` (the solver's element), red-green -- a triangle with a long edge is split in four, a
 // neighbour that got a midpoint on an edge of its own is split in two or three to meet it -- so no edge is left with
 // a hanging vertex: no cracks, no seams in the colour.
-void refineForColour(libfive::Mesh& m, float detail)
+void refineForColour(libfive::Mesh& m, float detail, size_t maxVerts = std::numeric_limits<size_t>::max())
 {
     using Tri = Eigen::Matrix<uint32_t, 3, 1>;
     const float d2 = detail * detail;
@@ -3211,6 +3211,9 @@ void refineForColour(libfive::Mesh& m, float detail)
     };
     for (int level = 0; level < 10; ++level)
     {
+        // (H217: a PREVIEW level, whose triangles are far bigger than the solver's elements, is cut down to the element only as far as the budget of vertices it is given: the colour of a preview is read at every vertex of
+        // every field of the result, and cutting a coarse mesh to the size of the elements made it tens of thousands of vertices -- 25 s at one level of the plate of LE1, for a picture that the next level replaces)
+        if (m.verts.size() > maxVerts) break;
         std::unordered_map<uint64_t, uint32_t> mids;      // an edge split: its midpoint vertex
         bool any = false;
         for (const auto& t : m.branes)
@@ -5390,6 +5393,7 @@ void Shape::startRender(RenderSettings s)
             {
                 result_evals.clear();
                 result_pool.clear();
+                result_pools.clear();
                 run_key = key;
             }
             run_channels = m_channels;
@@ -6271,7 +6275,11 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     } afterShare{colour_share, tLevel, tMesher};
 
     // (a result's colours: as fine as the solver's elements, see refineForColour)
-    if (has_result && run_color_detail > 0 && m && !m->branes.empty()) refineForColour(*m, run_color_detail);
+    const auto tRefine = std::chrono::steady_clock::now();
+    const size_t vertsMeshed = m ? m->verts.size() : 0;
+    if (has_result && run_color_detail > 0 && m && !m->branes.empty())
+        refineForColour(*m, run_color_detail, s.div > 0 ? std::max<size_t>(8000, 3 * vertsMeshed) : std::numeric_limits<size_t>::max());
+    const double refineMs = 1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tRefine).count();
     BoundedMesh out;
     out.mesh = m.release();
     out.region = r;
@@ -6281,15 +6289,18 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     // A result: every field and the displacements at every vertex
     if (has_result && out.mesh)
     {
+        const auto tResult0 = std::chrono::steady_clock::now();
         const size_t nt = run_channels.size() + (run_has_deform ? 3 : 0);
         if (result_evals.size() != nt)
         {
             result_evals.clear();
             result_pool.clear();
+            result_pools.clear();
             for (const auto& c : run_channels) result_evals.emplace_back(new libfive::ArrayEvaluator(c.tree));
             if (run_has_deform)
                 for (int a = 0; a < 3; a++) result_evals.emplace_back(new libfive::ArrayEvaluator(run_deform[a]));
         }
+        const double evalsMs = 1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tResult0).count();
         auto& verts = out.mesh->verts;
         out.channels.resize(run_channels.size());
         // (the CHANGE colour of a manufacturing result is a class, not an amount: its triangles are cut where it changes, see cutByColourClass.  It goes first: the cut adds vertices, and every channel is then
@@ -6320,15 +6331,28 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
                 fprintf(stderr, "[fieldes] colour of a check, the big faces looked at inside: %zu -> %zu vertices, %.0f ms\n", vertsBefore, verts.size(),
                         1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tCut).count());
         }
+        const auto tChannels = std::chrono::steady_clock::now();
+        // (H217: every field of the result is read at every vertex, on all the threads the mesher uses -- one field after the other on one thread took 25 s for 20 fields at 30,000 vertices)
+        const size_t readThreads = std::max<size_t>(1, es.size());
+        if (result_pools.size() < result_evals.size()) result_pools.resize(result_evals.size());
         for (size_t c = 0; c < run_channels.size(); c++)
-            if (c != classChannel) evalAll(*result_evals[c], verts, out.channels[c]);
+            if (c != classChannel)
+            {
+                out.channels[c].resize(verts.size());
+                evalRangeThreaded(*result_evals[c], run_channels[c].tree, result_pools[c], verts, out.channels[c], 0, verts.size(), readThreads);
+            }
+        if (std::getenv("FIELDES_TIMING"))
+            fprintf(stderr, "[fieldes] result level %d: the mesher %.0f ms (%zu vertices), refining for the colours %.0f ms (%zu vertices), the evaluators %.0f ms, %zu channels at %zu vertices %.0f ms\n",
+                    s.div, 1000.0 * std::chrono::duration<double>(tMesher - tLevel).count(), vertsMeshed, refineMs, verts.size(), evalsMs, run_channels.size(), verts.size(),
+                    1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tChannels).count());
         if (run_has_deform)
         {
             out.disp.assign(verts.size(), Eigen::Vector3f::Zero());
-            std::vector<float> vals;
+            std::vector<float> vals(verts.size());
             for (int a = 0; a < 3; a++)
             {
-                evalAll(*result_evals[run_channels.size() + size_t(a)], verts, vals);
+                const size_t k = run_channels.size() + size_t(a);
+                evalRangeThreaded(*result_evals[k], run_deform[a], result_pools[k], verts, vals, 0, verts.size(), readThreads);
                 for (size_t q = 0; q < verts.size(); q++) out.disp[q][a] = vals[q];
             }
         }

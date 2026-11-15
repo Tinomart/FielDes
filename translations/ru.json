@@ -199,6 +199,8 @@
  "Opacity": "Непрозрачность",
  "Residual": "Невязка",
  "How far the solver was from balancing the loads, as a share of the load, after each iteration, on a log scale. It falls until it is below the tolerance, and then the solve stops.": "Насколько решатель был далёк от равновесия нагрузок после каждой итерации, в долях нагрузки, в логарифмическом масштабе. Она падает, пока не станет ниже допуска, и тогда расчёт останавливается.",
+ "Optimisation": "Оптимизация",
+ "What the optimisation made best, at every iteration it made, from the first to the last. The curve falls (or rises, when the aim is the highest value) until the design stops changing. The numbers at the ends are the lowest and the highest value of the curve.": "То, что оптимизация делала наилучшим, на каждой своей итерации, от первой до последней. Кривая падает (или растёт, если цель — наибольшее значение), пока проект не перестанет меняться. Числа на концах — наименьшее и наибольшее значения кривой.",
  "Not validated for safety-critical use": "Не проверено для применений, критичных для безопасности",
  "FielDes is a design tool, not a certified solver. The program is checked against four known answers (the validation folder: a beam, a plate with a hole, a channel flow, the conduction through a slab); compare any result with a hand calculation and a test before you rely on it.": "FielDes — инструмент проектирования, а не сертифицированный решатель. Программа проверена на четырёх известных решениях (validation: балка, пластина с отверстием, течение в канале, теплопроводность через пластину); прежде чем полагаться на результат, сравните его с ручным расчётом и испытанием.",
  "off": "выкл.",

@@ -661,11 +661,21 @@ def _install_key_results():
                 try:
                     rows = key_results(self)
                     history = list(getattr(self, 'residual_history', None) or [])         # (a static analysis: the residual of its solve after every iteration, for the curve on the result card)
+                    # (an optimisation: what it made best at every iteration, and what that is, for the curve the card keeps after the run has ended -- the user, 2026-11-15: "Once the optimization is over the
+                    # optimization curve disappears. That should be shows in the legend, just like the convergence is shown for the static analysis")
+                    objective, objective_label = [], ''
+                    if isinstance(self, (fea.TopologyResult, fluid.FlowTopologyResult)) and getattr(self, 'goal', None) != 'satisfy':
+                        objective = [float(v) for v in (getattr(self, 'history', None) or [])]
+                        outputs = getattr(self, '_outputs', None) or []
+                        objective_label = str(getattr(outputs[0], 'text', '') or '') if outputs else ''
                     for shape in (out if isinstance(out, (list, tuple)) else [out]):
                         if rows and hasattr(shape, '__dict__'):
                             shape._key_results = rows
                         if len(history) > 1 and hasattr(shape, '__dict__'):
                             shape._residual_history = history
+                        if len(objective) > 1 and hasattr(shape, '__dict__'):
+                            shape._objective_history = objective
+                            shape._objective_label = objective_label
                 except Exception:
                     pass
                 return out

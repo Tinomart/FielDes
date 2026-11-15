@@ -321,18 +321,54 @@ def remesh(body, pos, tris, size, feature_angle=30.0, rounds=6):
     return [pos[v] for v in used], [(number[t[0]], number[t[1]], number[t[2]]) for t in T]
 
 
-def remesh_skin(mesh, size, feature_angle=30.0):
-    ''' A Mesh that holds the skin of tetrahedra (the faces 'tri3'), its triangles made regular in place: see the top of this file.  A mesh with zones of its own is left as it is: the new triangles have no zone '''
+def _mirror_skin(pos, tris, axis, at, tol):
+    ''' (pos, tris) with the mirror image about the plane `axis` = `at` added: the nodes within `tol` of the plane are put on it and shared, every other node gets an image, every triangle its image turned the other way '''
+    new_pos = [list(p) for p in pos]
+    image = {}
+    for v in sorted({v for t in tris for v in t}):
+        p = pos[v]
+        if abs(p[axis] - at) <= tol:
+            new_pos[v][axis] = at
+            image[v] = v
+        else:
+            q = list(p)
+            q[axis] = 2.0 * at - p[axis]
+            new_pos.append(q)
+            image[v] = len(new_pos) - 1
+    out = list(tris)
+    for t in tris:
+        out.append((image[t[0]], image[t[2]], image[t[1]]))
+    return new_pos, out
+
+
+def remesh_skin(mesh, size, feature_angle=30.0, planes=()):
+    ''' A Mesh that holds the skin of tetrahedra (the faces 'tri3'), its triangles made regular in place: see the top of this file.  A mesh with zones of its own is left as it is: the new triangles have no zone.
+        `planes` ((axis, at)): the planes the skin is symmetric about (H226): the half on the upper side of them is remeshed -- the edges along a plane are open edges, which the remesher keeps -- and mirrored, so that the
+        remeshed skin is symmetric too (the remesher goes through the triangles in an order that a mirror reverses).  A skin that is not cut cleanly by a plane (a triangle with nodes on both sides) is remeshed whole '''
     from array import array
     tris = mesh.faces.get('tri3')
     if tris is None or len(tris) == 0 or mesh.body is None:
         return False
     P = mesh.nodes
-    ids = sorted(set(tris))
+    tol = 1e-6 * size
+    planes = [(int(a), float(at)) for a, at in planes]
+    triples = [(tris[3 * i], tris[3 * i + 1], tris[3 * i + 2]) for i in range(len(tris) // 3)]
+    if planes:
+        def side(v, axis, at):
+            c = P[3 * v + axis] - at
+            return 0 if abs(c) <= tol else (1 if c > 0 else -1)
+        clean = all(len({side(v, axis, at) for v in t} - {0}) <= 1 for t in triples for axis, at in planes)
+        if clean:
+            triples = [t for t in triples if all(side(v, axis, at) >= 0 for v in t for axis, at in planes)]
+        else:
+            planes = []
+    ids = sorted({v for t in triples for v in t})
     number = {v: i for i, v in enumerate(ids)}
     pos = [[P[3 * v], P[3 * v + 1], P[3 * v + 2]] for v in ids]
-    skin = [(number[tris[3 * i]], number[tris[3 * i + 1]], number[tris[3 * i + 2]]) for i in range(len(tris) // 3)]
+    skin = [(number[t[0]], number[t[1]], number[t[2]]) for t in triples]
     new_pos, new_tris = remesh(mesh.body, pos, skin, size, feature_angle)
+    for axis, at in planes:
+        new_pos, new_tris = _mirror_skin(new_pos, new_tris, axis, at, 2e-2 * size)       # (a node of the half that the Newton steps of the remesher moved off the plane by a hair is still on it)
     out_nodes = array('d')
     for p in new_pos:
         out_nodes.extend(p)

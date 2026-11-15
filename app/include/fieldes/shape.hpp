@@ -774,6 +774,12 @@ public:
      *  (the tester of version 1.2.0: "residual plot missing")  */
     void setResidualHistory(std::vector<float> history) { m_residualHistory = std::move(history); }
     const std::vector<float>& residualHistory() const { return m_residualHistory; }
+    /*  An optimisation (of a structure, of a heat conduction, of a flow): what it made best at every iteration (`_objective_history`) and what that is (`_objective_label`: "drag", "compliance" ...).
+     *  The card keeps the curve after the run has ended, as it keeps the residual of a static analysis (the user, 2026-11-15: "Once the optimization is over the optimization curve disappears.
+     *  That should be shows in the legend, just like the convergence is shown for the static analysis")  */
+    void setObjectiveHistory(std::vector<float> history, const QString& label) { m_objectiveHistory = std::move(history); m_objectiveLabel = label; }
+    const std::vector<float>& objectiveHistory() const { return m_objectiveHistory; }
+    const QString& objectiveLabel() const { return m_objectiveLabel; }
     /*  What the shown values are, said by the script (`_value_note` of the result's display; empty says nothing): for a result that is no solver's -- the card says
      *  "nodal average" of the elements' values otherwise, which a map of what changed, or of where a rule is broken, is not  */
     void setValueNote(const QString& note) { m_valueNote = note; m_hasValueNote = true; }
@@ -1097,6 +1103,8 @@ protected:
     QString m_exactKey;
     QList<QStringList> m_keyResults;
     std::vector<float> m_residualHistory;
+    std::vector<float> m_objectiveHistory;
+    QString m_objectiveLabel;
     QString m_valueNote;
     bool m_hasValueNote = false;
 
@@ -1390,7 +1398,8 @@ private:
     float color_detail = 0;                                // (see setColorDetail)
     std::vector<Eigen::Vector3f> disp;                     // displacement at the vertices
     std::vector<std::unique_ptr<libfive::ArrayEvaluator>> result_evals;   // render thread
-    std::vector<std::unique_ptr<libfive::ArrayEvaluator>> result_pool;    // render thread: the evaluators of the other threads that read the change colour (evalRangeThreaded); an evaluator of a result's formula is built from its tree once, not at every level of the drawing
+    std::vector<std::vector<std::unique_ptr<libfive::ArrayEvaluator>>> result_pools;   // render thread: for each of the result's fields (and the three displacements) the evaluators of the OTHER threads that read it at the vertices (H217: a field was read on one thread, one after the other: 20 fields at 30,000 vertices took 25 s at a preview level)
+    std::vector<std::unique_ptr<libfive::ArrayEvaluator>> result_pool;    // render thread:the evaluators of the other threads that read the change colour (evalRangeThreaded); an evaluator of a result's formula is built from its tree once, not at every level of the drawing
     std::unique_ptr<libfive::ArrayEvaluator> probe_disp[3];              // GUI thread
     std::unique_ptr<libfive::ArrayEvaluator> probe_channel;              // GUI thread
     int probe_channel_index=-1;

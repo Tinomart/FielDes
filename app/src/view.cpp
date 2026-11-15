@@ -2073,6 +2073,8 @@ void View::updateResultPanel()
     st.opacity = r->opacityValue();
     for (const QStringList& row : r->keyResults()) st.keyResults << Units::shownRow(row);
     st.residuals = r->residualHistory();
+    st.objective = r->objectiveHistory();
+    st.objectiveLabel = r->objectiveLabel();
     // (the supports of a print are a body of the scene in amber: one more line of the legend of the geometry change, and no card of their own)
     // (its mesh, and not hasMesh(): that is true once the mesh is on the graphics card, at the next paint, and this runs when the mesh arrives)
     for (auto s : shapes) if (s->hasColorField() && s->getMesh() && s->colorMap() == "support") st.supports = true;

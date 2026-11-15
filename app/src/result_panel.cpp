@@ -309,6 +309,55 @@ void ResidualGraph::paintEvent(QPaintEvent*)
     p.drawEllipse(line.last(), 2.5, 2.5);
 }
 
+ObjectiveGraph::ObjectiveGraph(QWidget* parent)
+    : QWidget(parent)
+{
+    setAttribute(Qt::WA_TransparentForMouseEvents);       // (a click on the card, anywhere, drags it)
+}
+
+void ObjectiveGraph::setHistory(const std::vector<float>& history)
+{
+    m_history = history;
+    update();
+}
+
+void ObjectiveGraph::paintEvent(QPaintEvent*)
+{
+    if (m_history.size() < 2) return;
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QFont font = p.font();
+    font.setPointSizeF(7);
+    p.setFont(font);
+    const QFontMetrics fm(font);
+    // (on a linear scale, from the lowest value of the curve to the highest: a line and a number at each end)
+    double lo = double(m_history.front()), hi = lo;
+    for (float v : m_history)
+    {
+        lo = std::min(lo, double(v));
+        hi = std::max(hi, double(v));
+    }
+    if (!(hi > lo)) hi = lo + std::max(1e-12, std::abs(lo) * 0.01);         // (a flat curve)
+    auto number = [](double v) { return QString::number(v, 'g', 3); };
+    const int labelWidth = std::max(fm.horizontalAdvance(number(lo)), fm.horizontalAdvance(number(hi))) + 4;
+    const QRectF g(labelWidth + 2, fm.height() / 2.0 + 2.0, width() - labelWidth - 6, height() - fm.height() - 4.0);          // (room above and below for the numbers of the highest and the lowest value)
+    p.setPen(QPen(QColor(0x93, 0xa1, 0xa1, 55), 1));
+    p.drawLine(QPointF(g.left(), g.top()), QPointF(g.right(), g.top()));
+    p.drawLine(QPointF(g.left(), g.bottom()), QPointF(g.right(), g.bottom()));
+    p.setPen(QColor(0x93, 0xa1, 0xa1));
+    p.drawText(QRectF(0, g.top() - fm.height() / 2.0, labelWidth, fm.height()), Qt::AlignRight | Qt::AlignVCenter, number(hi));
+    p.drawText(QRectF(0, g.bottom() - fm.height() / 2.0, labelWidth, fm.height()), Qt::AlignRight | Qt::AlignVCenter, number(lo));
+    QPolygonF line;
+    for (size_t i = 0; i < m_history.size(); ++i)
+        line << QPointF(g.left() + g.width() * double(i) / double(m_history.size() - 1),
+                        g.bottom() - g.height() * (double(m_history[i]) - lo) / (hi - lo));
+    p.setPen(QPen(QColor(0x9a, 0xd0, 0xf0), 1.5));
+    p.drawPolyline(line);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0xee, 0xe8, 0xd5));
+    p.drawEllipse(line.last(), 2.5, 2.5);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 ResultPanel::ResultPanel(QWidget* parent)
@@ -475,6 +524,22 @@ ResultPanel::ResultPanel(QWidget* parent)
         m_residualRow->setToolTip(title->toolTip());
         m_residualRow->hide();
         layout->addWidget(m_residualRow);
+    }
+    {
+        // What an optimisation made best at every iteration, as a curve from the first iteration to the last: it stays on the card after the run has ended, as the residual of a static analysis does
+        // (the user, 2026-11-15: "Once the optimization is over the optimization curve disappears. That should be shows in the legend, just like the convergence is shown for the static analysis")
+        m_objectiveRow = new QWidget;
+        m_objectiveGraph = new ObjectiveGraph;
+        m_objectiveTitle = new QLabel(T("Optimisation"));
+        m_objectiveTitle->setToolTip(T("What the optimisation made best, at every iteration it made, from the first to the last. The curve falls (or rises, when the aim is the highest value) until the design stops changing. The numbers at the ends are the lowest and the highest value of the curve."));
+        auto column = new QVBoxLayout(m_objectiveRow);
+        column->setContentsMargins(0, 0, 0, 0);
+        column->setSpacing(2);
+        column->addWidget(m_objectiveTitle);
+        column->addWidget(m_objectiveGraph);
+        m_objectiveRow->setToolTip(m_objectiveTitle->toolTip());
+        m_objectiveRow->hide();
+        layout->addWidget(m_objectiveRow);
     }
     {   // (a design tool, not a certified solver: said on the card that shows the numbers, where they are read -- and where the checks of the program are)
         auto notice = new QLabel(T("Not validated for safety-critical use"));
@@ -650,6 +715,18 @@ void ResultPanel::setState(const State& s)
     m_info->setVisible(!s.elementInfo.isEmpty());
     m_residualGraph->setHistory(s.residuals);
     m_residualRow->setVisible(s.residuals.size() > 1);
+    m_objectiveGraph->setHistory(s.objective);
+    if (s.objective.size() > 1)
+    {
+        // (what was made best, and how far it went from the first iteration to the last)
+        const double first = double(s.objective.front()), last = double(s.objective.back());
+        const QString change = first != 0 ? QString::number(100.0 * (last - first) / std::abs(first), 'f', 1) + " %" : QString();
+        QString title = T("Optimisation");
+        if (!s.objectiveLabel.isEmpty()) title += ": " + s.objectiveLabel;
+        if (!change.isEmpty()) title += "  (" + (last >= first ? QString("+") : QString()) + change + ")";
+        m_objectiveTitle->setText(title);
+    }
+    m_objectiveRow->setVisible(s.objective.size() > 1);
     m_updating = false;
     adjustSize();
 }

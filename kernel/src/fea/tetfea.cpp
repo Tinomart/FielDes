@@ -756,9 +756,10 @@ bool TetProblem::prepare(std::string& error)
     auto mesh = std::make_shared<TetMesh>();
     // (a shape that is symmetric about a plane through the middle of its region is meshed on one side of the plane and mirrored: the mesh of a symmetric problem
     // is then exactly symmetric, and so are the displacement and the design on it -- a lattice cut by the shape cannot be, see meshShapeMirrored.  On a mesh whose
-    // mirror pairs of elements differ the design that is kept symmetric has a gradient that is not the design's own: the volume's derivative was 17 % off)
+    // mirror pairs of elements differ the design that is kept symmetric has a gradient that is not the design's own: the volume's derivative was 17 % off.  meshShape
+    // does it itself since H226 (the argument symmetry of the analysis, on by default): no analysis has a copy of it)
     if (m_given) *mesh = *m_given;      // (a mesh the user made: the elements are theirs, see setMesh)
-    else if (!meshShapeMirrored(m_shape, m_lo, m_hi, m_h, findMeshMirrors(m_shape, m_lo, m_hi, m_h), *mesh, error)) return false;
+    else if (!meshShape(m_shape, m_lo, m_hi, m_h, *mesh, error)) return false;
     task.set(0.5, "resolving supports and loads");
 
     // A node within a small fraction of an element of a region counts as inside it

@@ -199,6 +199,8 @@
  "Opacity": "不透明度",
  "Residual": "残差",
  "How far the solver was from balancing the loads, as a share of the load, after each iteration, on a log scale. It falls until it is below the tolerance, and then the solve stops.": "各反復の後に、ソルバーが荷重の釣り合いからどれだけ離れていたかを、荷重に対する割合で対数目盛りに示します。許容値を下回るまで下がり、その時点で計算は終了します。",
+ "Optimisation": "最適化",
+ "What the optimisation made best, at every iteration it made, from the first to the last. The curve falls (or rises, when the aim is the highest value) until the design stops changing. The numbers at the ends are the lowest and the highest value of the curve.": "最適化が各反復で最良にしようとした値を、最初から最後まで示します。設計が変わらなくなるまで、曲線は下がります（目的が最大値のときは上がります）。両端の数値は、曲線の最小値と最大値です。",
  "Not validated for safety-critical use": "安全上重要な用途には未検証です",
  "FielDes is a design tool, not a certified solver. The program is checked against four known answers (the validation folder: a beam, a plate with a hole, a channel flow, the conduction through a slab); compare any result with a hand calculation and a test before you rely on it.": "FielDes は設計ツールであり、認証されたソルバーではありません。プログラムは 4 つの既知の解で確認されています（validation：梁、穴のある板、流路の流れ、板を通る熱伝導）。結果を信頼する前に、手計算と試験で確かめてください。",
  "off": "オフ",

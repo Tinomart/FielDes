@@ -24,7 +24,7 @@ X = [1.0000, 0.9688, 0.9609, 0.9531, 0.9453, 0.9063, 0.8594, 0.8047, 0.5000, 0.2
 V_100 = [0.0000, -0.05906, -0.0739, -0.0886, -0.10313, -0.16914, -0.22445, -0.24533, 0.05454, 0.17527, 0.17507, 0.16077, 0.12317, 0.1089, 0.1009, 0.0923, 0.0000]
 
 view.set_bounds((-2, -2, -2), (H + 2, H + 2, T + 2), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)                # ten samples across the longest side of a model for every unit, the result as every model: 100 across
 view.set_quality(8)
 
 cavity = box((H, H, T), position=(H / 2, H / 2, T / 2))                                          # the domain: the water
@@ -32,22 +32,41 @@ nothing = sphere(0.1, position=(-100, -100, -100))                              
 faces = union(box(((H + 1) - (-1), (H + 1) - (-1), 1.01), position=(((-1) + (H + 1)) / 2, ((-1) + (H + 1)) / 2, -0.495)),
               box(((H + 1) - (-1), (H + 1) - (-1), (T + 1) - (T - 0.01)), position=(((-1) + (H + 1)) / 2, ((-1) + (H + 1)) / 2, ((T - 0.01) + (T + 1)) / 2)))     # a frictionless face on each side
 lid = box(((H + 1) - (-1), 1.01, (T + 1) - (-1)), position=(((-1) + (H + 1)) / 2, H + 0.495, ((-1) + (T + 1)) / 2))                  # the top of the cavity, y = H
-flow = fluid_analysis(nothing, cavity, inlets=[], outlets=[], boundaries=[wall(lid, velocity=(U, 0, 0)), slip(faces)], fluid=water, element_size=0.35, cache=False)
+moving_lid = wall(lid, velocity=(U, 0, 0))
+sides = slip(faces)
+flow = fluid_analysis(nothing, cavity, inlets=[], outlets=[], boundaries=[moving_lid, sides], fluid=water, element_size=0.35, cache=False)
 
-worst = 0.0
-print("u / U along the vertical line x = H/2:   y / H    Ghia et al.   fluid_analysis")
-for y, ref in zip(Y, U_100):
-    u = float(flow.vx(H / 2, min(max(y * H, 0.05), H - 0.05), T / 2)) / U
-    worst = max(worst, abs(u - ref))
-    print("                                      %6.4f    %9.5f     %9.5f" % (y, ref, u))
-print("v / U along the horizontal line y = H/2:  x / H    Ghia et al.   fluid_analysis")
-for x, ref in zip(X, V_100):
-    v = float(flow.vy(min(max(x * H, 0.05), H - 0.05), H / 2, T / 2)) / U
-    worst = max(worst, abs(v - ref))
-    print("                                      %6.4f    %9.5f     %9.5f" % (x, ref, v))
+# SHOWN IN THE VIEWPORT, directly after the models and before any check: the analysis (the eye of its row in the model tree shows or hides it).  The conditions it was solved with (`moving_lid`: the lid at y = H, moving
+# along x at 10 mm/s, the other three walls at rest; `sides`: the frictionless faces that make the flow two-dimensional) are rows of the model tree with their eyes off, because their arrows and discs cover the fluid: switch one on there
+flow                                  # the fluid, coloured by the speed, with its streamlines
+
+
+
+
+def vertical_line():
+    ''' the horizontal speed u / U along the vertical line through the middle of the cavity at the 17 heights of Ghia et al.; prints the table and returns the worst difference '''
+    worst = 0.0
+    print("u / U along the vertical line x = H/2:   y / H    Ghia et al.   fluid_analysis")
+    for y, ref in zip(Y, U_100):
+        u = float(flow.vx(H / 2, min(max(y * H, 0.05), H - 0.05), T / 2)) / U
+        worst = max(worst, abs(u - ref))
+        print("                                      %6.4f    %9.5f     %9.5f" % (y, ref, u))
+    return worst
+
+
+def horizontal_line():
+    ''' the vertical speed v / U along the horizontal line through the middle of the cavity at the 17 positions of Ghia et al.; prints the table and returns the worst difference '''
+    worst = 0.0
+    print("v / U along the horizontal line y = H/2:  x / H    Ghia et al.   fluid_analysis")
+    for x, ref in zip(X, V_100):
+        v = float(flow.vy(min(max(x * H, 0.05), H - 0.05), H / 2, T / 2)) / U
+        worst = max(worst, abs(v - ref))
+        print("                                      %6.4f    %9.5f     %9.5f" % (x, ref, v))
+    return worst
+
+
+worst = max(vertical_line(), horizontal_line())
 print("worst difference: %.4f of the lid's speed  (%s elements)" % (worst, getattr(flow, 'elements', '?')))
 if worst > TOLERANCE:
     raise AssertionError("a speed is %.3f of the lid's speed from the benchmark: more than %.2f" % (worst, TOLERANCE))
 print("ok")
-
-flow                                  # shown: the speed on the fluid

@@ -20,11 +20,16 @@ Q, FRACTION, T_COLD = 10.0, 0.5, 20.0
 k = aluminium.conductivity           # W/(mm K)
 A = b * h
 
+view.set_bounds((-5, -5, -5), (L + 5, b + 5, h + 5), auto_scale=True)
+view.set_resolution(10)                # ten samples across the longest side of a model for every unit, the result as every model: 100 across
+view.set_quality(8)
+
 bar = box((L, b, h), position=(L / 2, b / 2, h / 2))
 cold = box((2, b + 2, h + 2), position=(0, b / 2, h / 2))
 hot = box((2, b + 2, h + 2), position=(L, b / 2, h / 2))
-sink = thermal_analysis(bar, fixed_temperatures=[fixed_temperature(cold, T_COLD)], heat_inputs=[heat_input(hot, Q)], heat_generations=[], convections=[],
-                        material=aluminium, element_size=2.0, cache=False)
+cold_end = fixed_temperature(cold, T_COLD)       # the end at x = 0, held at 20 C
+heat_in = heat_input(hot, Q)                     # the 10 W entering across the end at x = L
+sink = thermal_analysis(bar, fixed_temperatures=[cold_end], heat_inputs=[heat_in], heat_generations=[], convections=[], material=aluminium, element_size=2.0, cache=False)
 rise_whole_exact = Q * L / (k * A)
 rise_whole = float(sink.input_temperature) - T_COLD
 print('the whole bar: the temperature at the heat input rises %.3f K above the cold end, exact Q L / (k A) = %.3f K (%+.2f %%)' % (rise_whole, rise_whole_exact, 100 * (rise_whole / rise_whole_exact - 1)))
@@ -34,6 +39,12 @@ if abs(rise_whole / rise_whole_exact - 1) > 0.05:
 input_temperature_1 = sink.input_temperature
 volume_fraction_1 = sink.volume_fraction
 best = topology_optimization(sink, conditions=[minimize(input_temperature_1), keep_below(volume_fraction_1, FRACTION)], iterations=80, cache=False)
+
+# SHOWN IN THE VIEWPORT, directly after the models and before any check: the optimizer's result and the conditions every design was solved with.  The whole bar's analysis (`sink`) is a row of the model tree too: its eye shows it.
+best                                 # the optimized part, coloured by its density; the result card steps through the iterations
+cold_end                             # the end held at 20 C
+heat_in                              # the 10 W entering across the other end
+
 part = best.analysis
 f_part = float(part.volume) / float(sink.volume)             # the share of the bar that the cut part really has: the volumes of the two meshes
 rise_part = float(part.input_temperature) - T_COLD

@@ -199,6 +199,8 @@
  "Opacity": "Opacidad",
  "Residual": "Residuo",
  "How far the solver was from balancing the loads, as a share of the load, after each iteration, on a log scale. It falls until it is below the tolerance, and then the solve stops.": "Cuánto le faltaba al solucionador para equilibrar las cargas, como parte de la carga, tras cada iteración, en escala logarítmica. Baja hasta quedar por debajo de la tolerancia, y entonces termina la resolución.",
+ "Optimisation": "Optimización",
+ "What the optimisation made best, at every iteration it made, from the first to the last. The curve falls (or rises, when the aim is the highest value) until the design stops changing. The numbers at the ends are the lowest and the highest value of the curve.": "Lo que la optimización mejoró al máximo en cada una de sus iteraciones, de la primera a la última. La curva baja (o sube, cuando el objetivo es el valor más alto) hasta que el diseño deja de cambiar. Los números de los extremos son el valor más bajo y el más alto de la curva.",
  "Not validated for safety-critical use": "No validado para usos críticos para la seguridad",
  "FielDes is a design tool, not a certified solver. The program is checked against four known answers (the validation folder: a beam, a plate with a hole, a channel flow, the conduction through a slab); compare any result with a hand calculation and a test before you rely on it.": "FielDes es una herramienta de diseño, no un solucionador certificado. El programa se comprueba con cuatro soluciones conocidas (validation: una viga, una placa con un agujero, un flujo en un canal, la conducción a través de una placa); compare cualquier resultado con un cálculo a mano y un ensayo antes de fiarse de él.",
  "off": "desactivado",

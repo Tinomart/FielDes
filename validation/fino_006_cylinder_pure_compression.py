@@ -7,7 +7,8 @@
 #
 # DEVIATION FROM THE PAGE: the page removes the rigid body motions by a radial symmetry condition on the base.  Here a QUARTER of the cylinder is meshed with the two symmetry planes (x = 0 held in x, y = 0 held in y)
 # and the base held in z: the same exact solution, with no condition in the middle of the mesh.
-# The script solves it with linear and 10-node tetrahedra, reads the six stresses at a grid of points, prints the smallest and the largest of each and stops with an error when one is further than the tolerance.
+# The script solves it twice, with linear and with 10-node tetrahedra, reads the six stresses at a grid of points, prints the smallest and the largest of each and stops with an error when one is further than the tolerance.
+# WHAT YOU SEE when you open it in FielDes: the quarter cylinder coloured by its stress (one colour: the stress is the same everywhere) with the base, the two symmetry planes and the load drawn on it, at the end of the file.
 # THIS IS A CHECK OF THE PROGRAM, NOT A VALIDATION OF YOUR DESIGN: see the note at the end of docs/analysis.md.
 import math
 
@@ -18,7 +19,7 @@ SIZE = 0.1                                # mm
 R, H = 0.5, 1.0
 
 view.set_bounds((-0.5, -0.5, -0.5), (1.0, 1.0, 1.5), auto_scale=True)
-view.set_resolution(2)
+view.set_resolution(10)                # ten samples across the longest side of a model for every unit, the result as every model: 100 across
 view.set_quality(8)
 
 unit = Material('unit', 1.0, 0.3)
@@ -27,29 +28,39 @@ bottom = box((3.0, 3.0, 0.21), position=(0.0, 0.0, -0.095))              # the b
 plane_x = box((0.21, 3.0, 3.0), position=(-0.095, 0.0, 0.5))             # the plane x = 0
 plane_y = box((3.0, 0.21, 3.0), position=(0.0, -0.095, 0.5))             # the plane y = 0
 top = box((3.0, 3.0, 0.21), position=(0.0, 0.0, H + 0.095))              # the top z = 1
-supports = [fixed(bottom, displacement=(inf, inf, 0)), fixed(plane_x, displacement=(0, inf, inf)), fixed(plane_y, displacement=(inf, 0, inf))]
+hold_base = fixed(bottom, displacement=(inf, inf, 0))                    # the base, held in z
+hold_x = fixed(plane_x, displacement=(0, inf, inf))                      # the plane of symmetry x = 0, held in x
+hold_y = fixed(plane_y, displacement=(inf, 0, inf))                      # the plane of symmetry y = 0, held in y
 area = math.pi * R * R / 4.0                                             # the exact area of the quarter circle
-loads = [force(top, (0.0, 0.0, -1.0 * area))]                            # a pressure of 1 MPa
+push = force(top, (0.0, 0.0, -1.0 * area))                               # a pressure of 1 MPa on the top, as a force
 
-points = []
-for rho in (0.1, 0.2, 0.3, 0.4):
-    for angle in (10, 30, 50, 70, 80):
-        for z in (0.1, 0.3, 0.5, 0.7, 0.9):
-            points.append((rho * math.cos(math.radians(angle)), rho * math.sin(math.radians(angle)), z))
+linear = static_analysis(quarter, supports=[hold_base, hold_x, hold_y], loads=[push], material=unit, element_size=SIZE, element='tet', cache=False)
+quadratic = static_analysis(quarter, supports=[hold_base, hold_x, hold_y], loads=[push], material=unit, element_size=SIZE, element='tet10', cache=False)
+
+# SHOWN IN THE VIEWPORT, directly after the models and before any check: the analysis and the conditions it was solved with.  The model tree has a row for each result (`linear`, `quadratic`) and for each condition; the eye of a row shows or hides it.
+quadratic                                 # the quarter cylinder with 10-node tetrahedra, coloured by the stress
+hold_base                                 # the base z = 0, held in z
+hold_x                                    # the plane of symmetry x = 0
+hold_y                                    # the plane of symmetry y = 0
+push                                      # the pressure of 1 MPa on the top
+
+
+points = [(rho * math.cos(math.radians(angle)), rho * math.sin(math.radians(angle)), z) for rho in (0.1, 0.2, 0.3, 0.4) for angle in (10, 30, 50, 70, 80) for z in (0.1, 0.3, 0.5, 0.7, 0.9)]
 names = ('sigma_x', 'sigma_y', 'sigma_z', 'tau_xy', 'tau_yz', 'tau_zx')
 exact = (0.0, 0.0, -1.0, 0.0, 0.0, 0.0)
-worst = 0.0
-for element in ('tet', 'tet10'):
-    r = static_analysis(quarter, supports=supports, loads=loads, material=unit, element_size=SIZE, element=element, cache=False)
-    got = [[], [], [], [], [], []]
-    for x, y, z in points:
-        for n, value in enumerate((r.sxx(x, y, z), r.syy(x, y, z), r.szz(x, y, z), r.sxy(x, y, z), r.syz(x, y, z), r.szx(x, y, z))):
-            got[n].append(float(value))
-    print('element=%s, %d elements of about %.2f mm' % (element, r.elements, SIZE))
+
+
+def report(element, result):
+    ''' prints the smallest and the largest of the six stresses over the grid of points beside the exact ones; returns the largest difference from the exact value '''
+    columns = [[float(f(x, y, z)) for (x, y, z) in points] for f in (result.sxx, result.syy, result.szz, result.sxy, result.syz, result.szx)]
+    print('element=%s, %d elements of about %.2f mm' % (element, result.elements, SIZE))
     print('  %-8s %12s %12s %8s' % ('stress', 'smallest', 'largest', 'exact'))
-    for n, name in enumerate(names):
-        print('  %-8s %+12.6f %+12.6f %8g' % (name, min(got[n]), max(got[n]), exact[n]))
-        worst = max(worst, abs(min(got[n]) - exact[n]), abs(max(got[n]) - exact[n]))
+    for name, column, value in zip(names, columns, exact):
+        print('  %-8s %+12.6f %+12.6f %8g' % (name, min(column), max(column), value))
+    return max(max(abs(min(column) - value), abs(max(column) - value)) for column, value in zip(columns, exact))
+
+
+worst = max(report('tet', linear), report('tet10', quadratic))
 if worst > TOLERANCE:
     raise AssertionError('a stress is %.4f from the exact value: more than %.2f' % (worst, TOLERANCE))
 print('ok: every stress within %.2f of the exact value (the largest difference is %.5f)' % (TOLERANCE, worst))

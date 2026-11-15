@@ -203,6 +203,10 @@ public:
     struct MirrorUsed { int axis; double at; bool found; };
     const std::vector<MirrorUsed>& mirrorsUsed() const { return m_mirrorsUsed; }
     int meshMirrors() const { return m_meshMirrors; }
+    /*  The planes the MESH may be mirrored about, said by whoever knows (H228, the user, 2026-11-15, capitals: "IT SHOULDNT REDETECT THE SYMMETRY ... iT DETECTS IT ONCE"): the symmetry of a problem is decided once, and every later
+     *  mesh of that problem takes the answer.  `planes` empty: none (no search is made: a flow on a lattice shifted against the body, whose region has no plane through its middle any more, or around a body that was not kept symmetric).
+     *  Not called: prepare looks for the planes in the field, as it always did  */
+    void setMeshMirrors(std::vector<MeshMirror> planes) { m_givenMirrors = std::move(planes); m_mirrorsGiven = true; }
     /*  After optimize: the drag and the lift (N) at each iteration (the last of the final body), the design as a
      *  field on the mesh (field 0: each tetrahedron's rho averaged at the nodes by volume) for meshFieldTree(., 0),
      *  and the directions used  */
@@ -283,6 +287,8 @@ private:
     double m_adjointTolerance = 0.0;            // the reduction asked of the optimiser's adjoint solves (0: the solver's own tolerance)
     bool m_ilutNewton = false;                  // whether the kept factorisation was made of a Newton matrix (one of a Picard matrix is a poor preconditioner for it)
     int m_meshMirrors = 0;                      // the planes the mesh was mirrored about (see prepare)
+    std::vector<MeshMirror> m_givenMirrors;     // the planes the mesh may be mirrored about, when they are said (setMeshMirrors)
+    bool m_mirrorsGiven = false;
     // The discrete adjoint of the last (Stokes) solve, when the optimiser asks for it: lambda with K^T lambda = -dJ/dU,
     // J the dissipated power; zero at the held unknowns
     bool m_wantAdjoint = false;
