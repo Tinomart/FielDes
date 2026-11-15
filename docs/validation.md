@@ -239,17 +239,17 @@ As the report itself says, it is not a substitute for the manufacturer's own che
 
 ## Meshing
 
-A mesh is the body cut into cells, so the cells must add up to the body.  The script [v12_meshes_volume_and_area.py](../validation/v12_meshes_volume_and_area.py) meshes two bodies whose volume and surface follow from their dimensions (the formulas are written beside the numbers in the script) with every function of the Mesh menu and compares the volume the cells add up
-to and the area of the boundary, and counts the cells that are inside out.  The tolerances say what kind of mesh it is: tetrahedra that follow the surface 2 % of the volume, a grid cut by the surface 3 %, the hexahedra of `mesh_hex_quanta` and `mesh_hex20_quanta` follow the surface by a staircase of whole cells (10 % on the volume, no check of the area).
-Measured 2026-11-15, element size 2 mm (1 mm for the surface meshes); no cell is inside out in any of them:
+A mesh is the body cut into cells, so the cells must add up to the body.  The script [v12_meshes_volume_and_area.py](../validation/v12_meshes_volume_and_area.py) meshes three bodies whose volume and surface follow from their dimensions (the formulas are written beside the numbers in the script) with every function of the Mesh menu and compares the volume the cells add up
+to and the area of the boundary, and counts the cells that are inside out.  The tolerances say what kind of mesh it is: tetrahedra that follow the surface 2 % of the volume, a grid cut by the surface 3 % (and 4 % on the area), the hexahedra of `mesh_hex_quanta` and `mesh_hex20_quanta` follow the surface by a staircase of whole cells (10 % on the volume, no check of the area).
+Measured 2026-11-15, element size 2 mm (1 mm for the surface meshes and the turned cylinder); no cell is inside out in any of them. The turned cylinder (radius 4, length 14, turned by 30 degrees about x) has its edges off the grid of the cut cells, which is what the nodes put on the edges are for:
 
-| Mesh | Plate 40 x 20 x 6 with a hole of radius 4: volume (exact 4,498.41 mm^3), area (exact 2,370.27 mm^2) | Ball of radius 10: volume (exact 4,188.79 mm^3), area (exact 1,256.64 mm^2) |
-|---|---|---|
-| `mesh_tet4`, `mesh_tet10` (7,856 and 6,768 cells) | **+0.14 %**, **+0.08 %** | **-1.01 %**, **-0.54 %** |
-| `mesh_hex_quanta`, `mesh_hex20_quanta` (564 and 504 cells) | **+0.30 %** | **-3.74 %** |
-| `mesh_cartesian` (588 and 644 cells) | **+0.30 %** | **-2.17 %** (-0.56 % before the nodes of the skin were put on the surface: the nodes that the snap had left up to a tenth of a cell outside it made up for part of what the flat faces cut off) |
-| `mesh_hex_extrusion` (14,004 cells; refuses a ball) | **+0.18 %** | |
-| `mesh_surface_tri`, `mesh_surface_quad` (9,168 triangles or 27,504 quadrilaterals; 3,716 or 11,148) | area **+0.02 %** | area **-0.17 %** |
+| Mesh | Plate 40 x 20 x 6 with a hole of radius 4: volume (exact 4,498.41 mm^3), area (exact 2,370.27 mm^2) | Ball of radius 10: volume (exact 4,188.79 mm^3), area (exact 1,256.64 mm^2) | Cylinder 4 x 14 turned by 30 degrees: volume (exact 703.72 mm^3), area (exact 452.39 mm^2) |
+|---|---|---|---|
+| `mesh_tet4` (7,856, 6,768 and 8,991 cells), `mesh_tet10` | **+0.14 %**, **+0.08 %** | **-1.01 %**, **-0.54 %** | **-0.61 %**, area **-0.30 %** |
+| `mesh_hex_quanta`, `mesh_hex20_quanta` (564 and 504 cells) | **+0.30 %** | **-3.74 %** | |
+| `mesh_cartesian` (588, 644 and 835 cells) | **+0.30 %**, area **+0.12 %** | **-2.17 %** (-0.56 % before the nodes of the skin were put on the surface: the nodes that the snap had left up to a tenth of a cell outside it made up for part of what the flat faces cut off), area **-1.09 %** | **-1.35 %**, area **-1.62 %** |
+| `mesh_hex_extrusion` (14,004 cells; refuses a ball) | **+0.18 %** | | |
+| `mesh_surface_tri`, `mesh_surface_quad` (9,168 triangles or 27,504 quadrilaterals; 3,716 or 11,148) | area **+0.02 %** | area **-0.17 %** | |
 
 **What it says.**  The cells add up to the body: to a fraction of a percent on the plate, and to 1 % (tetrahedra), 2 % (cut cells) and 4 % (a staircase of whole cubes) on the ball, whose curved surface the flat faces of a mesh of 2 mm always cut a little small.  This checks the volume and the area; it does **not** say that the cells are the right shape for a solver:
 the quality of the elements (scaled Jacobian, skewness) is in the report of every mesh (`mesh.quality().report()`, see [Meshing](meshing.md)), and a result is only as good as its mesh.

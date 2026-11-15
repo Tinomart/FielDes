@@ -1,9 +1,10 @@
 # Verification 12: the meshes of the Mesh menu against the exact volume and surface of the body they are made of.
 #
-# A mesh is the body cut into cells, so the cells must add up to the body.  Two bodies whose volume and surface follow from their dimensions alone (the formulas are written beside the numbers):
+# A mesh is the body cut into cells, so the cells must add up to the body.  Three bodies whose volume and surface follow from their dimensions alone (the formulas are written beside the numbers):
 #   * a plate 40 x 20 x 6 mm with a hole of radius 4 mm through it:  V = a b c - pi r^2 c = 4,498.41 mm^3,  A = 2 a b - 2 pi r^2 + 2 (a + b) c + 2 pi r c = 2,370.27 mm^2
 #   * a ball of radius 10 mm:  V = 4/3 pi r^3 = 4,188.79 mm^3,  A = 4 pi r^2 = 1,256.64 mm^2
-# Every function of the Volume section of the menu meshes the plate (the ball too, except `mesh_hex_extrusion`, which sweeps a prism and refuses a ball), the two functions of the Surface section mesh both.
+#   * a cylinder of radius 4 mm and length 14 mm turned by 30 degrees about x (its edges lie off the grid of the cut cells):  V = pi r^2 L = 703.72 mm^3,  A = 2 pi r L + 2 pi r^2 = 452.39 mm^2
+# Every function of the Volume section of the menu meshes the plate (the ball too, except `mesh_hex_extrusion`, which sweeps a prism and refuses a ball), the two functions of the Surface section mesh both; the turned cylinder is meshed by the tetrahedra and by the cut cells.
 # The script prints the volume the cells add up to (`mesh.volume()`), the area of the boundary (`mesh.surface_area()`), the number of cells that are inside out or flat (`mesh.quality().negative`),
 # and stops with an AssertionError when a number is farther off than its tolerance or a cell is inside out.
 #
@@ -48,13 +49,19 @@ check("mesh_tet4: tetrahedra", mesh_tet4(plate, 2.0), plate_volume, 0.02, plate_
 check("mesh_tet10: tetrahedra of 10 nodes", mesh_tet10(plate, 2.0), plate_volume, 0.02, plate_area, 0.04)
 check("mesh_hex_quanta: hexahedra", mesh_hex_quanta(plate, 2.0), plate_volume, 0.10)
 check("mesh_hex20_quanta: hexahedra of 20 nodes", mesh_hex20_quanta(plate, 2.0), plate_volume, 0.10)
-check("mesh_cartesian: a grid cut by the surface", mesh_cartesian(plate, 2.0), plate_volume, 0.03)
+check("mesh_cartesian: a grid cut by the surface", mesh_cartesian(plate, 2.0), plate_volume, 0.03, plate_area, 0.04)
 check("mesh_hex_extrusion: the section swept along z", mesh_hex_extrusion(plate, 1.0), plate_volume, 0.02)
 print("The ball of radius 10 (element size 2 mm)")
 check("mesh_tet4: tetrahedra", mesh_tet4(ball, 2.0), ball_volume, 0.02, ball_area, 0.04)
 check("mesh_tet10: tetrahedra of 10 nodes", mesh_tet10(ball, 2.0), ball_volume, 0.02, ball_area, 0.04)
 check("mesh_hex_quanta: hexahedra", mesh_hex_quanta(ball, 2.0), ball_volume, 0.10)
-check("mesh_cartesian: a grid cut by the surface", mesh_cartesian(ball, 2.0), ball_volume, 0.03)
+check("mesh_cartesian: a grid cut by the surface", mesh_cartesian(ball, 2.0), ball_volume, 0.03, ball_area, 0.04)
+print("The cylinder of radius 4 and length 14 turned by 30 degrees (element size 1 mm)")
+tilt = cylinder(4, 14, rotation=(30, 0, 0))
+tilt_volume = math.pi * 4 ** 2 * 14
+tilt_area = 2 * math.pi * 4 * 14 + 2 * math.pi * 4 ** 2
+check("mesh_tet4: tetrahedra", mesh_tet4(tilt, 1.0), tilt_volume, 0.02, tilt_area, 0.04)
+check("mesh_cartesian: a grid cut by the surface", mesh_cartesian(tilt, 1.0), tilt_volume, 0.03, tilt_area, 0.04)
 
 
 def surface_check(name, mesh, exact_area, tolerance):
