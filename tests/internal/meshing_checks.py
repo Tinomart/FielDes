@@ -798,6 +798,14 @@ if mc is not None:
         check('cartesian: a tilted cylinder: no edge of a cell is shorter than a twentieth of a cube side (nodes that stand beside each other are collapsed)', min(short_t) >= 0.05 * mt.element_size, '{:.3f} of a cube side'.format(min(short_t) / mt.element_size))
         doubled = sum(1 for fcs in mt.polyhedra() for fc in fcs if min(meshing._angles(Pt, list(fc))) < 1.0)
         check('cartesian: a tilted cylinder: no face of a polyhedron doubles back on itself (an angle of 0 degrees: a spike of no width)', doubled == 0, '{} faces'.format(doubled))
+        # (a node on a side of a face of the grid left faces that did not match across a cell: the faces counted as boundary then had edges that no second boundary face shared)
+        edge_use = {}
+        for kind in list(mt.faces):
+            for ids in meshing._faces_of_kind(mt, kind):
+                for k in range(len(ids)):
+                    e = (ids[k], ids[(k + 1) % len(ids)]) if ids[k] < ids[(k + 1) % len(ids)] else (ids[(k + 1) % len(ids)], ids[k])
+                    edge_use[e] = edge_use.get(e, 0) + 1
+        check('cartesian: a tilted cylinder: the boundary is a closed surface (every edge of its faces is the edge of exactly two)', all(v == 2 for v in edge_use.values()), '{} edges, {} not twice'.format(len(edge_use), sum(1 for v in edge_use.values() if v != 2)))
         mj = run('cartesian tilted cylinder, joined and left out', lambda: mesh_cartesian(tilt, 1.0, bounds=((-5.0, -9.0, -9.0), (5.0, 9.0, 9.0)), threshold=4.0))
         if mj is not None:
             vols_j = [meshing._cell_volume(mj.nodes, kind, mj.corners(kind, i)) for kind in meshing.SOLIDS for i in range(mj.cell_count(kind))] + [meshing._poly_volume(mj.nodes, fcs) for fcs in mj.polyhedra()]

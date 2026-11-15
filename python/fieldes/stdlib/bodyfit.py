@@ -75,6 +75,7 @@ class Fit(object):
         self.merge = bool(merge)                                # (a cut cell that is small is joined to a neighbour; False leaves it out, as Salome does)
         self.edges = bool(edges)
         self.cos_edge = math.cos(math.radians(float(edge_angle)))
+        self.cos_corner = math.cos(math.radians(75.0))          # (a cut that turns by more than this between its crossings is a corner, see _edge_node)
         self.pos = []
         self.cross = {}
         self.centre = {}
@@ -217,7 +218,7 @@ class Fit(object):
             nearest to it, and put back on the surface along the field's own direction; it stays where it is when that point is not on the surface or is farther than 0.6 of a cube.  (The rim of a flat face, the kernel's
             snapRims -- the node moved along the plane of the flat face onto the wall, the field read a quarter, an eighth, a sixteenth of a cube inside the body -- was tried here and made the leaning faces MORE
             numerous, 245 -> 343 of 16,500 on the bracket at 2 mm: it is not in.)  The moves are made ONE NODE AT A TIME against the cells as they are: a move that leaves a cell with a volume under 0.7 of what it had, or under the smallest cell that the join leaves (a tenth of a cube) when it had more, or a
-            hexahedron, prism, pyramid or tetrahedron with a scaled Jacobian that is worse than 0.3 (or than 0.9 of what it was), or a face of a cell that turns over or is squeezed under a quarter of its area, is tried again at half the way (put back on the surface) and then taken back.  Up to
+            hexahedron, prism, pyramid or tetrahedron with a scaled Jacobian that is worse than 0.3 (or than 0.9 of what it was), or a face of a cell that turns over, is squeezed under a quarter of its area or becomes a sliver, is not made (the whole way or not at all).  Up to
             `rounds` rounds.  The pass is wrapped in _weld (the collapse of nodes that stand within a tenth of a cube of each other).  FIELDES_CART_EDGES=0 turns it off """
         M = self.M
         pos = self.pos
@@ -429,19 +430,11 @@ class Fit(object):
                     if rnd == 0:
                         tally('first round: the place is not on the surface (or is where the node is)')
                     continue
-                old = pos[nd]
-                for step in (1.0, 0.5):
-                    new = tuple(old[c] + step * (x[c] - old[c]) for c in range(3))
-                    if step < 1.0:
-                        # (half the way along the line is off the surface by up to half the way: it is put back on the surface, and when it does not get there the node stays)
-                        for _ in range(3):
-                            new = advance(new, M._eval(self.body, layout(new)))
-                        if abs(M._eval(self.body, [new])[0]) > 2e-3 * size:
-                            continue
-                    if put(nd, new):
-                        moved += 1
-                        self.on_edge.add(nd)
-                        break
+                # (the whole way or not at all: a node that went half the way -- tried first -- stood 0.5 mm beside the crease of the bracket's neck and made the notches of its edge; the leaning faces rose from 1.9 to 2.5 % at 2 mm
+                # without it, the aspect ratio of a cell fell from 20 to 13 and the cells over a skewness of 0.95 from 55 to 38)
+                if put(nd, x):
+                    moved += 1
+                    self.on_edge.add(nd)
             self.edge_moved += moved
             if not moved:
                 break
@@ -903,7 +896,10 @@ class Fit(object):
             span = math.dist(A0, B0)
             mid_point = tuple((A0[c] + B0[c]) * 0.5 for c in range(3))
             scale = 0.5 * (self.gradient_length.get(a, 1.0) + self.gradient_length.get(b, 1.0))
-            if span <= 0.0 or abs(self.M._eval(self.body, [mid_point])[0]) / scale < 0.15 * span:
+            # (a turn of more than 75 degrees between the two crossings is a corner whatever the middle of the line says: a curve of a radius of an element or more turns by less over one cut, and the corner of a shallow L --
+            # 0.3 deep and 1.0 long, the neck's top edge of the bracket where it crosses a grid plane next to a grid line -- has its middle within 0.15 of the line and got no node, a diagonal cut across it instead)
+            corner = na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2] < self.cos_corner
+            if span <= 0.0 or (not corner and abs(self.M._eval(self.body, [mid_point])[0]) / scale < 0.15 * span):
                 self.edge_node[ck] = None
                 return None
             corners = [self.pos[g] for g in face_key]
@@ -935,7 +931,7 @@ class Fit(object):
                             c2 = (min(max(c2[0], lo_u), hi_u), min(max(c2[1], lo_v), hi_v))
                             # (a point on a SIDE of the face is on an edge of the grid, which the cells on the other side of it share and do not have the node on: the polygon of this face would run out along the side to the
                             # corner and back to the new node, a spike of no width -- 164 faces of the real bracket at 2 mm, skewness 1 -- and the node would hang on that edge.  The crease that runs along a grid edge needs no node)
-                            side = 0.02 * self.size
+                            side = 1e-6 * self.size
                             if min(c2[0] - lo_u, hi_u - c2[0], c2[1] - lo_v, hi_v - c2[1]) > side:
                                 point = [0.0, 0.0, 0.0]
                                 point[axis] = A[axis]
