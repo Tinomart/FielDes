@@ -216,7 +216,7 @@ and bends less than 0.5 mm at its end.  Measured 2026-11-15, 4 mm elements, ever
 
 | Check | The exact answer | FielDes | Script |
 |---|---|---|---|
-| The lightest beam that bends less than 0.5 mm and stays under 90 MPa | as narrow as the range allows (8 mm) and just deep enough: the end bends by 4 P L^3 / (E b h^3), so h = 14.26 mm and the mass is 0.03080 kg (the stress there, 74 MPa, does not decide) | width **8.00**, height **13.99 mm** (**-1.9 %**), mass **0.03022 kg** (**-1.9 %**), 20 designs tried, every limit kept; tolerance 4 % | [v11_parametric_optimization_beam.py](../validation/v11_parametric_optimization_beam.py) |
+| The lightest beam that bends less than 0.5 mm and stays under 90 MPa | as narrow as the range allows (8 mm) and just deep enough: the end bends by 4 P L^3 / (E b h^3), so h = 14.26 mm and the mass is 0.03080 kg (the stress there, 74 MPa, does not decide) | width **8.00**, height **13.97 mm** (**-2.0 %**), mass **0.03017 kg** (**-2.0 %**), 20 designs tried, every limit kept; tolerance 4 % | [v11_parametric_optimization_beam.py](../validation/v11_parametric_optimization_beam.py) |
 
 **What it says.**  The optimizer finds the width at its bound and the height within 1.5 % of the beam theory, the same few percent by which a mesh of tetrahedra of this size is stiffer than the theory in the cantilever of the closed-form table (a stiffer beam may be a little shallower).  The script uses `var()`, so it runs in the FielDes window (click its name, or File > Open), not in a plain Python;
 the output is the five lines it prints and `OK`.  Parametric optimization of a modal, a thermal or a flow analysis is not covered.
