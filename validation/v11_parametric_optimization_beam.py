@@ -12,6 +12,9 @@
 # theory says (see v1_cantilever_beam.py), which is what the tolerance is for.  About a minute.
 from fieldes import *
 
+view.set_bounds((-10, -10, -10), (110, 40, 30), auto_scale=True)
+view.set_resolution(2)
+view.set_quality(8)
 P, L, E = 200.0, 100.0, aluminium.E
 rho = aluminium.density * 1000.0                      # kg per mm^3
 width_low, delta_max = 8.0, 0.5
@@ -43,3 +46,5 @@ if abs(h / height_exact - 1) > TOLERANCE:
 if abs(rho * w * h * L / mass_exact - 1) > TOLERANCE:
     raise AssertionError('the mass is more than %.0f %% from the exact one' % (100 * TOLERANCE))
 print('OK')
+
+best                                    # shown: the analysis of the best design the optimizer found, its stress on the beam

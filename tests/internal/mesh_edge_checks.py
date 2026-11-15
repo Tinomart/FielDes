@@ -172,6 +172,22 @@ def main():
         check('a box turned by 17 and 9 degrees meshed at %.1f mm: %.2f %% of its surface faces lean more than 12 degrees from its faces (limit 0.5 %%)' % (h, 100 * share), share < 0.005, share)
         check('... its volume (%.2f %% off) and no sliver (worst %.2f)' % (100 * error, worst_tetrahedron(meshed)), error < 0.01 and worst_tetrahedron(meshed) >= 0.15, error)
 
+    # --- H223 (found by the NAFEMS LE1 benchmark, 2026-11-15, validation/fino_010_nafems_le1_elliptic_membrane.py): the plate between two ellipses, a quarter of it, at a twentieth of its size (the element sizes 4.25, 3.0 and 2.75 mm
+    # are its 85, 60 and 55 mm, where the stress at the tip of the hole read 14 to 29 % high): the mesh had no node at the corner where the wall of the hole, the plane y = 0 and a face of the plate meet, and the two edges that end
+    # there stopped half an element short of it.  Every one of the two corners at the tip of the hole has a node within a fifth of an element (measured on the build of 2026-11-15 14:51: 0.00 mm at 3.0, 2.75 and 4.0 mm, 0.68 mm =
+    # 0.16 of an element at 4.25 mm, where the corner was 0.45 of an element from the nearest node before)
+    a_in, b_in, a_out, b_out, thick = 100.0, 50.0, 162.5, 137.5, 5.0
+
+    def elliptic(a, b):
+        return cylinder(1.0, 500.0).remap(Shape.X() / a, Shape.Y() / b, Shape.Z()) * ((a + b) / 2.0)
+    quarter = box((a_out + 5, b_out + 5, thick), position=((a_out + 5) / 2, (b_out + 5) / 2, thick / 2))
+    plate = intersection(difference(elliptic(a_out, b_out), elliptic(a_in, b_in)), quarter)
+    for h in (4.25, 3.0, 2.75, 4.0):
+        meshed = mesh_tet4(plate, h)
+        Q, count = meshed.nodes, meshed.node_count
+        gaps = [min(math.dist((a_in, 0.0, z), (Q[3 * i], Q[3 * i + 1], Q[3 * i + 2])) for i in range(count)) for z in (0.0, thick)]
+        check('the plate of the NAFEMS LE1 case at %.2f mm has a node at each of the two corners at the tip of the hole (%.2f and %.2f mm away, limit %.2f)' % (h, gaps[0], gaps[1], h / 5.0), max(gaps) < h / 5.0, gaps)
+
     # --- a smooth body has no edge: nothing is moved
     ball = mesh_tet4(sphere(8), 3.0)
     check('a sphere has no edge: no node is moved', not snapped(ball), ball.notes)

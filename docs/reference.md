@@ -3270,7 +3270,7 @@ profile  a field: the total is spread over the surface in proportion to it (not 
 The part's own weight: acceleration in mm/s^2 (default: 1 g down
 along -Z), with the material's density
 
-### `modal_analysis(shape, supports, material=Material('steel', E=200000 MPa, nu=0.3), modes=6, element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet', surface_fit='balanced')`
+### `modal_analysis(shape, supports, material=Material('steel', E=200000 MPa, nu=0.3), modes=6, element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet', surface_fit=0.5)`
 
 The natural frequencies and mode shapes of `shape` (a Shape, in
 mm), held by `supports` (fixed(...) items, one or a list) -- how it
@@ -3284,9 +3284,9 @@ element_size mm (default: about 40 elements along the longest side;
 element      'tet' (default), 'tet10' (10-node elements: the frequencies of a
              part that bends are far better on the same mesh), 'hex' or
              'hex_basic': see the module documentation
-surface_fit  what the mesh gives up where the exact surface and good elements pull
-             against each other: 'balanced' (the default), 'surface' (more surface
-             conformity) or 'elements' (fewer odd elements); see static_analysis
+surface_fit  a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5
+             by default: what the mesh gives up where the exact surface and good
+             elements pull against each other; see static_analysis
 
 Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
 fields -- displacement, ux, uy, uz).  The shapes are fields like any
@@ -3306,7 +3306,7 @@ body     the body the load is on, when the regions are bodies that choose WHERE 
 value    the pressure in MPa (N/mm^2): positive PRESSES INTO the part (the way a fluid presses on the wall that holds it), negative PULLS on it (a traction, a tension on the surface)
 profile  a field: the pressure is the value times the field there (not negative), a pressure that is not the same everywhere.  (Tetrahedral elements.)
 
-### `static_analysis(shape, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet', surface_fit='balanced')`
+### `static_analysis(shape, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, tolerance=1e-06, cache=True, element='tet', surface_fit=0.5)`
 
 Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_tet4) can take the place of `shape`: the analysis then solves on its tetrahedra as they
 are, and `element_size` is not given (see docs/analysis.md, A mesh of your own).
@@ -3327,10 +3327,10 @@ element    'tet' (default: tetrahedra that follow the part's surface),
            documentation
 bounds     region to analyse, ((x0, y0, z0), (x1, y1, z1)); found
            automatically if not given
-surface_fit    what the mesh gives up where the exact surface and good elements pull against each other (a sharp edge the lattice cuts
-           across): 'balanced' (the default), 'surface' (more surface conformity: nodes go onto edges even where the elements get poorer, the skin
-           stays nearer the exact surface), 'elements' (fewer odd elements: a move that would leave a poor element is refused, the skin may stand
-           further off the surface to remove a sliver).  See docs/analysis.md, Surface or elements
+surface_fit    a number from 0 to 1 that says what the mesh gives up where the exact surface and good elements pull against each other (a sharp
+           edge the lattice cuts across): 0.5 by default (what the mesher has always done); towards 1 nodes go onto edges even where the elements get
+           poorer and the skin stays nearer the exact surface; towards 0 a move that would leave a poor element is refused and the skin may stand
+           further off the surface to remove a sliver.  The limits each number stands for are in docs/analysis.md, Surface or elements
 
 Returns a Result (see its fields).  Raises FeaError if the problem
 can't be solved as given (no support touching the part, supports
@@ -3582,7 +3582,7 @@ body     the body the heat goes into, when the regions are bodies that choose WH
 watts    the total power in watts (negative takes heat out)
 profile  a field -- the power is spread in proportion to it (not negative) instead of evenly
 
-### `thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, convections, material=Material('aluminium', E=69000 MPa, nu=0.33), element_size=None, bounds=None, conductivity=None, tolerance=1e-07, element='tet', cache=True, surface_fit='balanced')`
+### `thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, convections, material=Material('aluminium', E=69000 MPa, nu=0.33), element_size=None, bounds=None, conductivity=None, tolerance=1e-07, element='tet', cache=True, surface_fit=0.5)`
 
 Steady-state heat conduction in `shape` with the given boundary
 conditions, one input for each kind (each one item or a list, [] for none):
@@ -3591,8 +3591,8 @@ heat_inputs         heat_input(...) items
 heat_generations    heat_generation(...) items
 convections         convection(...) items
 (see the module's description).  Each condition is a model of its own, drawn on `shape`.
-surface_fit         what the mesh gives up where the exact surface and good elements pull against each other: 'balanced' (the default),
-                    'surface' (more surface conformity) or 'elements' (fewer odd elements); see static_analysis
+surface_fit         a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5 by default: what the mesh gives up where the exact
+                    surface and good elements pull against each other; see static_analysis
 
 Everything else is as in the analysis below.
 
@@ -3750,7 +3750,7 @@ Stated on its own, FielDes shows it as it shows the result.
 
 The streamlines of the flow at this time (see FluidResult.streamlines)
 
-### `fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=Fluid('water', density=1e-09 t/mm^3, viscosity=1e-09 MPa s), element_size=None, bounds=None, gravity=None, stokes=False, tolerance=1e-05, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit='balanced')`
+### `fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=Fluid('water', density=1e-09 t/mm^3, viscosity=1e-09 MPa s), element_size=None, bounds=None, gravity=None, stokes=False, tolerance=1e-05, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit=0.5)`
 
 Laminar flow of `fluid` around `body` (a Shape, the solid the flow goes around) in `domain` (a Shape whose inside is the
 fluid, the body's place in it too: the fluid is the domain with the body cut out) with the boundary conditions, the same
@@ -3775,8 +3775,8 @@ time           (duration, step) in seconds: the flow in TIME instead of the stea
                A wake that sheds vortices needs this: it has no steady state
 tolerance      the relative residual of the discrete equations at which to stop
 bounds         ((x0, y0, z0), (x1, y1, z1)) of the domain (found if not given)
-surface_fit    what the mesh gives up where the exact surface and good elements pull against each other: 'balanced' (the default),
-               'surface' (more surface conformity) or 'elements' (fewer odd elements); see static_analysis
+surface_fit    a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5 by default: what the mesh gives up where the exact
+               surface and good elements pull against each other; see static_analysis
 
 Returns a FluidResult: the fields (speed, pressure, ...), the flows and the pressure drop,
 the wall force (on every wall, the body's: its drag is the part along the flow), streamlines(), .body and .domain.  An unchanged problem is cached (as a static analysis is).
@@ -3984,7 +3984,7 @@ half of the thinnest passage of the fluid
 The advice about linear tetrahedra for a body whose walls (the thickness that a tenth of its surface is thinner than) are `wall` mm and whose elements are `h` mm: a sentence when fewer than THIN_FEW_ACROSS
 elements lie across them, else None
 
-### `mesh_cartesian(body, element_size=None, threshold=10.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None)`
+### `mesh_cartesian(body, element_size=None, threshold=4.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None)`
 
 The inside of `body` as a grid of cubes CUT by the body: hexahedra inside it, and where the surface cuts a cube the cell of what is inside -- a tetrahedron, prism, pyramid, hexahedron or polyhedron by its faces --
 with its nodes on the surface (Salome's Body Fitting).
@@ -3992,7 +3992,7 @@ with its nodes on the surface (Salome's Body Fitting).
     mesh = mesh_cartesian(part, 2.0)
 
 element_size    the edge of the cubes in mm; default: about fifteen thousand cubes
-threshold       a cut cell that holds no more than 1 / threshold of a cube (10 by default, a tenth; Salome's default is 4, a quarter) is JOINED to the cell it shares the most face with, a whole cube or another
+threshold       a cut cell that holds no more than 1 / threshold of a cube (4 by default, a quarter, as Salome's; 10, a tenth, joins fewer) is JOINED to the cell it shares the most face with, a whole cube or another
                 cut cell, so that no cell is smaller; its polygon of the surface stays the boundary.  (Salome leaves such a cell out and the faces of its neighbours become the boundary: a staircase up to 0.65 of a
                 cube off the surface, with faces that lean up to 45 degrees from it.)  4 makes no cell smaller than a quarter of a cube and the volume ratio of neighbours at most 5, at the price of more joined cells,
                 which are polyhedra that are not convex (the worst orthogonal quality of a plate with a hole 0.50 where 10 gives 0.89); 1e9 keeps every cut cell as a cell of its own.  A cut cell that is a wedge
@@ -4054,7 +4054,7 @@ mesh_tet4's.
 
 The surface as quadrilaterals is mesh_surface_quad.
 
-### `mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None, surface_fit='balanced')`
+### `mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5)`
 
 The inside of `body` as a mesh of TETRAHEDRA of 10 nodes: the tetrahedra of mesh_tet4 with a node in the middle of every edge, the ones on the surface put on it (the edges there curved).
 
@@ -4068,7 +4068,7 @@ smooth, optimize, bounds, name, surface_fit   as for mesh_tet4
 
 Layers of prisms (boundary_layers) are made with mesh_tet4: a prism has no node in the middle of every edge of the tetrahedra.
 
-### `mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None, surface_fit='balanced')`
+### `mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5)`
 
 The inside of `body` as a mesh of TETRAHEDRA of 4 nodes that follow its surface (see the description of this module).
 
@@ -4081,9 +4081,10 @@ cell_zones      {name: region}: zones of cells; the rest are 'fluid'
 smooth          rounds of moving the nodes of poor tetrahedra toward the middle of their neighbours (default 6); 0 for none
 optimize        mend the poor tetrahedra: twice the nodes are moved as `smooth` says and edges and faces are swapped (False: the mesh as it comes, the fastest)
 bounds          ((x0, y0, z0), (x1, y1, z1)): the box to mesh in, when the body's cannot be found
-surface_fit     what the mesh gives up where the exact surface and good elements pull against each other (a sharp edge that the lattice cuts across): 'balanced' (the default), 'surface'
-                (more surface conformity: nodes go onto edges even where the elements get poorer, the skin stays nearer the exact surface), 'elements' (fewer odd elements: a move that
-                would leave a poor element is refused, the skin may stand further off the surface to remove a sliver).  See docs/analysis.md, Surface or elements
+surface_fit     a number from 0 to 1 that says what the mesh gives up where the exact surface and good elements pull against each other (a sharp edge that the lattice cuts across):
+                0.5 by default (what the mesher has always done); towards 1 nodes go onto edges even where the elements get poorer and the skin stays nearer the exact surface; towards 0
+                a move that would leave a poor element is refused and the skin may stand further off the surface to remove a sliver.  The limits each number stands for are in
+                docs/analysis.md, Surface or elements
 
 ### `thin_size(shape, lo, hi, h, budget, tets_per_cube=12.0, hard=4000000, across=None, walls=None, unit='tetrahedra')`
 

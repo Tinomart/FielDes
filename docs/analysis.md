@@ -759,43 +759,49 @@ nodes' positions, so a thin part takes tens of iterations instead of thousands (
 
 A mesh cut from a lattice has odd elements near the surface -- slivers where the lattice cuts a sharp edge across -- and the mesher decides which of them go: **the mender** (Netgen's volume optimization, see [meshing.md](meshing.md)) works on every tetrahedron whose mean ratio is under a threshold -- it swaps, collapses
 or splits it -- and a collapse of the skin is allowed while the surface stays within a tolerance; **the edge pass** moves the nodes beside a sharp edge onto it unless a tetrahedron round the node would be left poorer than a floor or with a smaller dihedral angle than a limit. Four numbers decide, and
-`surface_fit` is the choice between them, made by you, as `element_size` is the choice of the size:
+`surface_fit` is **a number from 0 to 1 that you give**, as you give `element_size`: **0 keeps the fewest odd elements, 1 follows the surface and its edges the most, 0.5 is what the mesher has always done** (the default). The number sets the four limits together, on straight lines between the three rows
+that were measured (0, 0.5 and 1); any number in between is allowed:
 
-| `surface_fit=` | the mender works on tetrahedra under | how far the skin may stand off the exact surface | the edge pass leaves a tetrahedron no poorer than / with no smaller angle than | what it is |
+| `surface_fit=` | the mender works on tetrahedra under | how far the skin may stand off the exact surface | the edge pass leaves a tetrahedron no poorer than | ... and with no smaller angle than |
 |---|---|---|---|---|
-| `'balanced'` (default) | 0.60 | 0.06 of an element | 0.15 / 10 degrees | what the mesher has always done |
-| `'surface'` | 0.50 | 0.02 of an element | 0.03 / 2 degrees | **more surface conformity**: the nodes go onto the edges even where the tetrahedra get poor, the mender takes fewer elements out so the skin keeps its triangles, and the skin stays nearer the exact surface |
-| `'elements'` | 0.70 | 0.12 of an element | 0.15 / 10 degrees | **fewer odd elements**: the mender works on every tetrahedron under 0.70 and may take the skin up to 0.12 of an element off the surface to do it, so the skin has fewer, larger triangles, and the mesh can take longer |
+| `0` | 0.70 | 0.12 of an element | 0.15 | 10 degrees |
+| `0.25` | 0.65 | 0.09 of an element | 0.15 | 10 degrees |
+| `0.5` (default) | 0.60 | 0.06 of an element | 0.15 | 10 degrees |
+| `0.75` | 0.55 | 0.04 of an element | 0.09 | 6 degrees |
+| `1` | 0.50 | 0.02 of an element | 0.03 | 2 degrees |
 
-Measured on the bracket of example 05 (about 456,000, 137,000 and 57,000 tetrahedra; library, 2026-11-15, one mesh each: another lattice gives other numbers, a handful of tetrahedra decide the worst one). Faces that lean = boundary faces
+Towards 1 the nodes go onto the edges even where the tetrahedra get poor, the mender takes fewer elements out so the skin keeps its triangles, and the skin stays nearer the exact surface. Towards 0 the mender works on every tetrahedron under 0.70 and may take the skin up to 0.12 of an element off the
+surface to do it, so the skin has fewer, larger triangles, and the mesh can take longer.
+
+Measured on the bracket of example 05 with the numbers 1, 0.5 and 0 (about 456,000, 137,000 and 57,000 tetrahedra; library, 2026-11-15, one mesh each: another lattice gives other numbers, a handful of tetrahedra decide the worst one). Faces that lean = boundary faces
 that lean more than 12 degrees from the surface (what a node that stays beside an edge costs); the mean ratio is 1 for a regular tetrahedron:
 
 | element size, `surface_fit=` | faces that lean | worst tetrahedron | tetrahedra under 0.4 | the 0.1 percentile of the mean ratio | boundary triangles | time of the analysis (2 mm) / of its mesh |
 |---|---|---|---|---|---|---|
-| 2 mm `'surface'` | 168 | 0.31 | 2 | 0.526 | 58,724 | 18.2 s |
-| 2 mm `'balanced'` | 160 | 0.48 | 0 | 0.604 | 58,204 | 16.4 s |
-| 2 mm `'elements'` | 152 | 0.50 | 0 | **0.653** | **56,120** | 18.3 s |
-| 3 mm `'surface'` | **126** | 0.31 | 10 | 0.508 | 25,854 | 5.9 s |
-| 3 mm `'balanced'` | 168 | 0.47 | 0 | 0.600 | 25,410 | 5.5 s |
-| 3 mm `'elements'` | 186 | 0.41 | 0 | **0.640** | **23,998** | 7.4 s |
-| 4 mm `'surface'` | 250 | 0.28 | 16 | 0.496 | 13,834 | 2.2 s |
-| 4 mm `'balanced'` | 262 | 0.34 | 6 | 0.583 | 13,690 | 2.5 s |
-| 4 mm `'elements'` | 262 | 0.37 | 4 | **0.620** | **12,926** | 2.6 s |
+| 2 mm `1` | 168 | 0.31 | 2 | 0.526 | 58,724 | 18.2 s |
+| 2 mm `0.5` | 160 | 0.48 | 0 | 0.604 | 58,204 | 16.4 s |
+| 2 mm `0` | 152 | 0.50 | 0 | **0.653** | **56,120** | 18.3 s |
+| 3 mm `1` | **126** | 0.31 | 10 | 0.508 | 25,854 | 5.9 s |
+| 3 mm `0.5` | 168 | 0.47 | 0 | 0.600 | 25,410 | 5.5 s |
+| 3 mm `0` | 186 | 0.41 | 0 | **0.640** | **23,998** | 7.4 s |
+| 4 mm `1` | 250 | 0.28 | 16 | 0.496 | 13,834 | 2.2 s |
+| 4 mm `0.5` | 262 | 0.34 | 6 | 0.583 | 13,690 | 2.5 s |
+| 4 mm `0` | 262 | 0.37 | 4 | **0.620** | **12,926** | 2.6 s |
 
-What it says, plainly. **`'elements'`** has the better bulk at every size (the tetrahedra of the 0.1 percentile are 6 to 8 % better than the default's), the same or fewer tetrahedra under 0.4, and a skin of 4 to 6 % fewer triangles; it costs time (up to 35 % more)
-and does **not** follow the edges better (the faces that lean: 5 % fewer at 2 mm, 11 % more at 3 mm, the same at 4 mm). **`'surface'`** has a finer skin (1 to 2 % more triangles) and its bulk is poorer (the 0.1 percentile 13 to 15 % lower, more tetrahedra under 0.4, a worst one of 0.3);
-the gain in the edges is real at some sizes and not at others (the faces that lean: a quarter fewer at 3 mm, 5 % fewer at 4 mm, 5 % more at 2 mm), so take it when straighter edges matter more than the elements and look at the result. Every boundary node of every variant, at every size, stays within
-0.014 of an element of the exact surface: **the surface itself is exact in all three** -- what differs is how many triangles describe it, how even the elements are and how well its edges are followed. Where I tried the numbers one at a time (the floor and the angle of the edge pass, the skin
+What it says, plainly. **Towards 0** the bulk is better at every size (the tetrahedra of the 0.1 percentile are 6 to 8 % better than the default's), the same or fewer tetrahedra are under 0.4, and the skin has 4 to 6 % fewer triangles; it costs time (up to 35 % more)
+and does **not** follow the edges better (the faces that lean: 5 % fewer at 2 mm, 11 % more at 3 mm, the same at 4 mm). **Towards 1** the skin is finer (1 to 2 % more triangles) and the bulk is poorer (the 0.1 percentile 13 to 15 % lower, more tetrahedra under 0.4, a worst one of 0.3);
+the gain in the edges is real at some sizes and not at others (the faces that lean: a quarter fewer at 3 mm, 5 % fewer at 4 mm, 5 % more at 2 mm), so give a number near 1 when straighter edges matter more than the elements and look at the result. Every boundary node of every row, at every size, stays within
+0.014 of an element of the exact surface: **the surface itself is exact for every number** -- what differs is how many triangles describe it, how even the elements are and how well its edges are followed. Where the numbers were tried one at a time (the floor and the angle of the edge pass, the skin
 tolerance, the limits of the lattice stage, the reach of the feature snap) none bought better elements -- with the edge pass off a 3 mm mesh had 32 tetrahedra under 0.4 and 916 faces that lean, so the passes help both -- and only the mender's threshold trades elements for skin.
 
 ```python
-result = static_analysis(bracket, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, surface_fit='elements')
-mesh = mesh_tet4(bracket, 2.0, surface_fit='surface')
+result = static_analysis(bracket, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, surface_fit=0.2)
+mesh = mesh_tet4(bracket, 2.0, surface_fit=0.9)
 ```
 
 The argument is on `static_analysis`, `modal_analysis`, `thermal_analysis`, `fluid_analysis`, `mesh_tet4` and `mesh_tet10`; the default is the same as before, so nothing changes where it is not given. A **mesh that is given** to an analysis is the
-elements as they are: the choice is made when the mesh is made, and `surface_fit` beside a mesh is an error. A result made with another choice is another result (it is not taken from what was kept for the default).
-Where a part has no sharp edge -- a ball -- the three agree to a few elements: there is no edge to decide. **The choice is not a quality setting that makes a mesh better**: each value gives something up (poorer tetrahedra beside the edges for `'surface'`, a coarser skin and time for `'elements'`), and the
+elements as they are: the number is used when the mesh is made, and `surface_fit` beside a mesh is an error. A result made with another number is another result (it is not taken from what was kept for the default). A word or a number outside 0 to 1 is an error that says so.
+Where a part has no sharp edge -- a ball -- every number gives the same to a few elements: there is no edge to decide. **The number is not a quality setting that makes a mesh better**: each end gives something up (poorer tetrahedra beside the edges towards 1, a coarser skin and time towards 0), and the
 usual rule stays: halve the element size and see whether the answer moves.
 
 ## A mesh of your own

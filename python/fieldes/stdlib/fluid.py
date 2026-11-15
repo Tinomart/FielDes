@@ -665,7 +665,7 @@ _cache = OrderedDict()
 
 @_with_conditions
 def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-                   tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit='balanced'):
+                   tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, surface_fit=0.5):
     ''' Laminar flow of `fluid` around `body` (a Shape, the solid the flow goes around) in `domain` (a Shape whose inside is the
         fluid, the body's place in it too: the fluid is the domain with the body cut out) with the boundary conditions, the same
         inputs of topology_optimization for a body in a flow, one for each kind (each one item or a list, [] for none):
@@ -689,8 +689,8 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
                        A wake that sheds vortices needs this: it has no steady state
         tolerance      the relative residual of the discrete equations at which to stop
         bounds         ((x0, y0, z0), (x1, y1, z1)) of the domain (found if not given)
-        surface_fit    what the mesh gives up where the exact surface and good elements pull against each other: 'balanced' (the default),
-                       'surface' (more surface conformity) or 'elements' (fewer odd elements); see static_analysis
+        surface_fit    a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5 by default: what the mesh gives up where the exact
+                       surface and good elements pull against each other; see static_analysis
 
         Returns a FluidResult: the fields (speed, pressure, ...), the flows and the pressure drop,
         the wall force (on every wall, the body's: its drag is the part along the flow), streamlines(), .body and .domain.  An unchanged problem is cached (as a static analysis is).
@@ -718,7 +718,7 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
 
 
 def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, mesh=None, surface_fit='balanced'):
+                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1, mesh=None, surface_fit=0.5):
     if time is not None:
         try:
             duration, dt = float(time[0]), float(time[1])

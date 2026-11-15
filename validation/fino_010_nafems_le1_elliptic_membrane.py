@@ -25,18 +25,19 @@ view.set_resolution(2)
 view.set_quality(8)
 
 
-def ellipse(a, b, h=H):
-    ''' an elliptic cylinder of the semi-axes a and b, from z = 0 to h.  Made a length (the mean semi-axis times the unit cylinder taken onto the ellipse): a support or a load picks the nodes whose value is within
-        0.05 of an element of its region (mm), and a value in units of the axes would have every node of the plate inside every region (see nafems_le10_thick_plate.py) '''
-    return intersection(cylinder(1.0, 10000.0).remap(Shape.X() / a, Shape.Y() / b, Shape.Z()) * ((a + b) / 2.0), box((4 * a, 4 * b, h), position=(0, 0, h / 2)))
+def ellipse(a, b):
+    ''' an elliptic cylinder of the semi-axes a and b, much longer than the plate in z.  Made a length (the mean semi-axis times the unit cylinder taken onto the ellipse): a support or a load picks the nodes whose value is
+        within 0.05 of an element of its region (mm), and a value in units of the axes would have every node of the plate inside every region (see nafems_le10_thick_plate.py).
+        NOT cut off at the faces of the plate: a hole whose ends lie exactly in the faces of the plate (faces that coincide) has the value 0 over its whole end, so the plate's field is 0 there and not positive, and a mesh whose
+        lattice has vertices in those planes puts tetrahedra into the hole (flat slivers beside D at the sizes 85, 60 and 55 mm: found 2026-11-15 by looking at the field at the corners of the sliver cells) '''
+    return cylinder(1.0, 10000.0).remap(Shape.X() / a, Shape.Y() / b, Shape.Z()) * ((a + b) / 2.0)
 
 
 quarter = box((A_OUT + 100, B_OUT + 100, H), position=((A_OUT + 100) / 2, (B_OUT + 100) / 2, H / 2))
-plate = intersection(difference(ellipse(A_OUT, B_OUT), ellipse(A_IN, B_IN)), quarter)
+plate = intersection(difference(ellipse(A_OUT, B_OUT), ellipse(A_IN, B_IN)), quarter)       # the faces of the plate are those of the quarter box alone
 face_y0 = box((A_OUT + 200, 2.0, H + 200), position=((A_OUT + 100) / 2, -1.0 + 0.01, H / 2))      # y = 0: held in y
 face_x0 = box((2.0, B_OUT + 200, H + 200), position=(-1.0 + 0.01, (B_OUT + 100) / 2, H / 2))       # x = 0: held in x
-band = difference(ellipse(A_OUT + 40, B_OUT + 40), ellipse(A_OUT - 30, B_OUT - 30))              # a band round the outer ellipse: its surface inside the band is the outer edge
-outer_edge = intersection(band, box((3 * A_OUT, 3 * B_OUT, H + 20), position=(0, 0, H / 2)))
+outer_edge = difference(ellipse(A_OUT + 1, B_OUT + 1), ellipse(A_OUT - 1, B_OUT - 1))           # a skin 2 mm thick round the outer ellipse, all the way through z: the triangles of the part's surface with all three corners in it are those of the outer edge (a band 70 mm wide, as the first version had, also took the strips of the two faces beside the edge: a tension on them, sigma_z of +10 MPa)
 
 
 def anchor(h):
@@ -45,7 +46,7 @@ def anchor(h):
     return sphere(0.75 * h, position=(2700.0, 0.0, H / 2))
 
 
-TOLERANCE = 0.10          # the finest mesh must be within 10 % of the benchmark's value, and the MEDIAN of the sizes within 2 % (the 10-node element at a smooth boundary point).  Some sizes put a flat sliver of a tetrahedron beside D (its scaled Jacobian 0.12 to 0.14) and read 25 to 46 % high: the sweep prints them, they are an open issue of the mesher and are listed on the page, and a single size that is only luckily right is not a validation
+TOLERANCE = 0.10          # the finest mesh must be within 10 % of the benchmark's value, and the MEDIAN of the sizes within 2 % (the 10-node element at a smooth boundary point).  Before the mesher put a node at the corner where the wall of the hole, the plane y = 0 and a face of the plate meet, three sizes (85, 60 and 55 mm) read 14 to 29 % high: the sweep prints every size and the sizes more than 5 % off, and a single size that is only luckily right is not a validation
 print('NAFEMS LE1, stress in y at D = (2000, 0), reference %.2f MPa' % REFERENCE)
 print('%9s %10s %12s %10s %8s' % ('size mm', 'elements', 'sigma_y MPa', 'error', 'seconds'))
 rows = []

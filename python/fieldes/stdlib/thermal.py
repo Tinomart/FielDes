@@ -417,7 +417,7 @@ _cache = OrderedDict()
 
 @_with_conditions
 def thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium, element_size=None,
-                     bounds=None, conductivity=None, tolerance=1e-7, element='tet', cache=True, surface_fit='balanced'):
+                     bounds=None, conductivity=None, tolerance=1e-7, element='tet', cache=True, surface_fit=0.5):
     ''' Steady-state heat conduction in `shape` with the given boundary
         conditions, one input for each kind (each one item or a list, [] for none):
         fixed_temperatures  fixed_temperature(...) items (at least one of these or of the convections is needed)
@@ -425,8 +425,8 @@ def thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, c
         heat_generations    heat_generation(...) items
         convections         convection(...) items
         (see the module's description).  Each condition is a model of its own, drawn on `shape`.
-        surface_fit         what the mesh gives up where the exact surface and good elements pull against each other: 'balanced' (the default),
-                            'surface' (more surface conformity) or 'elements' (fewer odd elements); see static_analysis
+        surface_fit         a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5 by default: what the mesh gives up where the exact
+                            surface and good elements pull against each other; see static_analysis
 
         Everything else is as in the analysis below.  '''
     max_iterations = 50000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
@@ -441,7 +441,7 @@ def thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, c
 
 def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bounds=None,
                       conductivity=None, max_iterations=50000, tolerance=1e-7, element='tet',
-                      cache=True, mesh=None, surface_fit='balanced'):
+                      cache=True, mesh=None, surface_fit=0.5):
     ''' Steady-state heat conduction in `shape` with the given boundary
         conditions: fixed_temperature(...), heat_input(...),
         heat_generation(...) and convection(...) items (see the module's

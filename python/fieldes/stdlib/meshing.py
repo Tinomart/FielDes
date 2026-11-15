@@ -1930,7 +1930,7 @@ def _mesh_turned(body, axes, element_size, element, boundary_layers, zones, defa
 
 
 def _mesh_any(body, element_size=None, element='tet', boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None,
-              curved=True, smooth=None, optimize=True, threshold=10.0, quanta=0.5, bounds=None, name=None, axes=None, axis='z', layers=None):
+              curved=True, smooth=None, optimize=True, threshold=4.0, quanta=0.5, bounds=None, name=None, axes=None, axis='z', layers=None):
     ''' The one mesher behind mesh_tet4, mesh_tet10, mesh_hex_quanta, mesh_hex20_quanta, mesh_cartesian and mesh_hex_extrusion: each of them takes only the arguments of its own way of meshing and calls this with the rest
         at their defaults.  The inside of `body` as a mesh of elements.
 
@@ -2187,7 +2187,7 @@ def _run(function, body, element_size, element, **options):
         raise
 
 
-def mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None, surface_fit='balanced'):
+def mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5):
     ''' The inside of `body` as a mesh of TETRAHEDRA of 4 nodes that follow its surface (see the description of this module).
 
             mesh = mesh_tet4(part, element_size=2.0)
@@ -2199,9 +2199,10 @@ def mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default
         smooth          rounds of moving the nodes of poor tetrahedra toward the middle of their neighbours (default 6); 0 for none
         optimize        mend the poor tetrahedra: twice the nodes are moved as `smooth` says and edges and faces are swapped (False: the mesh as it comes, the fastest)
         bounds          ((x0, y0, z0), (x1, y1, z1)): the box to mesh in, when the body's cannot be found
-        surface_fit     what the mesh gives up where the exact surface and good elements pull against each other (a sharp edge that the lattice cuts across): 'balanced' (the default), 'surface'
-                        (more surface conformity: nodes go onto edges even where the elements get poorer, the skin stays nearer the exact surface), 'elements' (fewer odd elements: a move that
-                        would leave a poor element is refused, the skin may stand further off the surface to remove a sliver).  See docs/analysis.md, Surface or elements '''
+        surface_fit     a number from 0 to 1 that says what the mesh gives up where the exact surface and good elements pull against each other (a sharp edge that the lattice cuts across):
+                        0.5 by default (what the mesher has always done); towards 1 nodes go onto edges even where the elements get poorer and the skin stays nearer the exact surface; towards 0
+                        a move that would leave a poor element is refused and the skin may stand further off the surface to remove a sliver.  The limits each number stands for are in
+                        docs/analysis.md, Surface or elements '''
     from fieldes.stdlib import sim_mesh
     fit = sim_mesh.surface_fit_value(surface_fit, 'mesh_tet4')
     with sim_mesh.surface_fit_scope(fit):
@@ -2209,7 +2210,7 @@ def mesh_tet4(body, element_size=None, boundary_layers=None, zones=None, default
                     smooth=smooth, optimize=optimize, bounds=bounds, name=name)
 
 
-def mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None, surface_fit='balanced'):
+def mesh_tet10(body, element_size=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=None, optimize=True, bounds=None, name=None, surface_fit=0.5):
     ''' The inside of `body` as a mesh of TETRAHEDRA of 10 nodes: the tetrahedra of mesh_tet4 with a node in the middle of every edge, the ones on the surface put on it (the edges there curved).
 
             mesh = mesh_tet10(part, element_size=3.0)
@@ -2254,14 +2255,14 @@ def mesh_hex20_quanta(body, element_size=None, quanta=0.5, axes=None, zones=None
                 cell_zones=cell_zones, quanta=quanta, bounds=bounds, name=name, axes=axes)
 
 
-def mesh_cartesian(body, element_size=None, threshold=10.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None):
+def mesh_cartesian(body, element_size=None, threshold=4.0, axes=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, bounds=None, name=None):
     ''' The inside of `body` as a grid of cubes CUT by the body: hexahedra inside it, and where the surface cuts a cube the cell of what is inside -- a tetrahedron, prism, pyramid, hexahedron or polyhedron by its faces --
         with its nodes on the surface (Salome's Body Fitting).
 
             mesh = mesh_cartesian(part, 2.0)
 
         element_size    the edge of the cubes in mm; default: about fifteen thousand cubes
-        threshold       a cut cell that holds no more than 1 / threshold of a cube (10 by default, a tenth; Salome's default is 4, a quarter) is JOINED to the cell it shares the most face with, a whole cube or another
+        threshold       a cut cell that holds no more than 1 / threshold of a cube (4 by default, a quarter, as Salome's; 10, a tenth, joins fewer) is JOINED to the cell it shares the most face with, a whole cube or another
                         cut cell, so that no cell is smaller; its polygon of the surface stays the boundary.  (Salome leaves such a cell out and the faces of its neighbours become the boundary: a staircase up to 0.65 of a
                         cube off the surface, with faces that lean up to 45 degrees from it.)  4 makes no cell smaller than a quarter of a cube and the volume ratio of neighbours at most 5, at the price of more joined cells,
                         which are polyhedra that are not convex (the worst orthogonal quality of a plate with a hole 0.50 where 10 gives 0.89); 1e9 keeps every cut cell as a cell of its own.  A cut cell that is a wedge

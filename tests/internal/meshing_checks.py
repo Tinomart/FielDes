@@ -704,9 +704,11 @@ if cs is not None:
     m_c = run('plate with a hole, curvature_size', lambda: mesh_tet4(hole_plate, cs))
     m_u = run('plate with a hole, uniform 3.0', lambda: mesh_tet4(hole_plate, 3.0))
     if m_c is not None and m_u is not None:
-        exact_c = 40 * 20 * 6 - math.pi * 2.5 ** 2 * 6
-        err_c, err_u = abs(m_c.volume() - exact_c) / exact_c, abs(m_u.volume() - exact_c) / exact_c
-        check('curvature_size: the mesh has the hole better than the uniform one (volume error {:.3f} % against {:.3f} %)'.format(100 * err_c, 100 * err_u), err_c < err_u, '{:.4f} {:.4f}'.format(err_c, err_u))
+        # (the boundary area says how well the hole is represented: the chords of the 16-gon round it are the whole error.  The volume error did the job of a check until 2026-11-15 and then did not: it is the sum of a chord's loss and
+        # the bulge of the snapped nodes, two errors of nearly the same size that cancel, 0.050 % for the mesh of curvature_size and 0.009 % for the uniform one although the hole is round to 0.03 % of its area in the first and to 0.25 % in the second)
+        exact_a = 2 * (40 * 20 - math.pi * 2.5 ** 2) + 2 * (40 + 20) * 6 + 2 * math.pi * 2.5 * 6
+        err_c, err_u = abs(m_c.surface_area() - exact_a) / exact_a, abs(m_u.surface_area() - exact_a) / exact_a
+        check('curvature_size: the mesh has the hole better than the uniform one (boundary area error {:.3f} % against {:.3f} %)'.format(100 * err_c, 100 * err_u), err_c < err_u, '{:.4f} {:.4f}'.format(err_c, err_u))
         check('curvature_size: more elements round the hole (more tetrahedra than the uniform mesh)', m_c.cell_count('tet4') > 1.5 * m_u.cell_count('tet4'), '{} and {}'.format(m_c.cell_count('tet4'), m_u.cell_count('tet4')))
         over_c, one_c = conforming(m_c)
         check('curvature_size: conforming, no inverted tetrahedron', over_c == 0 and m_c.quality().negative == 0, '{} {}'.format(over_c, m_c.quality().negative))
@@ -733,7 +735,9 @@ if mc is not None:
     qc = mc.quality()
     check('cartesian: no cell inside out, the worst scaled Jacobian of the others above 0.7 (the old hexahedra of this plate: 0.077)', qc.negative == 0 and qc.metrics['scaled_jacobian'][0] > 0.7,
           '{} negative, {:.3f}'.format(qc.negative, qc.metrics['scaled_jacobian'][0]))
-    check('cartesian: skewness under 0.7, orthogonal quality over 0.85', qc.metrics['skewness'][2] < 0.7 and qc.metrics['orthogonal_quality'][0] > 0.85,
+    # (the default threshold is 4 since 2026-11-15, Salome's quarter: the cut cells under a quarter of a cube are joined, which makes polyhedra that are not convex -- the worst orthogonal quality of this plate 0.50, where
+    # threshold=10 gave 0.89 and this check asked for more than 0.85; the bound is 0.4 now, a solver wants more than 0.1)
+    check('cartesian: skewness under 0.7, orthogonal quality over 0.4', qc.metrics['skewness'][2] < 0.7 and qc.metrics['orthogonal_quality'][0] > 0.4,
           'skewness {:.3f}, orthogonal {:.3f}'.format(qc.metrics['skewness'][2], qc.metrics['orthogonal_quality'][0]))
     # the nodes of the boundary lie on the surface, and the boundary is closed (every edge of its faces is shared by two)
     Pc = mc.nodes

@@ -961,7 +961,7 @@ def _fitted_voxel_size(lo, hi, h):
 
 @_with_conditions
 def static_analysis(shape, supports, loads, material=steel, element_size=None,
-                    bounds=None, tolerance=1e-6, cache=True, element='tet', surface_fit='balanced'):
+                    bounds=None, tolerance=1e-6, cache=True, element='tet', surface_fit=0.5):
     ''' Linear static analysis of `shape` (a Shape, in mm).  The Mesh of a body (mesh_tet4) can take the place of `shape`: the analysis then solves on its tetrahedra as they
         are, and `element_size` is not given (see docs/analysis.md, A mesh of your own).
 
@@ -981,10 +981,10 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
                    documentation
         bounds     region to analyse, ((x0, y0, z0), (x1, y1, z1)); found
                    automatically if not given
-        surface_fit    what the mesh gives up where the exact surface and good elements pull against each other (a sharp edge the lattice cuts
-                   across): 'balanced' (the default), 'surface' (more surface conformity: nodes go onto edges even where the elements get poorer, the skin
-                   stays nearer the exact surface), 'elements' (fewer odd elements: a move that would leave a poor element is refused, the skin may stand
-                   further off the surface to remove a sliver).  See docs/analysis.md, Surface or elements
+        surface_fit    a number from 0 to 1 that says what the mesh gives up where the exact surface and good elements pull against each other (a sharp
+                   edge the lattice cuts across): 0.5 by default (what the mesher has always done); towards 1 nodes go onto edges even where the elements get
+                   poorer and the skin stays nearer the exact surface; towards 0 a move that would leave a poor element is refused and the skin may stand
+                   further off the surface to remove a sliver.  The limits each number stands for are in docs/analysis.md, Surface or elements
 
         Returns a Result (see its fields).  Raises FeaError if the problem
         can't be solved as given (no support touching the part, supports
@@ -1465,7 +1465,7 @@ _modal_cache = OrderedDict()
 
 @_with_conditions
 def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, bounds=None,
-                   tolerance=1e-6, cache=True, element='tet', surface_fit='balanced'):
+                   tolerance=1e-6, cache=True, element='tet', surface_fit=0.5):
     ''' The natural frequencies and mode shapes of `shape` (a Shape, in
         mm), held by `supports` (fixed(...) items, one or a list) -- how it
         vibrates.  No loads are needed; the
@@ -1478,9 +1478,9 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
         element      'tet' (default), 'tet10' (10-node elements: the frequencies of a
                      part that bends are far better on the same mesh), 'hex' or
                      'hex_basic': see the module documentation
-        surface_fit  what the mesh gives up where the exact surface and good elements pull
-                     against each other: 'balanced' (the default), 'surface' (more surface
-                     conformity) or 'elements' (fewer odd elements); see static_analysis
+        surface_fit  a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5
+                     by default: what the mesh gives up where the exact surface and good
+                     elements pull against each other; see static_analysis
 
         Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
         fields -- displacement, ux, uy, uz).  The shapes are fields like any

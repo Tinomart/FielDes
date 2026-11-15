@@ -135,39 +135,54 @@ def takes_mesh(fn):
 # mean ratio is under `poor` is swapped, collapsed or split, and a collapse of the skin is allowed while the surface stays within a tolerance (a fraction of the element size).  Measured on the real bracket at 3 mm
 # (python tests/internal/surface_fit_checks.py and the probes of the worklist line H225): the higher the threshold, the better the bulk of the mesh (the tetrahedra at the 0.1 percentile of the mean ratio 0.52, 0.60, 0.64 for
 # a threshold of 0.5, 0.6, 0.7), the coarser the skin (26.0, 25.4 and 24.0 thousand boundary faces) and the longer the mesh takes (6.2, 6.6 and 7.2 s).  The edge pass has two limits of its own -- the poorest tetrahedron
-# and the smallest dihedral angle that a move of a node onto an edge may leave -- which trade the number of faces that lean away from the surface for the worst tetrahedron.  The three choices set the four numbers
-# together; the kernel holds them while a mesh is made.  (floor, sliver degrees, surface tolerance, mender poor)
-SURFACE_FIT = {
-    'balanced': (0.15, 10.0, 0.06, 0.60),   # (the default: what the mesher has always done)
-    'surface': (0.03, 2.0, 0.02, 0.50),     # (more surface conformity: nodes go onto edges even where the tetrahedra get poor, the mender takes fewer elements out so the skin keeps its triangles, the skin stays near the exact surface)
-    'elements': (0.15, 10.0, 0.12, 0.70),   # (fewer odd elements: the mender works on every tetrahedron under 0.70 and may take the skin 0.12 of an element off the surface to do it, so the skin is coarser and the mesh takes longer; 0.75 left two tetrahedra under 0.2 at 4 mm)
-}
+# and the smallest dihedral angle that a move of a node onto an edge may leave -- which trade the number of faces that lean away from the surface for the worst tetrahedron.  The number of the
+# argument sets the four numbers together; the kernel holds them while a mesh is made.  (floor, sliver degrees, surface tolerance, mender poor)
+# H225, SECOND VERSION (the user, 2026-11-15, capitals: "I ASKED FOR AN ARGUEMTN THAT LETS THE FUCKING USER DETERMINE THIS SO WE DONT SET IT ARBITRARILY"; the first version had three WORDS with numbers of mine): the argument is
+# a NUMBER from 0 to 1 that the user types, 0.5 the default (what the mesher has always done).  Towards 0 the mesher keeps fewer odd elements and lets the skin stand farther from the exact surface; towards 1 it keeps
+# the surface and lets odd elements stay.  The number sets the four limits together, by straight lines between the three values they have at 0, 0.5 and 1 (the table is in docs/analysis.md):
+#                               at 0     at 0.5 (default)   at 1
+#   floor   (the poorest tetrahedron a move of a node onto an edge may leave, mean ratio)   0.15     0.15      0.03
+#   sliver  (the smallest dihedral angle such a move may leave, degrees)                    10       10        2
+#   skin    (how far the skin may stand off the exact surface, a fraction of the element)  0.12     0.06      0.02
+#   poor    (the mender works on every tetrahedron under this mean ratio)                  0.70     0.60      0.50
+FIT_DEFAULT = 0.5
+_FIT_ANCHORS = ((0.15, 10.0, 0.12, 0.70), (0.15, 10.0, 0.06, 0.60), (0.03, 2.0, 0.02, 0.50))        # (floor, sliver degrees, surface tolerance, mender poor) at 0, 0.5 and 1
 
-_surface_fit_stack = ['balanced']
+_surface_fit_stack = [FIT_DEFAULT]
+
+
+def fit_limits(fit):
+    ''' The four limits (floor, sliver degrees, surface tolerance, mender poor) that the number `fit` stands for: straight lines between the values at 0, 0.5 and 1 '''
+    t = float(fit)
+    if t <= 0.5:
+        a, b, s = _FIT_ANCHORS[0], _FIT_ANCHORS[1], t / 0.5
+    else:
+        a, b, s = _FIT_ANCHORS[1], _FIT_ANCHORS[2], (t - 0.5) / 0.5
+    return tuple(b[k] if s >= 1.0 else a[k] + (b[k] - a[k]) * s for k in range(4))          # (an anchor is exactly itself)
 
 
 def surface_fit_value(value, what):
-    ''' The choice, checked: None is the default, 'balanced' '''
+    ''' The number, checked: None is the default, 0.5; a number from 0 to 1 is itself '''
     if value is None:
-        return 'balanced'
-    if not isinstance(value, str) or value not in SURFACE_FIT:
-        raise ValueError("%s: surface_fit must be 'balanced' (the default), 'surface' (more surface conformity) or 'elements' (fewer odd elements), not %r" % (what, value))
-    return value
+        return FIT_DEFAULT
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0.0 <= float(value) <= 1.0):
+        raise ValueError("%s: surface_fit is a number from 0 (fewest odd elements) to 1 (most surface conformity), 0.5 by default, not %r" % (what, value))
+    return float(value)
 
 
 def check_fit_with_mesh(given, fit, what):
     ''' A mesh that is given is the elements: how a mesh is made has no meaning beside it (as element_size has none) '''
-    if given is not None and fit != 'balanced':
-        raise _error('%s: surface_fit has no meaning with a mesh -- the mesh is the elements (make it with the choice: mesh_tet4(body, surface_fit=...))' % what)
+    if given is not None and fit != FIT_DEFAULT:
+        raise _error('%s: surface_fit has no meaning with a mesh -- the mesh is the elements (make it with the number: mesh_tet4(body, surface_fit=0.8))' % what)
 
 
 def fit_key(fit):
-    ''' What the choice adds to the key of a problem: nothing for the default (the keys, and the results kept under them, are as they were) '''
-    return {} if fit == 'balanced' else {'surface_fit': fit}
+    ''' What the number adds to the key of a problem: nothing for the default (the keys, and the results kept under them, are as they were) '''
+    return {} if fit == FIT_DEFAULT else {'surface_fit': fit}
 
 
 def current_surface_fit():
-    ''' The choice that stands now (it goes into the key of a result: the same part meshed with another choice is another mesh) '''
+    ''' The number that stands now (it goes into the key of a result: the same part meshed with another number is another mesh) '''
     return _surface_fit_stack[-1]
 
 
@@ -175,14 +190,14 @@ def _set_limits(fit):
     from fieldes.ffi import lib
     fn = getattr(lib, 'libfive_tetmesh_set_limits', None)
     if fn is None:
-        if fit != 'balanced':
+        if fit != FIT_DEFAULT:
             raise _error('this FielDes library is too old for surface_fit')
         return
-    fn(*SURFACE_FIT[fit])
+    fn(*fit_limits(fit))
 
 
 class surface_fit_scope(object):
-    ''' with surface_fit_scope('surface'): the meshes made inside are made with the limits of that choice; what stood before stands again after (a scope inside a scope too) '''
+    ''' with surface_fit_scope(0.8): the meshes made inside are made with the limits of that number; what stood before stands again after (a scope inside a scope too) '''
 
     def __init__(self, fit):
         self.fit = fit

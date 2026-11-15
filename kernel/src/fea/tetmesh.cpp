@@ -26,6 +26,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/fea/tetmender.hpp"
 #include "libfive/fea/fea.hpp"
 #include "libfive/eval/eval_array.hpp"
+#include "libfive/eval/eval_interval.hpp"
 #include "libfive/run_progress.hpp"
 
 namespace libfive {
@@ -695,6 +696,218 @@ double minDihedral(const std::vector<Vec3>& pos, const std::array<int, 4>& t)
         best = std::min(best, std::acos(cs) * 57.29577951308232);
     }
     return best;
+}
+
+// H223 / H226 (the user, 2026-11-15, zooming into my picture of the optimal beam of validation/v11: "WHERE THE MESH IS FUCKED UP" -- a plain box 8 x 14 x 100 mm, meshed at 4 mm, has a jog in each of its four long edges in the
+// middle, where they cross the plane that the analysis mesh is mirrored about): a STRAIGHT EDGE of the body that crosses a plane of the mirror has no node at the crossing.  snapFeatures leaves the nodes ON a plane alone, so
+// the plane's nodes stay where the lattice cut them, on one of the two faces beside the edge, the corner of the section is cut off and the faces round it lean.  The node of the plane nearest to such a corner is moved to
+// it: the faces round the node that do not lie in the plane make two groups of normals that differ by more than 40 degrees; the planes of the two groups and the plane of the mirror meet in one point, and that point is taken
+// when it lies on the surface (the field there under a thousandth of an element over its gradient: a straight edge -- the corner of a bent rim is not, and the passes for rims have put those nodes) and within 0.7 of a mean edge
+// length of the node, and no tetrahedron round the node is turned inside out or made poorer than the floor (or than it was).  Only nodes on ONE plane, and only the nearest node to each point.
+size_t snapPlaneEdges(TetMesh& m, const Tree& shape, const MeshOptions& opt)
+{
+    if (opt.holdPlanes.empty() || m.faces.empty() || m.pos.empty()) return 0;
+    const double kPi = 3.14159265358979323846;
+    const double cosCrease = std::cos(40.0 * kPi / 180.0);
+    const size_t nV = m.pos.size();
+    const double holdTol = 2e-3 * m.h;
+    // the plane a node is on: its place in holdPlanes, -1 when it is on none, -2 when it is on two or more
+    auto planeOf = [&](const Vec3& p) {
+        int which = -1;
+        for (size_t k = 0; k < opt.holdPlanes.size(); ++k)
+            if (std::abs(p[opt.holdPlanes[k].first] - opt.holdPlanes[k].second) <= holdTol) which = (which == -1) ? int(k) : -2;
+        return which;
+    };
+    std::vector<int> plane(nV, -1);
+    for (size_t v = 0; v < nV; ++v) plane[v] = planeOf(m.pos[v]);
+    std::vector<std::vector<int>> nodeTets(nV);
+    for (size_t i = 0; i < m.tets.size(); ++i)
+        for (int v : m.tets[i]) nodeTets[size_t(v)].push_back(int(i));
+    auto minRatio = [&](int v) {
+        double r = 1.0;
+        for (int t : nodeTets[size_t(v)]) r = std::min(r, meanRatio(m.pos, m.tets[size_t(t)]));
+        return r;
+    };
+    // the faces round each node that do not lie in a plane of the mirror (normal, middle, area), and the mean length of the boundary edges at the node
+    struct Round { Vec3 n; Vec3 c; double w; size_t idx; };
+    std::vector<std::vector<Round>> around(nV);
+    std::vector<std::vector<int>> beside(nV);          // (the nodes that share a boundary face with a node)
+    std::vector<double> lengthSum(nV, 0.0);
+    std::vector<int> lengthCount(nV, 0);
+    for (size_t fi = 0; fi < m.faces.size(); ++fi)
+    {
+        const auto& f = m.faces[fi];
+        for (int q = 0; q < 3; ++q) beside[size_t(f[size_t(q)])].push_back(f[size_t((q + 1) % 3)]), beside[size_t(f[size_t(q)])].push_back(f[size_t((q + 2) % 3)]);
+        const Vec3 cross = (m.pos[size_t(f[1])] - m.pos[size_t(f[0])]).cross(m.pos[size_t(f[2])] - m.pos[size_t(f[0])]);
+        const double size = cross.norm();
+        if (size <= 0.0) continue;
+        bool inPlane = false;
+        for (const auto& pl : opt.holdPlanes)
+        {
+            bool all = true;
+            for (int q = 0; q < 3; ++q) all = all && std::abs(m.pos[size_t(f[size_t(q)])][pl.first] - pl.second) <= holdTol;
+            inPlane = inPlane || all;
+        }
+        const Vec3 c = (m.pos[size_t(f[0])] + m.pos[size_t(f[1])] + m.pos[size_t(f[2])]) / 3.0;
+        for (int q = 0; q < 3; ++q)
+        {
+            const size_t a = size_t(f[size_t(q)]), b = size_t(f[size_t((q + 1) % 3)]);
+            if (!inPlane) lengthSum[a] += (m.pos[a] - m.pos[b]).norm(), lengthCount[a] += 1;
+            if (!inPlane) around[a].push_back({Vec3(cross / size), c, 0.5 * size, fi});
+        }
+    }
+    struct Goal { int v; Vec3 x; double dist; double length; };
+    std::vector<Goal> goals;
+    size_t candidates = 0;
+    // THE TRUE FACES (second version, read from the debug lines on the beam of v11): the planes of the two faces of an edge come from the NODES round a node and the field's own normal at each of them -- a node that stands
+    // on a face has the face's normal there --, not from the normals of the triangles: near a missing corner the triangles are bevels (the top face of the beam read as tilted by 6 degrees and 0.26 mm low at the plane, and the
+    // corner was found on the bevel's plane, not on the face's).  A node on an edge has the normals of two faces blended, its gradient is shorter (0.71 of a flat node's at a right angle): only the nodes whose gradient is
+    // nearly the longest of the ring are taken.
+    std::vector<std::vector<int>> ringOf(nV);
+    std::vector<int> need;
+    {
+        std::vector<char> wanted(nV, 0);
+        for (size_t v = 0; v < nV; ++v)
+        {
+            if (plane[v] < 0 || around[v].size() < 2 || lengthCount[v] == 0) continue;
+            std::vector<int> ids = beside[v];
+            for (int u : beside[v])
+                for (int w : beside[size_t(u)]) ids.push_back(w);
+            ids.push_back(int(v));
+            std::sort(ids.begin(), ids.end());
+            ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+            ringOf[v] = ids;
+            for (int u : ids) wanted[size_t(u)] = 1;
+        }
+        for (size_t u = 0; u < nV; ++u)
+            if (wanted[u]) need.push_back(int(u));
+    }
+    std::vector<FieldAt> nodeField(nV);
+    std::vector<double> nodeLength(nV, m.h);
+    if (!need.empty())
+    {
+        std::vector<Vec3> pts;
+        std::vector<double> scl;
+        for (int u : need)
+        {
+            const double l = lengthCount[size_t(u)] ? lengthSum[size_t(u)] / lengthCount[size_t(u)] : m.h;
+            nodeLength[size_t(u)] = l;
+            pts.push_back(m.pos[size_t(u)]);
+            scl.push_back(l);
+        }
+        const std::vector<FieldAt> got = fieldAt(shape, pts, scl);
+        if (stopped()) return 0;
+        for (size_t k = 0; k < need.size(); ++k) nodeField[size_t(need[k])] = got[k];
+    }
+    for (size_t v = 0; v < nV; ++v)
+    {
+        if (ringOf[v].empty()) continue;
+        const double length = lengthSum[v] / lengthCount[v];
+        double gmax = 0.0;
+        for (int u : ringOf[v]) gmax = std::max(gmax, nodeField[size_t(u)].g.norm());
+        if (gmax <= 1e-12) continue;
+        struct Group { Vec3 n; Vec3 p; int count; };
+        std::vector<Group> groups;
+        for (int u : ringOf[v])
+        {
+            const FieldAt& fa = nodeField[size_t(u)];
+            const double gl = fa.g.norm();
+            if (gl < 0.9 * gmax || std::abs(fa.value) / gl > 0.05 * nodeLength[size_t(u)]) continue;          // (a node on an edge, or one that is off the surface: no face's normal)
+            if ((m.pos[size_t(u)] - m.pos[v]).norm() > 1.5 * length) continue;          // (the faces of the edge here, not the opposite faces of a part two elements wide)
+            const Vec3 nu = fa.g / gl;
+            // (the half mesh is meshed against the plane of the mirror as a wall, so a node ON the plane has the plane's normal there, not the face's: the plane is the third face of the corner, not one of the two of the edge)
+            if (std::abs(nu[opt.holdPlanes[size_t(plane[v])].first]) > 0.9) continue;
+            bool placed = false;
+            for (auto& g : groups)
+            {
+                const double len = g.n.norm();
+                if (len > 1e-12 && g.n.dot(nu) / len >= cosCrease)
+                {
+                    g.n += nu;
+                    g.p += m.pos[size_t(u)];
+                    g.count += 1;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) groups.push_back({nu, m.pos[size_t(u)], 1});
+        }
+        std::stable_sort(groups.begin(), groups.end(), [](const Group& a, const Group& b) { return a.count > b.count; });
+        // (the two faces of an edge: the pair of groups with the most nodes whose normals are more than 40 degrees and less than 140 degrees apart)
+        int gi = -1, gj = -1;
+        for (size_t i = 0; i < groups.size() && gi < 0; ++i)
+            for (size_t j = i + 1; j < groups.size(); ++j)
+                if (groups[i].count >= 1 && groups[j].count >= 1 && std::abs(groups[i].n.normalized().dot(groups[j].n.normalized())) < cosCrease)
+                {
+                    gi = int(i);
+                    gj = int(j);
+                    break;
+                }
+        if (gi < 0) continue;
+        const Vec3 n1 = groups[size_t(gi)].n.normalized(), n2 = groups[size_t(gj)].n.normalized();
+        ++candidates;
+        Vec3 axis = Vec3::Zero();
+        axis[opt.holdPlanes[size_t(plane[v])].first] = 1.0;
+        const Vec3 rows[3] = {n1, n2, axis};
+        const double rhs[3] = {n1.dot(groups[size_t(gi)].p / double(groups[size_t(gi)].count)), n2.dot(groups[size_t(gj)].p / double(groups[size_t(gj)].count)), opt.holdPlanes[size_t(plane[v])].second};
+        Vec3 x = Vec3::Zero();
+        if (!solve3(rows, rhs, x))
+        {
+            if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges]    node %zu (%.3f %.3f %.3f): the two faces (n1 %.2f %.2f %.2f, n2 %.2f %.2f %.2f) and the plane of the mirror (axis %.0f %.0f %.0f) do not meet in one point\n", v, m.pos[v][0], m.pos[v][1], m.pos[v][2], n1[0], n1[1], n1[2], n2[0], n2[1], n2[2], axis[0], axis[1], axis[2]);
+            continue;
+        }
+        const double dist = (x - m.pos[v]).norm();
+        if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges]    node %zu (%.3f %.3f %.3f): %zu groups of nodes with a face's normal (%zu nodes in the ring), the two largest n1 (%.2f %.2f %.2f) n2 (%.2f %.2f %.2f), nodes %d %d; the corner of them and the plane (%.3f %.3f %.3f) is %.2f of a length of %.2f away%s\n", v, m.pos[v][0], m.pos[v][1], m.pos[v][2], groups.size(), ringOf[v].size(), n1[0], n1[1], n1[2], n2[0], n2[1], n2[2], groups[size_t(gi)].count, groups[size_t(gj)].count, x[0], x[1], x[2], dist / length, length, (dist > 1.0 * length || dist < 1e-4 * length) ? ": OUT OF REACH or no move" : "");
+        if (dist > 1.0 * length || dist < 1e-4 * length) continue;
+        goals.push_back({int(v), x, dist, length});
+    }    if (goals.empty())
+    {
+        if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges] %zu nodes of a plane with two groups of faces, none with a corner of the edge within reach\n", candidates);
+        return 0;
+    }
+    // (the field at the corners: a straight edge has the surface right there)
+    std::vector<Vec3> points;
+    std::vector<double> scales;
+    for (const auto& g : goals)
+    {
+        points.push_back(g.x);
+        scales.push_back(g.length);
+    }
+    const std::vector<FieldAt> at = fieldAt(shape, points, scales);
+    if (stopped()) return 0;
+    std::vector<size_t> order;
+    for (size_t k = 0; k < goals.size(); ++k)
+    {
+        const double gl = at[k].g.norm();
+        const bool onSurface = gl > 1e-12 && std::abs(at[k].value) / gl <= 1e-3 * goals[k].length;
+        if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges]    node %d: the field at its corner %.5f, its gradient %.3f: %s\n", goals[k].v, at[k].value, gl, onSurface ? "on the surface" : "NOT ON THE SURFACE (a bent edge, or the planes of the groups are not those of the edge)");
+        if (onSurface) order.push_back(k);
+    }
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return goals[a].dist < goals[b].dist; });
+    std::vector<Vec3> used;
+    size_t moved = 0;
+    for (size_t k : order)
+    {
+        const Goal& g = goals[k];
+        bool taken = false;
+        for (const Vec3& u : used) taken = taken || (u - g.x).norm() <= 0.05 * g.length;
+        if (taken) continue;
+        const size_t v = size_t(g.v);
+        const Vec3 old = m.pos[v];
+        const double before = minRatio(g.v);
+        m.pos[v] = g.x;
+        const double now = minRatio(g.v);
+        const bool kept = now > 0.0 && now >= std::min(opt.floorRatio, before);
+        if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges]    node %d (%.3f %.3f %.3f) -> corner (%.3f %.3f %.3f), %.2f of a length; mean ratio round it %.3f -> %.3f: %s\n", g.v, old[0], old[1], old[2], g.x[0], g.x[1], g.x[2], g.dist / g.length, before, now, kept ? "moved" : "REFUSED by the tetrahedra");
+        if (kept)
+        {
+            ++moved;
+            used.push_back(g.x);
+        }
+        else m.pos[v] = old;
+    }
+    if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[snapPlaneEdges] %zu nodes of a plane with two groups of faces, %zu with a corner of a straight edge within reach, %zu moved onto it\n", candidates, order.size(), moved);
+    return moved;
 }
 
 // H223 (the user, 2026-11-14, of the real example 05: "THE MESH IS FUCKED UP NOW" -- the edges along the arms of the bracket were wavy and there were spiky triangles along the creases): the EDGES and CORNERS of the body that
@@ -2071,6 +2284,294 @@ size_t smoothSurface(TetMesh& m, const Tree& shape, const MeshOptions& opt)
     return movedTotal;
 }
 
+// H223 (2026-11-15, found by the NAFEMS LE1 benchmark of validation/: at the element sizes 85, 60 and 55 mm of nine the stress at the tip of the hole read 14 to 29 % high, and the mesh was fine by every number of quality -- it had NO NODE AT THE
+// CORNER where the wall of the hole, the plane of symmetry and a face of the plate meet; the two edges that end there stopped 35 mm short of it, half an element, and the faces cut across the corner; at 80 mm a node sat on the corner and the stress was right).
+// The lattice stage puts a vertex on a corner only when a lattice vertex is within a fraction of an element of it, and the edge pass moves a node onto the LINE of two planes, never along it, so a node that stands on an edge at the
+// END of its chain stays where it is and the corner beyond it is left off the mesh.  A node of the skin whose faces make two groups of normals more than 40 degrees apart lies on an edge; when its neighbours on that edge are on one side
+// of it only, it is the end of a chain, and the line of the edge is followed beyond it in steps of a twentieth of an element out to one element: where the field changes side is the corner (the surface closes the edge there).  The node is
+// moved to it when every tetrahedron round it stays whole and not poorer than the floor (or than it was) and no face of the skin turns round, and when no node is there already; the nearest chain end goes first, so that of the two edges
+// that end in one corner only the one node moves.  A node on a plane the mesh is mirrored about stays, and none is put on one.  The corner is a point of the field's own surface, found by halving, not a guess
+size_t captureCorners(TetMesh& m, const Tree& shape, const MeshOptions& opt)
+{
+    const double kPi = 3.14159265358979323846;
+    const double cosCrease = std::cos(40.0 * kPi / 180.0);
+    const size_t nV = m.pos.size();
+    if (m.faces.empty() || nV == 0) return 0;
+    const double h = m.h;
+    const bool debug = std::getenv("FIELDES_TET_DEBUG") != nullptr;
+    std::vector<std::vector<int>> nbrs(nV), nodeFaces(nV), nodeTets(nV);
+    for (size_t f = 0; f < m.faces.size(); ++f)
+        for (int q = 0; q < 3; ++q)
+        {
+            const int a = m.faces[f][size_t(q)], b = m.faces[f][size_t((q + 1) % 3)];
+            nbrs[size_t(a)].push_back(b);
+            nbrs[size_t(b)].push_back(a);
+            nodeFaces[size_t(a)].push_back(int(f));
+        }
+    for (size_t i = 0; i < m.tets.size(); ++i)
+        for (int v : m.tets[i]) nodeTets[size_t(v)].push_back(int(i));
+    auto faceCross = [&](int f) {
+        const auto& t = m.faces[size_t(f)];
+        return Vec3((m.pos[size_t(t[1])] - m.pos[size_t(t[0])]).cross(m.pos[size_t(t[2])] - m.pos[size_t(t[0])]));
+    };
+    const double holdTol = 2e-3 * h;
+    auto onMirror = [&](const Vec3& p) {
+        for (const auto& pl : opt.holdPlanes)
+            if (std::abs(p[pl.first] - pl.second) <= holdTol) return true;
+        return false;
+    };
+    struct Cand { size_t v; Vec3 dir; double gn; int first; double lo; double hi; };
+    std::vector<Cand> cands;
+    // (the first version took the edge from the groups of normals of the faces round a node, two of them 40 degrees apart, and found nothing where it was needed: a node at the end of a chain that stops short of a corner has a THIRD group,
+    // the faces that cut across the corner, 45 to 60 degrees from both planes.  The edge is now taken from the skin's own CREASE EDGES: an edge whose two faces differ by more than 40 degrees.  A node with a crease edge to a neighbour
+    // and no crease edge that goes on in the opposite direction (within 30 degrees of it) is the end of that chain, whatever else its faces do)
+    std::vector<Vec3> faceUnit(m.faces.size(), Vec3::Zero());
+    for (size_t f = 0; f < m.faces.size(); ++f)
+    {
+        const Vec3 a = faceCross(int(f));
+        if (a.norm() > 0.0) faceUnit[f] = a.normalized();
+    }
+    std::unordered_map<uint64_t, std::array<int, 2>> edgeFaces;
+    for (size_t f = 0; f < m.faces.size(); ++f)
+        for (int q = 0; q < 3; ++q)
+        {
+            const int a = m.faces[f][size_t(q)], b = m.faces[f][size_t((q + 1) % 3)];
+            const uint64_t key = (uint64_t(uint32_t(std::min(a, b))) << 32) | uint64_t(uint32_t(std::max(a, b)));
+            auto it = edgeFaces.find(key);
+            if (it == edgeFaces.end()) edgeFaces.emplace(key, std::array<int, 2>{{int(f), -1}});
+            else if (it->second[1] < 0) it->second[1] = int(f);
+        }
+    std::vector<std::vector<int>> creaseNbrs(nV);
+    for (const auto& kv : edgeFaces)
+    {
+        if (kv.second[1] < 0) continue;
+        if (faceUnit[size_t(kv.second[0])].dot(faceUnit[size_t(kv.second[1])]) >= cosCrease) continue;
+        const int a = int(kv.first >> 32), b = int(kv.first & 0xFFFFFFFFull);
+        creaseNbrs[size_t(a)].push_back(b);
+        creaseNbrs[size_t(b)].push_back(a);
+    }
+    for (size_t v = 0; v < nV; ++v)
+    {
+        if (creaseNbrs[v].empty() || onMirror(m.pos[v])) continue;
+        for (int u : creaseNbrs[v])
+        {
+            const Vec3 w = m.pos[size_t(u)] - m.pos[v];
+            const double len = w.norm();
+            if (!(len > 1e-12)) continue;
+            const Vec3 e = -w / len;                          // (the way on, away from the chain)
+            bool goesOn = false;
+            for (int u2 : creaseNbrs[v])
+            {
+                if (u2 == u) continue;
+                const Vec3 w2 = m.pos[size_t(u2)] - m.pos[v];
+                const double l2 = w2.norm();
+                const double along = w2.dot(e);
+                if (l2 > 1e-12 && along > 0.0 && (w2 - along * e).norm() <= 0.5 * l2)
+                {
+                    goesOn = true;
+                    break;
+                }
+            }
+            if (!goesOn) cands.push_back({v, e, 0.0, -1, 0.0, 0.0});
+        }
+    }
+    if (cands.empty()) return 0;
+    // the field's gradient at each candidate (central differences), and the field along the line in steps of a twentieth of an element
+    const double dd = 1e-3 * h;
+    const int steps = 20;
+    const double stepLen = 0.05 * h;
+    {
+        std::vector<Eigen::Vector3f> pts;
+        for (const auto& c : cands)
+        {
+            const Vec3 p = m.pos[c.v];
+            for (int ax = 0; ax < 3; ++ax)
+            {
+                Vec3 lo3 = p, hi3 = p;
+                lo3[ax] -= dd;
+                hi3[ax] += dd;
+                pts.push_back(lo3.cast<float>());
+                pts.push_back(hi3.cast<float>());
+            }
+        }
+        std::vector<float> vals;
+        evalPoints(shape, pts, vals);
+        if (stopped()) return 0;
+        for (size_t a = 0; a < cands.size(); ++a)
+        {
+            Vec3 g;
+            for (int ax = 0; ax < 3; ++ax) g[ax] = (double(vals[6 * a + size_t(2 * ax + 1)]) - double(vals[6 * a + size_t(2 * ax)])) / (2 * dd);
+            cands[a].gn = g.norm();
+        }
+        pts.clear();
+        for (const auto& c : cands)
+            for (int j = 1; j <= steps; ++j) pts.push_back((m.pos[c.v] + (j * stepLen) * c.dir).cast<float>());
+        evalPoints(shape, pts, vals);
+        if (stopped()) return 0;
+        for (size_t a = 0; a < cands.size(); ++a)
+        {
+            const double tol = 1e-3 * h * cands[a].gn;        // (the value of the field that is the surface: a hair, so that the roundoff of a field on a plane is not taken for a crossing)
+            for (int j = 1; j <= steps; ++j)
+                if (cands[a].gn > 1e-12 && double(vals[a * size_t(steps) + size_t(j - 1)]) > tol)
+                {
+                    cands[a].first = j;
+                    cands[a].lo = (j - 1) * stepLen;
+                    cands[a].hi = j * stepLen;
+                    break;
+                }
+        }
+    }
+    // halving between the step before the crossing and the step
+    for (int it = 0; it < 28; ++it)
+    {
+        std::vector<size_t> who;
+        std::vector<Eigen::Vector3f> pts;
+        for (size_t a = 0; a < cands.size(); ++a)
+        {
+            if (cands[a].first < 0) continue;
+            who.push_back(a);
+            pts.push_back((m.pos[cands[a].v] + 0.5 * (cands[a].lo + cands[a].hi) * cands[a].dir).cast<float>());
+        }
+        if (who.empty()) break;
+        std::vector<float> vals;
+        evalPoints(shape, pts, vals);
+        if (stopped()) return 0;
+        for (size_t k = 0; k < who.size(); ++k)
+        {
+            Cand& c = cands[who[k]];
+            const double mid = 0.5 * (c.lo + c.hi);
+            if (double(vals[k]) > 1e-3 * h * c.gn) c.hi = mid;
+            else c.lo = mid;
+        }
+    }
+    // (the corner must be ON the surface, as the check of a mirrored mesh reads it -- the field over the larger of its gradient there and the gradient at the node: on the real bracket at 2 mm a node that this pass had moved
+    // twice along the ring-neck junction stood 0.082 of an element off the surface, two vertices of the mirrored mesh failed the check of 0.06 and the whole mirror was refused: 17 s became 35 s)
+    {
+        std::vector<size_t> who;
+        std::vector<Eigen::Vector3f> pts;
+        for (size_t a = 0; a < cands.size(); ++a)
+        {
+            if (cands[a].first < 0) continue;
+            who.push_back(a);
+            const Vec3 end = m.pos[cands[a].v] + cands[a].lo * cands[a].dir;
+            pts.push_back(end.cast<float>());
+            for (int ax = 0; ax < 3; ++ax)
+            {
+                Vec3 lo3 = end, hi3 = end;
+                lo3[ax] -= dd;
+                hi3[ax] += dd;
+                pts.push_back(lo3.cast<float>());
+                pts.push_back(hi3.cast<float>());
+            }
+        }
+        if (!who.empty())
+        {
+            // the usual length of the field's gradient at the surface (the median over a sample of the skin's nodes): a field that is not a distance has any usual length, and at a crease the gradient read across it is shorter
+            double gUsual = 0.0;
+            {
+                std::vector<Eigen::Vector3f> sample;
+                std::vector<size_t> ids;
+                const size_t stride = std::max<size_t>(1, nV / 1500);
+                for (size_t v = 0; v < nV; v += stride)
+                {
+                    if (nodeFaces[v].empty()) continue;
+                    ids.push_back(v);
+                    const Vec3 p = m.pos[v];
+                    for (int ax = 0; ax < 3; ++ax)
+                    {
+                        Vec3 lo3 = p, hi3 = p;
+                        lo3[ax] -= dd;
+                        hi3[ax] += dd;
+                        sample.push_back(lo3.cast<float>());
+                        sample.push_back(hi3.cast<float>());
+                    }
+                }
+                std::vector<float> sv;
+                evalPoints(shape, sample, sv);
+                if (stopped()) return 0;
+                std::vector<double> norms;
+                for (size_t k = 0; k < ids.size(); ++k)
+                {
+                    Vec3 g;
+                    for (int ax = 0; ax < 3; ++ax) g[ax] = (double(sv[6 * k + size_t(2 * ax + 1)]) - double(sv[6 * k + size_t(2 * ax)])) / (2 * dd);
+                    if (g.norm() > 1e-12) norms.push_back(g.norm());
+                }
+                if (!norms.empty())
+                {
+                    std::nth_element(norms.begin(), norms.begin() + std::ptrdiff_t(norms.size() / 2), norms.end());
+                    gUsual = norms[norms.size() / 2];
+                }
+            }
+            std::vector<float> vals;
+            evalPoints(shape, pts, vals);
+            if (stopped()) return 0;
+            for (size_t k = 0; k < who.size(); ++k)
+            {
+                Vec3 g;
+                for (int ax = 0; ax < 3; ++ax) g[ax] = (double(vals[7 * k + size_t(2 + 2 * ax)]) - double(vals[7 * k + size_t(1 + 2 * ax)])) / (2 * dd);
+                const double gn = std::max(std::max(g.norm(), cands[who[k]].gn), gUsual);
+                const double away = gn > 1e-12 ? std::abs(double(vals[7 * k])) / gn : 1e9;
+                if (!(away <= 0.02 * h))
+                {
+                    if (debug) fprintf(stderr, "[captureCorners] node %zu: the corner is %.3f of an element off the surface (the mirror check would refuse it): not moved\n", cands[who[k]].v, away / h);
+                    cands[who[k]].first = -1;
+                }
+            }
+        }
+    }
+    std::vector<size_t> order;
+    for (size_t a = 0; a < cands.size(); ++a)
+        if (cands[a].first >= 0 && cands[a].lo >= 0.1 * h) order.push_back(a);
+    std::sort(order.begin(), order.end(), [&](size_t x, size_t y) { return cands[x].lo < cands[y].lo; });
+    size_t moved = 0, refused = 0, there = 0;
+    // (a node is a candidate once for every crease edge it ends: it can stand at the end of two chains.  The corner of a candidate is measured from the place the node had when the corners were looked for, so a node that has been
+    // moved already is not moved again: on the real bracket at 2 mm the second move of one node went from its new place by the length and the direction found for its old one, ended 0.082 of an element off the surface
+    // and the check of the mirrored mesh refused the whole mirror -- 17 s became 35 s)
+    std::vector<char> movedNode(nV, 0);
+    for (size_t a : order)
+    {
+        const Cand& c = cands[a];
+        if (movedNode[c.v]) continue;
+        const Vec3 start = m.pos[c.v];
+        const Vec3 end = start + c.lo * c.dir;
+        if (onMirror(end)) continue;
+        bool occupied = false;
+        for (size_t u = 0; u < nV && !occupied; ++u)
+            if (u != c.v && !nodeFaces[u].empty() && (m.pos[u] - end).norm() < 0.2 * h) occupied = true;
+        if (occupied) { ++there; continue; }
+        // the tetrahedra round the node and the faces of the skin: whole, not poorer than the floor (or than they were), none turned round
+        std::vector<double> oldRatio(nodeTets[c.v].size());
+        for (size_t k = 0; k < nodeTets[c.v].size(); ++k) oldRatio[k] = meanRatio(m.pos, m.tets[size_t(nodeTets[c.v][k])]);
+        std::vector<Vec3> oldNormal(nodeFaces[c.v].size());
+        for (size_t k = 0; k < nodeFaces[c.v].size(); ++k) oldNormal[k] = faceCross(nodeFaces[c.v][k]).normalized();
+        m.pos[c.v] = end;
+        bool ok = true;
+        for (size_t k = 0; k < nodeTets[c.v].size() && ok; ++k)
+        {
+            const auto& t = m.tets[size_t(nodeTets[c.v][k])];
+            if (!(signedVolume(m.pos[size_t(t[0])], m.pos[size_t(t[1])], m.pos[size_t(t[2])], m.pos[size_t(t[3])]) > 0)) ok = false;
+            else if (meanRatio(m.pos, t) < std::min(opt.floorRatio, oldRatio[k])) ok = false;
+        }
+        for (size_t k = 0; k < nodeFaces[c.v].size() && ok; ++k)
+        {
+            const Vec3 now = faceCross(nodeFaces[c.v][k]);
+            if (!(now.norm() > 0.0) || now.normalized().dot(oldNormal[k]) <= 0.0) ok = false;
+        }
+        if (!ok)
+        {
+            m.pos[c.v] = start;
+            ++refused;
+            if (debug) fprintf(stderr, "[captureCorners] node %zu at (%.2f %.2f %.2f): the corner at (%.2f %.2f %.2f), %.2f of an element away, is refused by the tetrahedra\n", c.v, start.x(), start.y(), start.z(), end.x(), end.y(), end.z(), c.lo / h);
+            continue;
+        }
+        ++moved;
+        movedNode[c.v] = 1;
+        if (debug) fprintf(stderr, "[captureCorners] node %zu moved from (%.2f %.2f %.2f) to the corner at (%.2f %.2f %.2f), %.2f of an element\n", c.v, start.x(), start.y(), start.z(), end.x(), end.y(), end.z(), c.lo / h);
+    }
+    if (debug) fprintf(stderr, "[captureCorners] %zu ends of an edge, %zu with a corner within an element, %zu nodes moved onto the corner, %zu refused by the tetrahedra, %zu where a node is already\n", cands.size(), order.size(), moved, refused, there);
+    return moved;
+}
+
 }   // anonymous namespace
 
 // The clean-up of the surface of a tetrahedral mesh (see tetmesh.hpp): the edges and corners, then the rims, then the skin made regular.  The boundary is made first (finalizeMesh), because the passes read it
@@ -2097,6 +2598,12 @@ void snapSurface(TetMesh& mesh, const Tree& shape, const MeshOptions& options)
     lapTo("the boundary of the mesh");
     if (options.edges) mesh.edgesSnapped = snapFeatures(mesh, shape, options);
     lapTo("edges and corners moved");
+    if (stopped()) return;
+    if (options.edges && options.corners) mesh.edgesSnapped += captureCorners(mesh, shape, options);
+    lapTo("corners captured");
+    if (stopped()) return;
+    if (options.edges) mesh.edgesSnapped += snapPlaneEdges(mesh, shape, options);
+    lapTo("edges at the planes of the mirror");
     if (stopped()) return;
     if (options.edges) mesh.cornersCollapsed = collapseCorners(mesh, shape, options);
     lapTo("inside corners collapsed");
@@ -2177,6 +2684,7 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
     if (const char* f = std::getenv("FIELDES_TET_EDGES")) opt.edges = std::atoi(f) != 0;
     if (const char* f = std::getenv("FIELDES_TET_SMOOTH")) opt.smooth = std::atoi(f) != 0;
     if (const char* f = std::getenv("FIELDES_TET_CHAINS")) opt.chains = std::atoi(f) != 0;
+    if (const char* f = std::getenv("FIELDES_TET_CORNERS")) opt.corners = std::atoi(f) != 0;
     out = TetMesh();
     if (!(h > 0))
     {
@@ -2368,7 +2876,8 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
         const double cosSharp = std::cos(opt.featureAngle * 3.14159265358979323846 / 180.0);
         std::vector<Id> cand;
         std::vector<Vec3> target;
-        size_t dbgNear = 0, dbgUse = 0, dbgSharp = 0, dbgReach = 0, dbgOn = 0;
+        std::vector<uint32_t> pairA, pairB;           // (for each candidate the two crossings whose normals differ most: the curve guard below looks between them)
+        size_t dbgNear = 0, dbgUse = 0, dbgSharp = 0, dbgReach = 0, dbgOn = 0, dbgCurve = 0;
         for (size_t v = 0; v < nTotal; ++v)
         {
             if ((v & 0x3FFF) == 0 && stopped()) { error = "cancelled"; return false; }
@@ -2410,6 +2919,95 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
             dbgReach++;
             cand.push_back(Id(v));
             target.push_back(x);
+            {
+                double worst = 2.0;
+                uint32_t ea = use[0], eb = use[1];
+                for (size_t i = 0; i < use.size(); ++i)
+                    for (size_t j = i + 1; j < use.size(); ++j)
+                    {
+                        const double dd = normal[use[i]].dot(normal[use[j]]);
+                        if (dd < worst)
+                        {
+                            worst = dd;
+                            ea = use[i];
+                            eb = use[j];
+                        }
+                    }
+                pairA.push_back(ea);
+                pairB.push_back(eb);
+            }
+        }
+        // THE CURVE GUARD (H223, found by the validation of a wire two elements across, 2026-11-15: its volume was 6.9 % short and its modes 3 to 4 % low; with the features off 2.2 % and exact).  A curved
+        // surface of a radius near the element size turns by more than featureAngle over the 0.75 h round a vertex, and was taken for a crease: the vertex went to the point of the tangent planes and was
+        // put back on the surface, which pulls the nodes of a round part together.  A crease and a curve differ in what lies BETWEEN the two crossings whose normals differ most: on a crease the surface
+        // at their middle is one of the two faces (its normal is one of the two), on a curve it is between them (its normal is near their bisector).  Such a vertex is left where it is.
+        // FIELDES_TET_CURVE=0 turns it off
+        if (!cand.empty() && !(std::getenv("FIELDES_TET_CURVE") && std::atoi(std::getenv("FIELDES_TET_CURVE")) == 0))
+        {
+            const double d = 1e-3 * h;
+            std::vector<Vec3> mid(cand.size());
+            std::vector<Vec3> nm(cand.size(), Vec3::Zero());
+            for (size_t i = 0; i < cand.size(); ++i) mid[i] = 0.5 * (cuts[pairA[i]].p + cuts[pairB[i]].p);
+            std::vector<float> v;
+            std::vector<Eigen::Vector3f> pts;
+            for (int iter = 0; iter < 3; ++iter)
+            {
+                pts.resize(7 * cand.size());
+                for (size_t i = 0; i < cand.size(); ++i)
+                {
+                    pts[7 * i] = mid[i].cast<float>();
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        Vec3 lo3 = mid[i], hi3 = mid[i];
+                        lo3[a] -= d;
+                        hi3[a] += d;
+                        pts[7 * i + size_t(1 + 2 * a)] = lo3.cast<float>();
+                        pts[7 * i + size_t(2 + 2 * a)] = hi3.cast<float>();
+                    }
+                }
+                evalPoints(shape, pts, v);
+                if (stopped()) { error = "cancelled"; return false; }
+                for (size_t i = 0; i < cand.size(); ++i)
+                {
+                    Vec3 g;
+                    for (int a = 0; a < 3; ++a) g[a] = (double(v[7 * i + size_t(2 + 2 * a)]) - double(v[7 * i + size_t(1 + 2 * a)])) / (2 * d);
+                    const double gg = g.squaredNorm();
+                    if (gg <= 1e-20) continue;
+                    if (iter < 2)
+                    {
+                        const double f = double(v[7 * i]);
+                        mid[i] -= f * g / gg;
+                    }
+                    else
+                        nm[i] = g / std::sqrt(gg);
+                }
+            }
+            std::vector<Id> keepId;
+            std::vector<Vec3> keepTarget;
+            for (size_t i = 0; i < cand.size(); ++i)
+            {
+                bool curve = false;
+                if (nm[i].squaredNorm() > 0.5)
+                {
+                    const Vec3 na = normal[pairA[i]], nb = normal[pairB[i]];
+                    const double angle = std::acos(std::max(-1.0, std::min(1.0, na.dot(nb))));
+                    Vec3 bis = Vec3::Zero();
+                    if ((na + nb).squaredNorm() > 1e-12) bis = (na + nb).normalized();
+                    if (bis.squaredNorm() > 0.5)
+                    {
+                        const double toBis = std::acos(std::max(-1.0, std::min(1.0, nm[i].dot(bis))));
+                        curve = toBis < 0.25 * angle;
+                    }
+                }
+                if (curve) dbgCurve++;
+                else
+                {
+                    keepId.push_back(cand[i]);
+                    keepTarget.push_back(target[i]);
+                }
+            }
+            cand.swap(keepId);
+            target.swap(keepTarget);
         }
         // (only those the surface really passes through: the tangent planes of a curved crease
         // meet a little off it, so a few Newton steps put the point back on the surface)
@@ -2458,8 +3056,8 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
             }
         }
         if (std::getenv("FIELDES_TET_DEBUG"))
-            fprintf(stderr, "[tetmesh] features: %zu vertices with >= 2 crossings, %zu with >= 2 near, %zu sharp, %zu within reach, %zu on the surface\n",
-                    dbgNear, dbgUse, dbgSharp, dbgReach, dbgOn);
+            fprintf(stderr, "[tetmesh] features: %zu vertices with >= 2 crossings, %zu with >= 2 near, %zu sharp, %zu within reach, %zu of them taken for a curve, %zu on the surface\n",
+                    dbgNear, dbgUse, dbgSharp, dbgReach, dbgCurve, dbgOn);
     }
 
     // The tetrahedra of the mesh, in lattice ids (a cut point's id is nTotal
@@ -2822,60 +3420,171 @@ void finalizeMesh(TetMesh& mesh)
     }
 }
 
+// H226 (the user, 2026-11-15, three times in an hour: "IF IT LOOKS SYMMETRIC IT IS SYMMETRIC"; "THAT CAN BE CHECKED ON THE FIELD"; "TO TEST ACCURACY OF FUCKING SYMMETRY YOU CAN JUST OVERLAP THE MIRRORS MAKE AN INVERSE INTERSECTION AND THEN MEASURE THE
+// VOLUME"; "THIS IS A FIELD PROGRAM USE THE FUCKING FAST FIELDS"): whether the part is symmetric about a plane is a question to the field and is answered with the field, before anything is meshed.  The part and its mirror image (the same field with one
+// coordinate flipped about the plane) are overlapped and the region where they DIFFER is made as a field of its own -- inside the one and outside the other, both ways: min(max(f, -g), max(-f, g)) with g the mirrored f.  That region is empty
+// for a symmetric part.  Interval arithmetic (the kernel's own evaluator, the one that meshing and rendering use) looks for it: a box over which the field is provably positive has none of it and is dropped, a box over which it is provably
+// negative is entirely in it and its volume is added up, and the rest are halved down to half an element.  The plane holds when the volume of what is provably different is under half the volume of a cube of one element: a difference of the
+// size of the mesh itself is the least that can be seen on it.  No mesh is looked at; the boxes that the interval test cannot decide at half an element are judged by the field at their centres (below)
+static bool fieldSymmetric(const Tree& shape, const Vec3& lo, const Vec3& hi, int axis, double at, double h)
+{
+    Tree mx = Tree::X(), my = Tree::Y(), mz = Tree::Z();
+    const Tree flipped = Tree(float(2.0 * at)) - (axis == 0 ? Tree::X() : (axis == 1 ? Tree::Y() : Tree::Z()));
+    if (axis == 0) mx = flipped;
+    else if (axis == 1) my = flipped;
+    else mz = flipped;
+    const Tree g = shape.remap(mx, my, mz);
+    const Tree differ = libfive::min(libfive::max(shape, Tree(0.0f) - g), libfive::max(Tree(0.0f) - shape, g));
+    IntervalEvaluator ev(differ);
+    struct Box { Eigen::Vector3f lo, hi; std::shared_ptr<Tape> tape; };
+    std::vector<Box> stack;
+    stack.push_back({lo.cast<float>(), hi.cast<float>(), nullptr});
+    const float smallest = float(0.5 * h);
+    const double allowed = 0.5 * h * h * h;
+    double different = 0.0;
+    size_t evals = 0;
+    const size_t budget = 600000;
+    // (the boxes that stay UNDECIDED at half an element -- the interval test can prove neither that they are free of the difference nor that they are in it -- are not dropped: a difference thinner than a box, such as a cylinder 0.5 mm
+    // off the plane in elements of 1.8 mm, lies in none of the boxes that are provably different, and the DFG cylinder case was mirrored about it (a drag 24 % too low, found 2026-11-15 by the validation run in the window).  Their centres
+    // are looked at: the field of the part against the field of its mirror image, and a box whose two values differ by more than 0.4 of an element counts as different.  A part that is symmetric has the same value at both; the
+    // volume that is counted is added to the volume of what is provably different)
+    std::vector<Eigen::Vector3f> centres;
+    std::vector<double> centreVolumes;
+    bool tooMany = false;
+    while (!stack.empty())
+    {
+        if (stopped()) return false;
+        const Box b = stack.back();
+        stack.pop_back();
+        if (++evals > budget) return false;               // (too many boxes at the surface to look at them all: the plane is not used)
+        // (the tape of the field is shortened for every box by what the box proves, as the renderer and the mesher do, so that a box deep in the part or far outside it costs almost nothing)
+        const std::pair<Interval, std::shared_ptr<Tape>> r = b.tape ? ev.intervalAndPush(b.lo, b.hi, b.tape) : ev.intervalAndPush(b.lo, b.hi);
+        const Interval i = r.first;
+        if (i.lower() > 0.0f) continue;                   // (provably none of the difference in this box)
+        const Eigen::Vector3f size = b.hi - b.lo;
+        if (i.upper() < 0.0f)                             // (provably all of this box is different)
+        {
+            different += double(size.x()) * double(size.y()) * double(size.z());
+            if (different >= allowed) return false;
+            continue;
+        }
+        int d = 0;
+        const float longest = size.maxCoeff(&d);
+        if (longest <= smallest)                          // (not decided at half an element: its centre is looked at below)
+        {
+            if (centres.size() < 400000)
+            {
+                centres.push_back(Eigen::Vector3f(0.5f * (b.lo + b.hi)));
+                centreVolumes.push_back(double(size.x()) * double(size.y()) * double(size.z()));
+            }
+            else tooMany = true;
+            continue;
+        }
+        Box c1 = b, c2 = b;
+        c1.tape = r.second;
+        c2.tape = r.second;
+        const float mid = 0.5f * (b.lo[d] + b.hi[d]);
+        c1.hi[d] = mid;
+        c2.lo[d] = mid;
+        stack.push_back(c1);
+        stack.push_back(c2);
+    }
+    if (tooMany) return false;                            // (too many boxes at the surface to look at them all: the plane is not used)
+    if (!centres.empty())
+    {
+        std::vector<Eigen::Vector3f> mirrored(centres);
+        for (auto& p : mirrored) p[axis] = float(2.0 * at) - p[axis];
+        std::vector<float> fa, fb;
+        evalPoints(shape, centres, fa);
+        evalPoints(shape, mirrored, fb);
+        if (stopped()) return false;
+        const double limit = 0.4 * h;
+        for (size_t k = 0; k < centres.size(); ++k)
+            if (std::abs(double(fa[k]) - double(fb[k])) > limit)
+            {
+                different += centreVolumes[k];
+                if (different >= allowed) return false;
+            }
+    }
+    return true;
+}
+
+// Where the surface meets the plane at a SHALLOW angle the half body has a thin wedge along the plane, which no half mesh follows well (the shaft stand at 6.3 mm: 54 plane vertices 0.8 of an element off the surface).  That is a property of the
+// field and is read on it, before anything is meshed: the plane's own section is read on a grid of half an element, and where the surface is within one and a quarter elements of a point of it the direction of the surface is asked for;
+// when it is within 40 degrees of the plane at three points or more, the plane is not used -- the part is meshed whole, once.  A surface that crosses the plane at a right angle (a rim, a wall) has a normal across the plane's.
+// (KNOWN ISSUE, measured on the shaft stand at 6.3 mm: the 54 plane vertices that no crossing could be found for lie 0.80 of an element from a surface that runs PARALLEL to the plane, a wall of 0.8 element beside it, not at a
+// shallow angle across it: the limit is three quarters of an element, so the mirrored mesh is accepted with them off the surface and its largest stress is 2.1 where the whole part's is 0.96.  A wider limit (1.5 and 1.25 elements) was
+// written and not built; it is parked by the user's order of 2026-11-15, see KNOWN_ISSUES.md)
+static size_t shallowContacts(const Tree& shape, const Vec3& lo, const Vec3& hi, int axis, double at, double h)
+{
+    const int a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
+    double step = 0.5 * h;
+    while (((hi[a1] - lo[a1]) / step + 1.0) * ((hi[a2] - lo[a2]) / step + 1.0) > 60000.0) step *= 1.5;
+    const size_t n1 = size_t(std::max(1.0, std::ceil((hi[a1] - lo[a1]) / step))), n2 = size_t(std::max(1.0, std::ceil((hi[a2] - lo[a2]) / step)));
+    std::vector<Eigen::Vector3f> grid;
+    for (size_t i = 0; i <= n1; ++i)
+        for (size_t j = 0; j <= n2; ++j)
+        {
+            Vec3 p;
+            p[axis] = at;
+            p[a1] = lo[a1] + (hi[a1] - lo[a1]) * double(i) / double(n1);
+            p[a2] = lo[a2] + (hi[a2] - lo[a2]) * double(j) / double(n2);
+            grid.push_back(p.cast<float>());
+        }
+    std::vector<float> f;
+    evalPoints(shape, grid, f);
+    if (stopped()) return 0;
+    const double dq = 1e-3 * h;
+    std::vector<Eigen::Vector3f> q7;
+    size_t counted = 0;
+    for (size_t k = 0; k < grid.size(); ++k)
+    {
+        if (!(std::abs(double(f[k])) < h)) continue;
+        const Eigen::Vector3f p = grid[k];
+        q7.push_back(p);
+        for (int ax = 0; ax < 3; ++ax)
+        {
+            Eigen::Vector3f lo3 = p, hi3 = p;
+            lo3[ax] -= float(dq);
+            hi3[ax] += float(dq);
+            q7.push_back(lo3);
+            q7.push_back(hi3);
+        }
+        ++counted;
+    }
+    if (counted == 0) return 0;
+    std::vector<float> f7;
+    evalPoints(shape, q7, f7);
+    if (stopped()) return 0;
+    const double cosShallow = std::cos(40.0 * 3.14159265358979323846 / 180.0);
+    size_t shallow = 0;
+    for (size_t k = 0; k < counted; ++k)
+    {
+        Vec3 g;
+        for (int ax = 0; ax < 3; ++ax) g[ax] = (double(f7[7 * k + size_t(2 + 2 * ax)]) - double(f7[7 * k + size_t(1 + 2 * ax)])) / (2 * dq);
+        const double gn = g.norm();
+        if (!(gn > 1e-12)) continue;
+        if (std::abs(double(f7[7 * k])) / gn > 0.75 * h) continue;
+        if (std::abs(g[axis]) / gn > cosShallow) ++shallow;
+    }
+    return shallow;
+}
+
 std::vector<MeshMirror> findMeshMirrors(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector3d& hi, double h)
 {
     std::vector<MeshMirror> found;
     const Vec3 size = hi - lo;
     if (!(size.minCoeff() > 0)) return found;
-    // points at fixed pseudo-random places (a linear congruential generator: the same points on every machine)
-    uint64_t state = 0x9E3779B97F4A7C15ull;
-    auto next = [&]() {
-        state = state * 6364136223846793005ull + 1442695040888963407ull;
-        return double(state >> 11) / 9007199254740992.0;
-    };
-    // (H223, the user, 2026-11-15: "symmetry be detected well enough for any arbitrary geometry of arbitrary size": the points are of two kinds, 3000 in the whole region, which tell the body's shape, and up to 3000 more of
-    // 12000 that lie within one and a half element of the surface, where an asymmetry of the surface shows -- a hole on one side only, a rim, a step: in 3000 points of the volume a hole a twentieth of the region's size has
-    // none, and the half mesh that is made on such a part is made for nothing.  Nothing depends on the part's size or the number of its elements: the region and the element size scale the points and the tolerance)
-    const size_t N = 3000, M = 12000, Mkeep = 3000;
-    std::vector<Eigen::Vector3f> all;
-    all.reserve(N + M);
-    for (size_t i = 0; i < N + M; ++i)
-    {
-        const double x = next(), y = next(), z = next();
-        all.push_back(Vec3(lo.x() + size.x() * x, lo.y() + size.y() * y, lo.z() + size.z() * z).cast<float>());
-    }
-    std::vector<float> vAll;
-    evalPoints(shape, all, vAll);
-    if (stopped()) return found;
-    std::vector<Eigen::Vector3f> pts;
-    std::vector<float> v;
-    size_t nearCount = 0;
-    for (size_t i = 0; i < all.size(); ++i)
-    {
-        if (i < N) { pts.push_back(all[i]); v.push_back(vAll[i]); }
-        else if (nearCount < Mkeep && std::abs(double(vAll[i])) < 1.5 * h) { pts.push_back(all[i]); v.push_back(vAll[i]); ++nearCount; }
-    }
-    // (a point counts as telling the two sides apart only when its image is on the other side of the surface by more than the tolerance of the whole mesher for "on the surface", see kSurfaceTolerance: the two sides of
-    // an imported part are tessellated or fitted on their own and differ by a few hundredths of an element, which is no asymmetry)
-    const double tol = meshLimits().surfaceTolerance * h;
     for (int axis = 0; axis < 3; ++axis)
     {
         const double at = 0.5 * (lo[axis] + hi[axis]);
-        std::vector<Eigen::Vector3f> mirrored(pts.size());
-        for (size_t i = 0; i < pts.size(); ++i)
-        {
-            Eigen::Vector3f q = pts[i];
-            q[axis] = float(2.0 * at - double(q[axis]));
-            mirrored[size_t(i)] = q;
-        }
-        std::vector<float> w;
-        evalPoints(shape, mirrored, w);
+        bool same = fieldSymmetric(shape, lo, hi, axis, at, h);
         if (stopped()) return found;
-        bool same = true;
-        for (size_t i = 0; i < pts.size() && same; ++i)
+        size_t shallow = 0;
+        if (same)
         {
-            // (a point near the surface may fall on either side of it by rounding: only a clear difference of side counts)
-            if ((v[i] <= 0) != (w[i] <= 0) && std::min(std::abs(double(v[i])), std::abs(double(w[i]))) > tol) same = false;
+            shallow = shallowContacts(shape, lo, hi, axis, at, h);
+            if (shallow >= 3) same = false;
         }
         if (same)
         {
@@ -2884,7 +3593,7 @@ std::vector<MeshMirror> findMeshMirrors(const Tree& shape, const Eigen::Vector3d
             m.at = at;
             found.push_back(m);
         }
-        if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[tetmesh] symmetry about the middle of the region along axis %d (at %.4f): %s (%zu points of the volume, %zu near the surface, tolerance %.4f)\n", axis, at, same ? "found" : "no", N, nearCount, tol);
+        if (std::getenv("FIELDES_TET_DEBUG")) fprintf(stderr, "[tetmesh] symmetry about the middle of the region along axis %d (at %.4f): %s (the part against its mirror image by interval arithmetic; %zu points of the plane where the surface is within 40 degrees of it)\n", axis, at, same ? "found" : "no", shallow);
     }
     return found;
 }
@@ -2907,11 +3616,9 @@ bool meshShapeMirrored(const Tree& shape, const Eigen::Vector3d& lo, const Eigen
         planes.push_back(p);
     }
     const bool debug = std::getenv("FIELDES_TET_DEBUG") != nullptr;
-    // One try with the planes `use`: the shape on the upper side of every plane, over the region cut at the planes, meshed; each plane in turn: the vertices on it are
-    // put exactly on it and shared, every other vertex gets its image, every tetrahedron its mirror image (two vertices swapped: the other orientation); then the
-    // whole is checked -- every volume positive, every boundary vertex of the whole on the shape's surface (the distance from the field and its gradient, central
-    // differences over 1e-3 h, within 2e-2 h): a shape that is not symmetric, a plane that only looks like one, a crack the half mesh has where the plane or the
-    // faces meet it, fail here.  1 made, 0 the mirror does not hold, -1 cancelled
+    // The mesh of the planes `use`: the shape on the upper side of every plane, over the region cut at the planes, meshed; the plane vertices that belong to the surface moved onto it and the boundary nodes of the half that
+    // stand off the surface repaired; then each plane in turn: the vertices on it are put exactly on it and shared, every other vertex gets its image, every tetrahedron its mirror image (two vertices swapped: the other
+    // orientation); and every volume must be positive.  1 made, 0 a tetrahedron without a volume, -1 cancelled
     auto attempt = [&](const std::vector<MeshMirror>& use, TetMesh& result) -> int {
         Tree part = shape;
         Vec3 lo2 = lo;
@@ -3138,6 +3845,10 @@ bool meshShapeMirrored(const Tree& shape, const Eigen::Vector3d& lo, const Eigen
                     }
                     return true;
                 };
+                std::vector<char> boundaryNode(cur.pos.size(), 0);           // (the vertices of the boundary faces of the half: they are not followers)
+                for (const auto& f : cur.faces)
+                    for (int q = 0; q < 3; ++q)
+                        if (f[size_t(q)] >= 0 && size_t(f[size_t(q)]) < boundaryNode.size()) boundaryNode[size_t(f[size_t(q)])] = 1;
                 for (size_t a = 0; a < movers.size(); ++a)
                 {
                     if (valid(a)) continue;
@@ -3145,15 +3856,176 @@ bool meshShapeMirrored(const Tree& shape, const Eigen::Vector3d& lo, const Eigen
                     const Vec3 end = cur.pos[v], start = movers[a].start;
                     // (taken back altogether, not half way: a vertex half way to the surface is as far from it as the move was long, where at its start it was nearer than the tolerance -- measured on the bracket:
                     // two wall vertices at the large circle stood 0.05 mm off the surface, the move went 1 mm along the plane, was shortened to half and left them 0.49 mm off)
+                    // (H226, the user, 2026-11-15: "WHAT DO YOU MEAN CANNOT BE PLACED?? WHAT IS STOPPING IT?": the vertex was moved alone and the move taken back when a tetrahedron beside it turned inside out, where the edge pass of the same mesher
+                    // moves a node together with the nodes round it.  It goes with them here: the full move, three quarters of it and half of it, each with the nodes round the vertex that stand in no plane and on no surface going half as far, and the largest
+                    // one that leaves every tetrahedron that holds the vertex or one of them whole and not poorer than 0.1 is kept; the move is taken back only when none does)
                     bool fixedIt = false;
-                    cur.pos[v] = start;
-                    ++undone;
-                    if (debug) fprintf(stderr, "[tetmesh]   a plane vertex whose move was spoiling a tetrahedron: from (%.4f %.4f %.4f) toward (%.4f %.4f %.4f), %s (%.4f %.4f %.4f)\n", start.x(), start.y(), start.z(), end.x(), end.y(), end.z(),
-                                       fixedIt ? "shortened to" : "left at", cur.pos[v].x(), cur.pos[v].y(), cur.pos[v].z());
+                    const Vec3 delta = end - start;
+                    std::vector<int> followers;
+                    {
+                        std::set<int> seenNode;
+                        for (int e : tetsOf[a])
+                            for (int q = 0; q < 4; ++q)
+                            {
+                                const int w = cur.tets[size_t(e)][size_t(q)];
+                                if (size_t(w) == v || !seenNode.insert(w).second) continue;
+                                if (bit[size_t(w)] == 0 && !boundaryNode[size_t(w)]) followers.push_back(w);
+                            }
+                    }
+                    const double scales[3] = {1.0, 0.75, 0.5};
+                    for (int si = 0; si < 3 && !fixedIt; ++si)
+                    {
+                        const double s = scales[si];
+                        std::vector<Vec3> saved;
+                        for (int w : followers) saved.push_back(cur.pos[size_t(w)]);
+                        cur.pos[v] = start + s * delta;
+                        for (int w : followers) cur.pos[size_t(w)] += 0.5 * s * delta;
+                        std::vector<char> touched(cur.pos.size(), 0);
+                        touched[v] = 1;
+                        for (int w : followers) touched[size_t(w)] = 1;
+                        bool ok = true;
+                        for (const auto& t : cur.tets)
+                        {
+                            bool hit = false;
+                            for (int q = 0; q < 4; ++q) hit = hit || touched[size_t(t[size_t(q)])] != 0;
+                            if (!hit) continue;
+                            if (!(signedVolume(cur.pos[size_t(t[0])], cur.pos[size_t(t[1])], cur.pos[size_t(t[2])], cur.pos[size_t(t[3])]) > 0) || meanRatio(cur.pos, t) < 0.1)
+                            {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if (ok)
+                        {
+                            fixedIt = true;
+                            ++shortened;
+                        }
+                        else
+                        {
+                            cur.pos[v] = start;
+                            for (size_t k = 0; k < followers.size(); ++k) cur.pos[size_t(followers[k])] = saved[k];
+                        }
+                    }
+                    if (!fixedIt)
+                    {
+                        cur.pos[v] = start;
+                        ++undone;
+                    }
+                    if (debug) fprintf(stderr, "[tetmesh]   a plane vertex whose move was spoiling a tetrahedron: from (%.4f %.4f %.4f) toward (%.4f %.4f %.4f), %s (%.4f %.4f %.4f), %zu nodes round it followed\n", start.x(), start.y(), start.z(), end.x(), end.y(), end.z(),
+                                       fixedIt ? "moved with its neighbours to" : "left at", cur.pos[v].x(), cur.pos[v].y(), cur.pos[v].z(), followers.size());
                 }
             }
-            if (debug) fprintf(stderr, "[tetmesh] mirror: %zu vertices on a plane belong to the surface: %zu on it already, %zu moved onto it (farthest %.3f h), %zu with no crossing within an element; %zu moves shortened and %zu undone for a tetrahedron without a volume\n",
+            if (debug) fprintf(stderr, "[tetmesh] mirror: %zu vertices on a plane belong to the surface: %zu on it already, %zu moved onto it (farthest %.3f h), %zu with no crossing within an element; %zu moves made with the nodes round the vertex following and %zu undone for a tetrahedron without a volume\n",
                                movers.size(), onSurface, found, farthest / h, lost, shortened, undone);
+        }
+        // (H226, the user, 2026-11-15: "NO NEED TO MESH SOMETHING AND THEN THROW AWAY THE MESH AND THEN RERUN THE MESH".  The mirrored mesh used to be checked against the surface and, when one node stood off it by more than the tolerance, thrown away and
+        // the whole part meshed again; the symmetry is decided on the field now (findMeshMirrors) and nothing is checked on a mesh.  What is left to do on the half is to REPAIR it: a node of its boundary, not on a plane, that stands
+        // farther from the surface than the tolerance of the whole mesher is put on the surface by Newton steps on the field -- when the move is not longer than an element and every tetrahedron round the node stays whole and
+        // not poorer than 0.05 -- before the half is copied, so that its image is right as well.  The plane vertices that could not be put on the surface above stay, and the debug output says how many)
+        {
+            auto onAPlane = [&](const Vec3& p) {
+                for (const auto& q : use)
+                    if (std::abs(p[q.axis] - q.at) <= snap) return true;
+                return false;
+            };
+            std::vector<char> mark(cur.pos.size(), 0);
+            std::vector<size_t> ids;
+            for (const auto& f : cur.faces)
+                for (int q = 0; q < 3; ++q)
+                {
+                    const size_t w = size_t(f[size_t(q)]);
+                    if (w < mark.size() && !mark[w] && !onAPlane(cur.pos[w]))
+                    {
+                        mark[w] = 1;
+                        ids.push_back(w);
+                    }
+                }
+            const double dr = 1e-3 * h;
+            auto readField = [&](const std::vector<size_t>& who, std::vector<double>& value, std::vector<Vec3>& gradient) {
+                std::vector<Eigen::Vector3f> q;
+                for (size_t w : who)
+                {
+                    const Vec3 p = cur.pos[w];
+                    q.push_back(p.cast<float>());
+                    for (int ax = 0; ax < 3; ++ax)
+                    {
+                        Vec3 lo3 = p, hi3 = p;
+                        lo3[ax] -= dr;
+                        hi3[ax] += dr;
+                        q.push_back(lo3.cast<float>());
+                        q.push_back(hi3.cast<float>());
+                    }
+                }
+                std::vector<float> fv;
+                evalPoints(shape, q, fv);
+                value.assign(who.size(), 0.0);
+                gradient.assign(who.size(), Vec3::Zero());
+                for (size_t k = 0; k < who.size(); ++k)
+                {
+                    value[k] = double(fv[7 * k]);
+                    for (int ax = 0; ax < 3; ++ax) gradient[k][ax] = (double(fv[7 * k + size_t(2 + 2 * ax)]) - double(fv[7 * k + size_t(1 + 2 * ax)])) / (2 * dr);
+                }
+            };
+            std::vector<double> value;
+            std::vector<Vec3> gradient;
+            readField(ids, value, gradient);
+            if (stopped()) return -1;
+            std::vector<double> norms;
+            for (const auto& g : gradient)
+                if (g.norm() > 1e-12) norms.push_back(g.norm());
+            double gUsual = 0.0;
+            if (!norms.empty())
+            {
+                std::nth_element(norms.begin(), norms.begin() + std::ptrdiff_t(norms.size() / 2), norms.end());
+                gUsual = norms[norms.size() / 2];
+            }
+            std::vector<size_t> bad;
+            for (size_t k = 0; k < ids.size(); ++k)
+            {
+                const double gn = std::max(gradient[k].norm(), gUsual);
+                if (gn > 1e-12 && std::abs(value[k]) / gn > optIn.surfaceTolerance * h) bad.push_back(ids[k]);
+            }
+            size_t repaired = 0, kept = 0;
+            if (!bad.empty())
+            {
+                std::vector<Vec3> start(bad.size());
+                for (size_t k = 0; k < bad.size(); ++k) start[k] = cur.pos[bad[k]];
+                for (int it = 0; it < 3; ++it)
+                {
+                    readField(bad, value, gradient);
+                    if (stopped()) return -1;
+                    for (size_t k = 0; k < bad.size(); ++k)
+                    {
+                        const double g2 = gradient[k].squaredNorm();
+                        if (g2 > 1e-24) cur.pos[bad[k]] -= (value[k] / g2) * gradient[k];
+                    }
+                }
+                std::vector<int> badIndex(cur.pos.size(), -1);
+                for (size_t k = 0; k < bad.size(); ++k) badIndex[bad[k]] = int(k);
+                std::vector<char> ok(bad.size(), 1);
+                // (the quality of the tetrahedra round each node as it was, to compare: a node is put back when a tetrahedron round it loses its volume or falls under 0.05)
+                for (const auto& t : cur.tets)
+                {
+                    bool touches = false;
+                    for (int q = 0; q < 4; ++q) touches = touches || badIndex[size_t(t[size_t(q)])] >= 0;
+                    if (!touches) continue;
+                    const bool whole = signedVolume(cur.pos[size_t(t[0])], cur.pos[size_t(t[1])], cur.pos[size_t(t[2])], cur.pos[size_t(t[3])]) > 0 && meanRatio(cur.pos, t) >= 0.05;
+                    if (whole) continue;
+                    for (int q = 0; q < 4; ++q)
+                        if (badIndex[size_t(t[size_t(q)])] >= 0) ok[size_t(badIndex[size_t(t[size_t(q)])])] = 0;
+                }
+                for (size_t k = 0; k < bad.size(); ++k)
+                {
+                    if ((cur.pos[bad[k]] - start[k]).norm() > h) ok[k] = 0;
+                    if (!ok[k])
+                    {
+                        cur.pos[bad[k]] = start[k];
+                        ++kept;
+                    }
+                    else ++repaired;
+                }
+            }
+            if (debug) fprintf(stderr, "[tetmesh] mirror: %zu boundary nodes of the half off the plane: %zu stood off the surface, %zu put on it, %zu could not be\n", ids.size(), bad.size(), repaired, kept);
         }
         for (const auto& p : use)
         {
@@ -3221,102 +4093,30 @@ bool meshShapeMirrored(const Tree& shape, const Eigen::Vector3d& lo, const Eigen
             cur.tets.swap(sorted);
         }
         finalizeMesh(cur);
-        std::vector<size_t> ids;
-        std::vector<Eigen::Vector3f> pts;
-        const double d = 1e-3 * h;
-        for (size_t i = 0; i < cur.pos.size(); ++i)
-        {
-            if (!cur.onSurface[i]) continue;
-            ids.push_back(i);
-            pts.push_back(cur.pos[i].cast<float>());
-            for (int a = 0; a < 3; ++a)
-            {
-                Vec3 lo3 = cur.pos[i], hi3 = cur.pos[i];
-                lo3[a] -= d;
-                hi3[a] += d;
-                pts.push_back(lo3.cast<float>());
-                pts.push_back(hi3.cast<float>());
-            }
-        }
-        std::vector<float> v;
-        evalPoints(shape, pts, v);
-        if (stopped()) return -1;
-        size_t off = 0, shown = 0;
-        // (H223, 2026-11-15, symmetry for any part: the distance of a vertex from the surface is the field's value over its gradient, and ON A CREASE the gradient read across it is shorter than the field's usual one -- 0.71 on a
-        // 90-degree edge -- so the distance of a vertex that lies on an edge was read up to 1.4 times too large: the four vertices of the real bracket that kept the mirror from holding stood on creases and were 0.061 to
-        // 0.070 of an element off by that reading, 0.05 by the true one.  The gradient of the field at the surface vertices has a usual length (the median of them: 1 for a distance, any other number for a scaled field), and a
-        // gradient shorter than that is not taken for the length of the distance)
-        std::vector<double> gnorm(ids.size(), 0.0);
-        std::vector<double> usual;
-        for (size_t k = 0; k < ids.size(); ++k)
-        {
-            Vec3 g;
-            for (int a = 0; a < 3; ++a) g[a] = (double(v[7 * k + size_t(2 + 2 * a)]) - double(v[7 * k + size_t(1 + 2 * a)])) / (2 * d);
-            gnorm[k] = g.norm();
-            if (gnorm[k] > 1e-12) usual.push_back(gnorm[k]);
-        }
-        double gUsual = 0.0;
-        if (!usual.empty())
-        {
-            std::nth_element(usual.begin(), usual.begin() + std::ptrdiff_t(usual.size() / 2), usual.end());
-            gUsual = usual[usual.size() / 2];
-        }
-        for (size_t k = 0; k < ids.size(); ++k)
-        {
-            const double gn = std::max(gnorm[k], gUsual);
-            const double away = gn > 1e-12 ? std::abs(double(v[7 * k])) / gn : 1e9;
-            // (the tolerance of the whole mesher for "on the surface", kSurfaceTolerance of the element size, see tetmesh.hpp: a fraction of the element, so it scales with the part and the mesh size.  A crack is a third
-            // of an element or more, but the two sides of an imported part are tessellated on their own and their surfaces differ by a few hundredths of an element -- 0.020 to 0.028 h measured on the bracket)
-            // (H223, the user, 2026-11-15, of the two arms of the real bracket: "THIS ARM IS PERFECT AND THEN THE OTHER ARM IS NOT ... DESPITE IT BEING LIKE EXACTLY THE SAME GEOMETRY": with a fiftieth of an element the
-            // mirror was refused for the bracket -- 14 boundary vertices of the imported part are that far off the shape, its two sides are not exactly alike -- and the part was meshed WHOLE, its two arms on the
-            // lattice at different phases and treated by the passes in a different order.  The mirror is not the cure of the difference between the arms: it only makes them equal, the passes must be right on both)
-            if (!(away <= optIn.surfaceTolerance * h))
-            {
-                ++off;
-                if (debug && shown < 4)
-                {
-                    ++shown;
-                    const Vec3& q = cur.pos[ids[k]];
-                    fprintf(stderr, "[tetmesh]   off the shape: (%.4f, %.4f, %.4f), %.3f h from its surface\n", q.x(), q.y(), q.z(), away / h);
-                }
-            }
-        }
-        if (off > 0)
-        {
-            if (debug) fprintf(stderr, "[tetmesh] mirror about %zu plane(s) does not hold: %zu boundary vertices off the shape\n", use.size(), off);
-            return 0;
-        }
         // (cur.h is the spacing the half was fitted to, see meshShape)
         cur.mirrored = use.size();
         result = std::move(cur);
         return 1;
     };
-    // The largest set of the planes for which the mirror holds: all of them, then every pair, then every single one (a plane that does not hold is not
-    // allowed to take the ones that do with it)
-    const size_t np = planes.size();
-    for (size_t size = np; size >= 1; --size)
-        for (unsigned mask = (1u << np) - 1u; mask > 0; --mask)
+    // One attempt with every plane that the field has: the symmetry is decided on the field (findMeshMirrors), so there is no subset of the planes to try and no second meshing of the half.  The only way left to a refusal is
+    // a tetrahedron of the mirrored mesh without a volume, which a mesh made right does not have: the part is then meshed whole, and the line says so on the console, not only in the debug output
+    if (!planes.empty())
+    {
+        TetMesh result;
+        const int r = attempt(planes, result);
+        if (r < 0)
         {
-            size_t bits = 0;
-            for (size_t k = 0; k < np; ++k) bits += (mask >> k) & 1u;
-            if (bits != size) continue;
-            std::vector<MeshMirror> use;
-            for (size_t k = 0; k < np; ++k)
-                if ((mask >> k) & 1u) use.push_back(planes[k]);
-            TetMesh result;
-            const int r = attempt(use, result);
-            if (r < 0)
-            {
-                error = "cancelled";
-                return false;
-            }
-            if (r > 0)
-            {
-                if (debug) fprintf(stderr, "[tetmesh] mirrored about %zu of %zu plane(s)\n", size, np);
-                out = std::move(result);
-                return true;
-            }
+            error = "cancelled";
+            return false;
         }
+        if (r > 0)
+        {
+            if (debug) fprintf(stderr, "[tetmesh] mirrored about %zu plane(s)\n", planes.size());
+            out = std::move(result);
+            return true;
+        }
+        fprintf(stderr, "[tetmesh] the mirrored mesh has tetrahedra without a volume: the part is meshed whole\n");
+    }
     return meshShape(shape, lo, hi, h, out, error, optIn);
 }
 

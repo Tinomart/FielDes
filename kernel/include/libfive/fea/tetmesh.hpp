@@ -124,6 +124,10 @@ struct MeshOptions
     // two chain edges that differ by more than 1.5): the nodes along an edge or the rim of a flat face are spaced evenly along it, as Netgen's surface optimizer spaces the points of an edge.  Only with `smooth`.
     // FIELDES_TET_CHAINS=0: none
     bool chains = true;
+    // H223 (found by the NAFEMS LE1 benchmark, 2026-11-15: at three element sizes of nine the stress at the tip of the hole read 14 to 29 % high, the mesh had no node at the corner where the wall of the hole, the plane of symmetry
+    // and a face of the plate meet, and the two edges that end there stopped half an element short of it): a node at the end of the chain of an edge is moved along the edge to the corner where the surface closes it, when that
+    // is within an element.  Only with `edges`.  FIELDES_TET_CORNERS=0: none
+    bool corners = true;
     // The poorest mean ratio that a move of a node onto a rim may leave a tetrahedron round it (0.3; 0.1 for a graded mesh, where the layers meet the walls in flat tetrahedra)
     double rimFloor = 0.3;
     // H225: the choice between fewer odd elements and more surface conformity, see MeshLimits (the values that stand when the options are made)

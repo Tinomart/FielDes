@@ -27,11 +27,13 @@ view.set_resolution(2)
 view.set_quality(8)
 
 
-def ellipse(a, b, h=H):
-    ''' an elliptic cylinder of the semi-axes a and b, from z = 0 to h.  The unit cylinder taken onto the ellipse by remap has a value in units of the semi-axes, not in mm, and a support or a load picks the nodes whose
+def ellipse(a, b):
+    ''' an elliptic cylinder of the semi-axes a and b, much longer than the plate in z.  The unit cylinder taken onto the ellipse by remap has a value in units of the semi-axes, not in mm, and a support or a load picks the nodes whose
         value is within 0.05 of an element of its region (mm): with the value in units of the axes EVERY node of the plate was inside every region, the whole plate was held, and the stress came out 12 times too low.
-        The value is made a length (about: the mean semi-axis times it) so that the regions below are where they say '''
-    return intersection(cylinder(1.0, 10000.0).remap(Shape.X() / a, Shape.Y() / b, Shape.Z()) * ((a + b) / 2.0), box((4 * a, 4 * b, h), position=(0, 0, h / 2)))
+        The value is made a length (about: the mean semi-axis times it) so that the regions below are where they say.
+        NOT cut off at the faces of the plate: a hole whose ends lie exactly in the faces of the plate (faces that coincide) has the value 0 over its whole end, so the plate's field is 0 there and not positive, and a mesh whose
+        lattice has vertices in those planes puts tetrahedra into the hole (found 2026-11-15 with the LE1 plate of fino_010_nafems_le1_elliptic_membrane.py) '''
+    return cylinder(1.0, 10000.0).remap(Shape.X() / a, Shape.Y() / b, Shape.Z()) * ((a + b) / 2.0)
 
 
 quarter = box((A_OUT + 100, B_OUT + 100, H), position=((A_OUT + 100) / 2, (B_OUT + 100) / 2, H / 2))

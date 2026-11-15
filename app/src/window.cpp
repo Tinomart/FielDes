@@ -2225,14 +2225,19 @@ Window::Window(Arguments args)
             QEventLoop loop;
             QTimer poll;
             bool started = false;
+            // (2026-11-15, the user, capitals: "HOOK INTO THE WINDOW MORE. DONT WAIT ON TIMERS TO FINISH HAVE THE WINDOW TELL YOU": a render of 50 or 140 ms -- a plain box, a few thousand tetrahedra -- began and ended between two
+            // looks of the poll below, so `started` never became true and the verb sat out its whole start window.  The view's own signal says that a render was kicked off, whatever the poll sees)
+            int kicked = 0;
+            const QMetaObject::Connection kickedConnection = QObject::connect(view, &View::startRender, [&kicked]() { ++kicked; });
             QObject::connect(&poll, &QTimer::timeout, [&]() {
-                if (view->isRendering()) started = true;
+                if (view->isRendering() || kicked > 0) started = true;
                 // (a render has a moment to begin after the script has run)
                 if ((started && !view->isRendering()) || (!started && total.elapsed() > startWindow) || total.elapsed() > limit)
                     loop.quit();
             });
             poll.start(200);
             loop.exec();
+            QObject::disconnect(kickedConnection);
             std::cerr << "automation: render finished after " << total.elapsed() / 1000 << " s" << std::endl;
         });
         // waitdemo [seconds]: wait until the "Show me" of the guided tour has finished and put everything back (at most that long; 300 s by default) -- the step is walked through as a hand does,
