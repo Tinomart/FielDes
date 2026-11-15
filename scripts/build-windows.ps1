@@ -118,7 +118,7 @@ if ($Package) {
     Copy-Item (Join-Path $Source 'examples\step\PivotBearingSupportBracket.STEP') (Join-Path $PackageDir 'examples\step') -Force
     # The command line of the apps (`fieldes run tool.fieldesapp --Radius 7`): FielDes.exe is a window program, this waits for it
     Copy-Item (Join-Path $Source 'scripts\fieldes.cmd') $PackageDir -Force
-    foreach ($doc in 'README.md', 'LICENSE-GPL-2.0', 'LICENSE-MPL-2.0', 'NOTICE.md', 'CHANGELOG.md') {
+    foreach ($doc in 'README.md', 'LICENSE-GPL-2.0', 'LICENSE-MPL-2.0', 'NOTICE.md', 'CHANGELOG.md', 'KNOWN_ISSUES.md') {
         if (Test-Path (Join-Path $Source $doc)) { Copy-Item (Join-Path $Source $doc) $PackageDir -Force }
     }
     Mirror (Join-Path $Source 'docs') (Join-Path $PackageDir 'docs') @()

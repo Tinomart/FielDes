@@ -116,7 +116,7 @@ if [ "$PACKAGE" = 1 ]; then
     else
         echo "WARNING: seed-cache/ is not there: the tour solves its beam and its flow the first time it shows them (run scripts/make-seed-cache.ps1 first)"
     fi
-    cp -f "$SRC"/README.md "$SRC"/CHANGELOG.md "$SRC"/LICENSE-GPL-2.0 "$SRC"/LICENSE-MPL-2.0 "$SRC"/NOTICE.md "$OUT"/
+    cp -f "$SRC"/README.md "$SRC"/CHANGELOG.md "$SRC"/KNOWN_ISSUES.md "$SRC"/LICENSE-GPL-2.0 "$SRC"/LICENSE-MPL-2.0 "$SRC"/NOTICE.md "$OUT"/
     cp -f "$SRC"/app/deploy/icon/fieldes.png "$OUT"/fieldes.png          # (the icon of the menu entry the installers make)
 
     # ---- A Python of its own: its standard library next to the program (the program sets PYTHONHOME to runtime/python3 when it is there)
