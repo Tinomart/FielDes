@@ -212,6 +212,14 @@ int main(int argc, char** argv)
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, qEnvironmentVariable("FIELDES_SETTINGS_DIR"));
     }
     if (isCommandLine(argc, argv)) return runCommandLine(argc, argv);
+#ifdef _WIN32
+    // H230 (the user, 2026-11-16: "Night mode makes the text less sharp. the black seems to seep into the letters and make them appear lighter and inconsistent"): measured in the window, the text is drawn with
+    // the same soft grey smoothing in both colour sets -- more than half of its pixels are edge pixels -- and a light letter on a dark ground carries about half the light of the same letter dark on light
+    // (the edge pixels are blended in plain pixel values), so the softness shows most at night.  With Qt's FreeType font engine in place of its default one on Windows (DirectWrite) the letters are crisp in
+    // both sets, and he judged it fixed.  Qt reads the choice from this variable when the application is made; one set by whoever starts the program is left as it is.  (Linux already uses FreeType.)
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "windows:fontengine=freetype");
+#endif
     {   // Configure default OpenGL as 3.2 Core
         QSurfaceFormat format;
         format.setVersion(3, 2);
